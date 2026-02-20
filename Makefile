@@ -1,0 +1,61 @@
+.PHONY: build-fips selftest dashboard-dev dashboard-build lint test manifest docker-build clean
+
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+OUTPUT_DIR ?= build-output
+
+LDFLAGS := -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.Version=$(VERSION) \
+           -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.GitCommit=$(GIT_COMMIT) \
+           -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.BuildDate=$(BUILD_DATE) \
+           -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.FIPSBuild=true
+
+GOEXPERIMENT ?= boringcrypto
+CGO_ENABLED ?= 1
+
+# Build cloudflared with FIPS-validated cryptography
+build-fips:
+	@mkdir -p $(OUTPUT_DIR)
+	GOEXPERIMENT=$(GOEXPERIMENT) CGO_ENABLED=$(CGO_ENABLED) \
+		go build -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips ./cmd/selftest
+
+# Build and run the standalone self-test binary
+selftest:
+	@mkdir -p $(OUTPUT_DIR)
+	GOEXPERIMENT=$(GOEXPERIMENT) CGO_ENABLED=$(CGO_ENABLED) \
+		go build -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/selftest ./cmd/selftest
+	$(OUTPUT_DIR)/selftest
+
+# Start the React dashboard in development mode
+dashboard-dev:
+	cd dashboard && npm run dev
+
+# Build the React dashboard for production
+dashboard-build:
+	cd dashboard && npm run build
+
+# Run Go linters
+lint:
+	golangci-lint run ./...
+
+# Run Go tests
+test:
+	GOEXPERIMENT=$(GOEXPERIMENT) CGO_ENABLED=$(CGO_ENABLED) \
+		go test -v ./...
+
+# Generate build manifest
+manifest:
+	./scripts/generate-manifest.sh
+
+# Build the FIPS Docker image
+docker-build:
+	docker build -f build/Dockerfile.fips \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		-t cloudflared-fips:$(VERSION) .
+
+# Clean build artifacts
+clean:
+	rm -rf $(OUTPUT_DIR)
+	rm -rf dashboard/dist
+	rm -rf dashboard/node_modules

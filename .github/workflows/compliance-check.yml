@@ -1,0 +1,148 @@
+name: Compliance Check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go-lint-test:
+    name: Go Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.0'
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
+
+      - name: Run tests
+        env:
+          GOEXPERIMENT: boringcrypto
+          CGO_ENABLED: '1'
+        run: go test -v -race ./...
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  dashboard-lint-build:
+    name: Dashboard Lint & Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc -b
+
+      - name: Build
+        run: npm run build
+
+  docs-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required documentation exists
+        run: |
+          MISSING=0
+          for doc in \
+            README.md \
+            docs/ao-narrative.md \
+            docs/control-mapping.md \
+            docs/architecture-diagram.md; do
+            if [ ! -f "$doc" ]; then
+              echo "MISSING: $doc"
+              MISSING=$((MISSING + 1))
+            else
+              echo "OK: $doc"
+            fi
+          done
+          if [ $MISSING -gt 0 ]; then
+            echo "ERROR: $MISSING required documentation files are missing"
+            exit 1
+          fi
+
+  manifest-validation:
+    name: Manifest Schema Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate manifest JSON syntax
+        run: |
+          python3 -c "
+          import json, sys
+          with open('configs/build-manifest.json') as f:
+              data = json.load(f)
+          required = ['schema_version', 'build_id', 'timestamp', 'source',
+                      'platform', 'go_version', 'go_experiment', 'cgo_enabled',
+                      'fips_certificates', 'binary', 'sbom', 'verification']
+          missing = [k for k in required if k not in data]
+          if missing:
+              print(f'Missing required fields: {missing}')
+              sys.exit(1)
+          if not isinstance(data['fips_certificates'], list):
+              print('fips_certificates must be an array')
+              sys.exit(1)
+          if len(data['fips_certificates']) == 0:
+              print('fips_certificates array must not be empty')
+              sys.exit(1)
+          for cert in data['fips_certificates']:
+              cert_required = ['module', 'cert_number', 'level']
+              cert_missing = [k for k in cert_required if k not in cert]
+              if cert_missing:
+                  print(f'FIPS certificate missing fields: {cert_missing}')
+                  sys.exit(1)
+          print('Manifest validation passed')
+          "
+
+  shell-syntax:
+    name: Shell Script Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check shell script syntax
+        run: |
+          for script in scripts/*.sh build/build.sh; do
+            echo "Checking: $script"
+            bash -n "$script"
+          done
+          echo "All shell scripts pass syntax check"

@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0.0",
+  "build_id": "2024.12.2-fips-abc1234",
+  "timestamp": "2024-12-15T14:30:00Z",
+  "source": {
+    "repository": "https://github.com/cloudflare/cloudflared",
+    "branch": "main",
+    "commit": "abc1234def5678",
+    "tag": "2024.12.2"
+  },
+  "platform": {
+    "build_os": "linux",
+    "build_arch": "amd64",
+    "target_os": "linux",
+    "target_arch": "amd64",
+    "builder": "rhel-ubi9-fips"
+  },
+  "go_version": "1.24.0",
+  "go_experiment": "boringcrypto",
+  "cgo_enabled": true,
+  "fips_certificates": [
+    {
+      "module": "BoringCrypto",
+      "cert_number": "4407",
+      "level": "FIPS 140-2 Level 1",
+      "validated_on": "2023-11-01",
+      "expires_on": "2028-11-01",
+      "cmvp_url": "https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/4407"
+    }
+  ],
+  "binary": {
+    "name": "cloudflared",
+    "path": "build-output/cloudflared",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "size": 52428800,
+    "stripped": false
+  },
+  "sbom": {
+    "format": "spdx-json",
+    "path": "build-output/sbom.spdx.json",
+    "sha256": "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
+  },
+  "verification": {
+    "boring_crypto_symbols": true,
+    "self_test_passed": true,
+    "banned_ciphers": [],
+    "static_linked": false
+  }
+}

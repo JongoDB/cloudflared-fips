@@ -1,0 +1,71 @@
+# cloudflared-fips configuration
+# This configuration enforces FIPS 140-2 compliant settings for cloudflared tunnels.
+
+tunnel: <TUNNEL_UUID>
+credentials-file: /etc/cloudflared/credentials.json
+
+# Protocol selection (QUIC preferred, falls back to HTTP/2)
+protocol: quic
+
+# Graceful shutdown settings
+grace-period: 30s
+
+# FIPS Self-Test Configuration
+fips:
+  # Run self-test on startup
+  self-test-on-start: true
+  # Fail to start if self-test fails
+  fail-on-self-test-failure: true
+  # Self-test output path (JSON report)
+  self-test-output: /var/log/cloudflared/selftest.json
+
+# TLS Configuration
+transport:
+  # Minimum TLS version (NIST SP 800-52 Rev. 2 requirement)
+  min-tls-version: "1.2"
+  # Maximum TLS version
+  max-tls-version: "1.3"
+
+# Approved cipher suites (FIPS 140-2 / NIST SP 800-52 Rev. 2)
+# Only these cipher suites will be offered in TLS handshakes
+approved-cipher-suites:
+  # TLS 1.2 - AES-GCM (preferred)
+  - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+  - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+  - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+  - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+  # TLS 1.2 - AES-CBC (allowed but GCM preferred)
+  - TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
+  - TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256
+  # TLS 1.3 (all suites are FIPS-approved)
+  - TLS_AES_256_GCM_SHA384
+  - TLS_AES_128_GCM_SHA256
+  - TLS_CHACHA20_POLY1305_SHA256
+
+# Curve preferences (NIST-approved curves only)
+curve-preferences:
+  - P-256
+  - P-384
+
+# Ingress rules
+ingress:
+  # Example: proxy to local HTTPS service
+  - hostname: app.example.com
+    service: https://localhost:8443
+    originRequest:
+      # Validate origin TLS certificate
+      noTLSVerify: false
+      originServerName: app.example.com
+      # Connection settings
+      connectTimeout: 30s
+      keepAliveTimeout: 90s
+
+  # Catch-all rule (required)
+  - service: http_status:404
+
+# Logging
+loglevel: info
+logfile: /var/log/cloudflared/cloudflared.log
+
+# Metrics
+metrics: localhost:2000

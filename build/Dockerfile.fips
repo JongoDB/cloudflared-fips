@@ -1,0 +1,105 @@
+# Multi-stage FIPS build container using RHEL UBI 9
+# Produces a cloudflared binary linked against BoringCrypto (FIPS 140-2 cert #4407)
+
+# ============================================================
+# Stage 1: Build environment
+# ============================================================
+FROM registry.access.redhat.com/ubi9/ubi:latest AS builder
+
+ARG GO_VERSION=1.24.0
+ARG CLOUDFLARED_TAG=2024.12.2
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+
+# Install build dependencies
+RUN dnf install -y \
+    gcc \
+    gcc-c++ \
+    make \
+    git \
+    openssl-devel \
+    && dnf clean all
+
+# Install Go
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+    | tar -C /usr/local -xzf -
+ENV PATH="/usr/local/go/bin:${PATH}"
+ENV GOPATH="/go"
+ENV PATH="${GOPATH}/bin:${PATH}"
+
+# Set FIPS build flags
+ENV GOEXPERIMENT=boringcrypto
+ENV CGO_ENABLED=1
+
+# Clone cloudflared source at pinned tag
+WORKDIR /src
+RUN git clone --depth 1 --branch ${CLOUDFLARED_TAG} \
+    https://github.com/cloudflare/cloudflared.git .
+
+# Apply any patches from the build/patches directory
+COPY build/patches/ /patches/
+RUN if ls /patches/*.patch 1>/dev/null 2>&1; then \
+        for p in /patches/*.patch; do git apply "$p"; done; \
+    fi
+
+# Copy self-test module into vendor area
+COPY go.mod go.sum* /selftest-src/
+COPY internal/ /selftest-src/internal/
+COPY pkg/ /selftest-src/pkg/
+COPY cmd/ /selftest-src/cmd/
+
+# Build cloudflared with FIPS flags
+RUN BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") && \
+    go build -v \
+    -ldflags "-X main.Version=${VERSION} \
+              -X main.BuildDate=${BUILD_DATE} \
+              -X main.GitCommit=${GIT_COMMIT}" \
+    -o /out/cloudflared \
+    ./cmd/cloudflared
+
+# Build self-test binary
+WORKDIR /selftest-src
+RUN go build -v \
+    -ldflags "-X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.Version=${VERSION} \
+              -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.GitCommit=${GIT_COMMIT} \
+              -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.FIPSBuild=true" \
+    -o /out/selftest \
+    ./cmd/selftest
+
+# Verify BoringCrypto symbols are present
+RUN go tool nm /out/cloudflared | grep -q '_Cfunc__goboringcrypto_' || \
+    (echo "ERROR: BoringCrypto symbols not found in binary" && exit 1)
+
+# Run self-test
+RUN /out/selftest || (echo "ERROR: Self-test failed" && exit 1)
+
+# ============================================================
+# Stage 2: Minimal runtime image
+# ============================================================
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+ARG VERSION=dev
+
+LABEL maintainer="cloudflared-fips" \
+      version="${VERSION}" \
+      description="FIPS 140-2 compliant cloudflared tunnel" \
+      fips.module="BoringCrypto" \
+      fips.cert="4407"
+
+RUN microdnf install -y ca-certificates shadow-utils && \
+    microdnf clean all && \
+    groupadd -r cloudflared && \
+    useradd -r -g cloudflared -s /sbin/nologin cloudflared
+
+COPY --from=builder /out/cloudflared /usr/local/bin/cloudflared
+COPY --from=builder /out/selftest /usr/local/bin/selftest
+
+RUN chmod +x /usr/local/bin/cloudflared /usr/local/bin/selftest
+
+USER cloudflared
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD selftest || exit 1
+
+ENTRYPOINT ["cloudflared"]
+CMD ["--help"]

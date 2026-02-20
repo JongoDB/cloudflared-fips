@@ -30,3 +30,10 @@ Thumbs.db
 # Environment
 .env
 .env.*
+
+# Dashboard
+dashboard/node_modules/
+dashboard/dist/
+
+# Build output
+build-output/
