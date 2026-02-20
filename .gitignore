@@ -31,7 +31,8 @@ Thumbs.db
 .env
 .env.*
 
-# Dashboard
+# Node modules
+node_modules/
 dashboard/node_modules/
 dashboard/dist/
 

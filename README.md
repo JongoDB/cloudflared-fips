@@ -67,6 +67,33 @@ make manifest
 make docker-build
 ```
 
+## Dashboard Screenshots
+
+### Dashboard Overview
+Summary bar showing 39 total checks, pass/warn/fail counts, overall compliance percentage, and the Build Manifest toggle.
+
+![Dashboard Overview](docs/screenshots/dashboard-overview.png)
+
+### Full Dashboard
+All five compliance checklist sections: Client Posture, Cloudflare Edge, Tunnel, Local Service, and Build & Supply Chain.
+
+![Full Dashboard](docs/screenshots/dashboard-full.png)
+
+### Expanded Checklist Item
+Each checklist item expands to show What, Why, Remediation steps, and NIST SP 800-53 control references.
+
+![Expanded Checklist Item](docs/screenshots/checklist-item-expanded.png)
+
+### Build Manifest Panel
+Build metadata, upstream cloudflared version, FIPS certificate details (BoringSSL #3678, RHEL OpenSSL #4349), and integrity hashes.
+
+![Build Manifest](docs/screenshots/build-manifest-expanded.png)
+
+### Summary Bar Close-up
+Top-level compliance summary with export controls and BoringCrypto certificate badge.
+
+![Summary Bar](docs/screenshots/summary-bar.png)
+
 ## FIPS Compliance
 
 This project uses `GOEXPERIMENT=boringcrypto` to link Go's BoringCrypto module, which has completed FIPS 140-2 validation (certificate #4407). The build pipeline:
