@@ -1,49 +1,60 @@
 {
-  "schema_version": "1.0.0",
-  "build_id": "2024.12.2-fips-abc1234",
-  "timestamp": "2024-12-15T14:30:00Z",
-  "source": {
-    "repository": "https://github.com/cloudflare/cloudflared",
-    "branch": "main",
-    "commit": "abc1234def5678",
-    "tag": "2024.12.2"
-  },
-  "platform": {
-    "build_os": "linux",
-    "build_arch": "amd64",
-    "target_os": "linux",
-    "target_arch": "amd64",
-    "builder": "rhel-ubi9-fips"
-  },
-  "go_version": "1.24.0",
-  "go_experiment": "boringcrypto",
-  "cgo_enabled": true,
+  "version": "1.0.0",
+  "commit": "abc1234",
+  "build_time": "2026-02-20T00:00:00Z",
+  "cloudflared_upstream_version": "2025.2.0",
+  "cloudflared_upstream_commit": "059f4d9",
+  "crypto_engine": "boringcrypto",
+  "boringssl_version": "fips-20220613",
   "fips_certificates": [
     {
-      "module": "BoringCrypto",
-      "cert_number": "4407",
-      "level": "FIPS 140-2 Level 1",
-      "validated_on": "2023-11-01",
-      "expires_on": "2028-11-01",
-      "cmvp_url": "https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/4407"
+      "module": "BoringSSL",
+      "certificate": "#3678",
+      "algorithms": [
+        "AES-GCM-128",
+        "AES-GCM-256",
+        "SHA-256",
+        "SHA-384",
+        "SHA-512",
+        "HMAC-SHA-256",
+        "ECDSA-P256",
+        "ECDSA-P384",
+        "RSA-2048",
+        "RSA-4096",
+        "ECDH-P256",
+        "ECDH-P384",
+        "HKDF",
+        "TLS-1.2-KDF",
+        "TLS-1.3-KDF"
+      ]
+    },
+    {
+      "module": "RHEL OpenSSL",
+      "certificate": "#4349",
+      "algorithms": [
+        "AES-CBC-128",
+        "AES-CBC-256",
+        "AES-GCM-128",
+        "AES-GCM-256",
+        "SHA-1",
+        "SHA-256",
+        "SHA-384",
+        "SHA-512",
+        "HMAC-SHA-1",
+        "HMAC-SHA-256",
+        "RSA-2048",
+        "RSA-4096",
+        "ECDSA-P256",
+        "ECDSA-P384",
+        "ECDH-P256",
+        "ECDH-P384",
+        "TLS-1.2-KDF",
+        "TLS-1.3-KDF"
+      ]
     }
   ],
-  "binary": {
-    "name": "cloudflared",
-    "path": "build-output/cloudflared",
-    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "size": 52428800,
-    "stripped": false
-  },
-  "sbom": {
-    "format": "spdx-json",
-    "path": "build-output/sbom.spdx.json",
-    "sha256": "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
-  },
-  "verification": {
-    "boring_crypto_symbols": true,
-    "self_test_passed": true,
-    "banned_ciphers": [],
-    "static_linked": false
-  }
+  "target_platform": "linux/amd64",
+  "package_format": "rpm",
+  "sbom_sha256": "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+  "binary_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

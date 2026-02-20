@@ -29,51 +29,22 @@ export interface ComplianceSummary {
 }
 
 export interface BuildManifest {
-  schema_version: string
-  build_id: string
-  timestamp: string
-  source: {
-    repository: string
-    branch: string
-    commit: string
-    tag: string
-  }
-  platform: {
-    build_os: string
-    build_arch: string
-    target_os: string
-    target_arch: string
-    builder: string
-  }
-  go_version: string
-  go_experiment: string
-  cgo_enabled: boolean
+  version: string
+  commit: string
+  build_time: string
+  cloudflared_upstream_version: string
+  cloudflared_upstream_commit: string
+  crypto_engine: string
+  boringssl_version: string
   fips_certificates: FIPSCertificate[]
-  binary: {
-    name: string
-    path: string
-    sha256: string
-    size: number
-    stripped: boolean
-  }
-  sbom: {
-    format: string
-    path: string
-    sha256: string
-  }
-  verification: {
-    boring_crypto_symbols: boolean
-    self_test_passed: boolean
-    banned_ciphers: string[]
-    static_linked: boolean
-  }
+  target_platform: string
+  package_format: string
+  sbom_sha256: string
+  binary_sha256: string
 }
 
 export interface FIPSCertificate {
   module: string
-  cert_number: string
-  level: string
-  validated_on: string
-  expires_on: string
-  cmvp_url: string
+  certificate: string
+  algorithms: string[]
 }

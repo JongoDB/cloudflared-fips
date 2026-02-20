@@ -3,6 +3,7 @@ import Layout from '../components/Layout'
 import SummaryBar from '../components/SummaryBar'
 import BuildManifestPanel from '../components/BuildManifestPanel'
 import ChecklistSection from '../components/ChecklistSection'
+import ExportButtons from '../components/ExportButtons'
 import { mockSections, mockManifest } from '../data/mockData'
 import type { ComplianceSummary } from '../types/compliance'
 
@@ -33,6 +34,14 @@ export default function DashboardPage() {
 
   return (
     <Layout>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <p className="text-sm text-gray-500">
+            Localhost-only dashboard &mdash; all assets bundled, air-gap friendly
+          </p>
+        </div>
+        <ExportButtons sections={mockSections} manifest={mockManifest} summary={summary} />
+      </div>
       <SummaryBar summary={summary} />
       <BuildManifestPanel manifest={mockManifest} />
       <div>

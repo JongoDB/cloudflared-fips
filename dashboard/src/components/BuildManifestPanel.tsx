@@ -19,7 +19,7 @@ export default function BuildManifestPanel({ manifest }: BuildManifestPanelProps
             Build Manifest
           </h3>
           <p className="text-sm text-gray-500">
-            Build {manifest.build_id} &mdash; {manifest.timestamp}
+            v{manifest.version} &mdash; {manifest.build_time}
           </p>
         </div>
         <svg
@@ -43,125 +43,101 @@ export default function BuildManifestPanel({ manifest }: BuildManifestPanelProps
           <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                Source
+                Build Info
               </h4>
               <dl className="space-y-1 text-sm">
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">Repository</dt>
-                  <dd className="text-gray-900 font-mono text-xs">
-                    {manifest.source.repository}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-gray-500">Tag</dt>
-                  <dd className="text-gray-900 font-mono">{manifest.source.tag}</dd>
+                  <dt className="text-gray-500">Version</dt>
+                  <dd className="text-gray-900 font-mono">{manifest.version}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-gray-500">Commit</dt>
-                  <dd className="text-gray-900 font-mono">{manifest.source.commit}</dd>
+                  <dd className="text-gray-900 font-mono">{manifest.commit}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-gray-500">Build Time</dt>
+                  <dd className="text-gray-900 font-mono">{manifest.build_time}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-gray-500">Platform</dt>
+                  <dd className="text-gray-900 font-mono">{manifest.target_platform}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-gray-500">Package</dt>
+                  <dd className="text-gray-900 font-mono">{manifest.package_format}</dd>
                 </div>
               </dl>
             </div>
 
             <div>
               <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                Platform
+                Upstream cloudflared
               </h4>
               <dl className="space-y-1 text-sm">
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">Target</dt>
+                  <dt className="text-gray-500">Version</dt>
                   <dd className="text-gray-900 font-mono">
-                    {manifest.platform.target_os}/{manifest.platform.target_arch}
+                    {manifest.cloudflared_upstream_version}
                   </dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">Builder</dt>
+                  <dt className="text-gray-500">Commit</dt>
                   <dd className="text-gray-900 font-mono">
-                    {manifest.platform.builder}
+                    {manifest.cloudflared_upstream_commit}
                   </dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">Go Version</dt>
-                  <dd className="text-gray-900 font-mono">
-                    {manifest.go_version}
-                  </dd>
+                  <dt className="text-gray-500">Crypto Engine</dt>
+                  <dd className="text-gray-900 font-mono">{manifest.crypto_engine}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">GOEXPERIMENT</dt>
-                  <dd className="text-gray-900 font-mono">
-                    {manifest.go_experiment}
-                  </dd>
+                  <dt className="text-gray-500">BoringSSL Version</dt>
+                  <dd className="text-gray-900 font-mono">{manifest.boringssl_version}</dd>
                 </div>
               </dl>
             </div>
 
-            <div>
+            <div className="md:col-span-2">
               <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">
                 FIPS Certificates
               </h4>
-              {manifest.fips_certificates.map((cert) => (
-                <div
-                  key={cert.cert_number}
-                  className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm"
-                >
-                  <p className="font-semibold text-green-800">
-                    {cert.module} &mdash; #{cert.cert_number}
-                  </p>
-                  <p className="text-green-700">{cert.level}</p>
-                  <p className="text-green-600 text-xs mt-1">
-                    Validated: {cert.validated_on} | Expires: {cert.expires_on}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <div>
-              <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                Verification
-              </h4>
-              <dl className="space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <dt className="text-gray-500">BoringCrypto Symbols</dt>
-                  <dd>
-                    {manifest.verification.boring_crypto_symbols ? (
-                      <span className="text-green-600 font-medium">Verified</span>
-                    ) : (
-                      <span className="text-red-600 font-medium">Missing</span>
-                    )}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-gray-500">Self-Test</dt>
-                  <dd>
-                    {manifest.verification.self_test_passed ? (
-                      <span className="text-green-600 font-medium">Passed</span>
-                    ) : (
-                      <span className="text-red-600 font-medium">Failed</span>
-                    )}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-gray-500">Banned Ciphers</dt>
-                  <dd className="text-gray-900">
-                    {manifest.verification.banned_ciphers.length === 0
-                      ? 'None detected'
-                      : manifest.verification.banned_ciphers.join(', ')}
-                  </dd>
-                </div>
-              </dl>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {manifest.fips_certificates.map((cert) => (
+                  <div
+                    key={cert.certificate}
+                    className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm"
+                  >
+                    <p className="font-semibold text-green-800">
+                      {cert.module} &mdash; {cert.certificate}
+                    </p>
+                    <p className="text-green-700 text-xs mt-1">
+                      Algorithms: {cert.algorithms.slice(0, 6).join(', ')}
+                      {cert.algorithms.length > 6 && ` +${cert.algorithms.length - 6} more`}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
           <div className="mt-4 pt-4 border-t border-gray-100">
             <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">
-              Binary
+              Integrity Hashes
             </h4>
-            <p className="text-xs font-mono text-gray-600 break-all">
-              SHA-256: {manifest.binary.sha256}
-            </p>
-            <p className="text-xs text-gray-500 mt-1">
-              Size: {(manifest.binary.size / 1024 / 1024).toFixed(1)} MB
-            </p>
+            <dl className="space-y-1">
+              <div>
+                <dt className="text-xs text-gray-500">Binary SHA-256</dt>
+                <dd className="text-xs font-mono text-gray-600 break-all">
+                  {manifest.binary_sha256}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-gray-500">SBOM SHA-256</dt>
+                <dd className="text-xs font-mono text-gray-600 break-all">
+                  {manifest.sbom_sha256}
+                </dd>
+              </div>
+            </dl>
           </div>
         </div>
       )}

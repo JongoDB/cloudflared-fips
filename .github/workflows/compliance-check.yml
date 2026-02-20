@@ -84,7 +84,12 @@ jobs:
             README.md \
             docs/ao-narrative.md \
             docs/control-mapping.md \
-            docs/architecture-diagram.md; do
+            docs/architecture-diagram.md \
+            docs/crypto-module-usage.md \
+            docs/fips-justification-letter.md \
+            docs/client-hardening-guide.md \
+            docs/continuous-monitoring-plan.md \
+            docs/incident-response-addendum.md; do
             if [ ! -f "$doc" ]; then
               echo "MISSING: $doc"
               MISSING=$((MISSING + 1))
@@ -110,9 +115,11 @@ jobs:
           import json, sys
           with open('configs/build-manifest.json') as f:
               data = json.load(f)
-          required = ['schema_version', 'build_id', 'timestamp', 'source',
-                      'platform', 'go_version', 'go_experiment', 'cgo_enabled',
-                      'fips_certificates', 'binary', 'sbom', 'verification']
+          required = ['version', 'commit', 'build_time',
+                      'cloudflared_upstream_version', 'cloudflared_upstream_commit',
+                      'crypto_engine', 'boringssl_version',
+                      'fips_certificates', 'target_platform', 'package_format',
+                      'sbom_sha256', 'binary_sha256']
           missing = [k for k in required if k not in data]
           if missing:
               print(f'Missing required fields: {missing}')
@@ -124,10 +131,13 @@ jobs:
               print('fips_certificates array must not be empty')
               sys.exit(1)
           for cert in data['fips_certificates']:
-              cert_required = ['module', 'cert_number', 'level']
+              cert_required = ['module', 'certificate', 'algorithms']
               cert_missing = [k for k in cert_required if k not in cert]
               if cert_missing:
                   print(f'FIPS certificate missing fields: {cert_missing}')
+                  sys.exit(1)
+              if not isinstance(cert['algorithms'], list):
+                  print('algorithms must be an array')
                   sys.exit(1)
           print('Manifest validation passed')
           "
