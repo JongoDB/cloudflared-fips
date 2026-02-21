@@ -521,22 +521,232 @@ Schema (implemented):
 
 ---
 
+## Phase 6 — End-to-End FIPS Observability Implementation Roadmap
+
+This phase turns the architecture research (Findings 1-7, Deployment Tiers, Crypto Module Matrix) into working code. Ordered by dependency — later items build on earlier ones.
+
+### 6.1 Modular Crypto Backend
+
+**Goal:** Users select their FIPS module per platform. Dashboard reports active module + CMVP cert.
+
+- [ ] Add `pkg/fipsbackend/` package with interface:
+  ```go
+  type FIPSBackend interface {
+      Name() string              // "boringcrypto", "go-native", "systemcrypto", "rhel-openssl"
+      CMVPCertificate() string   // "#4735", "pending (CAVP A6650)", etc.
+      FIPSStandard() string      // "140-2", "140-3", "140-3 (pending)"
+      Validated() bool           // true if CMVP cert issued
+      SelfTest() (bool, error)   // run module-specific self-test
+  }
+  ```
+- [ ] Implement `BoringCryptoBackend` (current `GOEXPERIMENT=boringcrypto` — detect via build tags)
+- [ ] Implement `GoNativeBackend` (`GODEBUG=fips140=on` — detect via `crypto/fips140` package)
+- [ ] Implement `SystemCryptoBackend` (Microsoft `GOEXPERIMENT=systemcrypto` — detect via platform)
+- [ ] Build manifest: add `fips_backend` field identifying which module was used at build time
+- [ ] Dashboard: display active backend, cert number, validation status, and 140-2 vs 140-3 badge
+- [ ] Self-test suite: dispatch to backend-specific KAT runners
+
+### 6.2 Fix CI Cross-Platform Builds
+
+**Goal:** Every CI matrix entry either produces a real binary or fails visibly.
+
+- [ ] Remove `|| echo` from cross-compile step — builds must fail loudly
+- [ ] Split CI matrix into platform-specific strategies:
+  - **linux/amd64, linux/arm64:** `GOEXPERIMENT=boringcrypto` + `CGO_ENABLED=1` on RHEL UBI 9 (current, works)
+  - **linux/arm64 from amd64:** Install `gcc-aarch64-linux-gnu`, set `CC=aarch64-linux-gnu-gcc`
+  - **windows/amd64, windows/arm64:** Use `runs-on: windows-latest` with Microsoft Build of Go (`GOEXPERIMENT=systemcrypto`), or pure Go native FIPS (`GODEBUG=fips140=on` once validated)
+  - **darwin/amd64, darwin/arm64:** Use `runs-on: macos-latest` with Microsoft Build of Go or Go native FIPS
+  - **container/amd64, container/arm64:** `docker buildx build --platform` with Dockerfile.fips
+- [ ] Add build flag annotation: each artifact records which FIPS backend was used
+- [ ] Self-test: runs on all platforms where native execution is possible
+
+### 6.3 Real Packaging
+
+**Goal:** Produce installable artifacts, not echo stubs.
+
+- [ ] **RPM:** Create `cloudflared-fips.spec` file; run `rpmbuild` in RHEL UBI 9 container
+- [ ] **DEB:** Create `DEBIAN/control`, `postinst`, `prerm`; run `dpkg-deb --build`
+- [ ] **OCI container:** Invoke `docker build -f build/Dockerfile.fips` or `buildah` in CI
+- [ ] **MSI (Windows):** Create WiX XML manifest; build with `wix build` on Windows runner
+- [ ] **macOS .pkg:** Create Distribution XML; build with `pkgbuild` + `productbuild` on macOS runner
+- [ ] All packages include: binary, self-test, sample config, build manifest
+- [ ] All packages run self-test as post-install verification
+
+### 6.4 Real SBOM Generation
+
+**Goal:** Full dependency-level SBOMs flagging crypto operations.
+
+- [ ] Install `cyclonedx-gomod` in CI; generate real CycloneDX SBOM from `go.mod`
+- [ ] Install `spdx-sbom-generator` or use `go mod download -json` → SPDX conversion
+- [ ] Post-process SBOM: annotate dependencies that import `crypto/*` packages
+- [ ] For each crypto dependency: add `fips_module` property indicating which validated module handles it
+- [ ] Include SBOMs in build artifacts and manifest (`sbom_sha256` is real)
+
+### 6.5 Dashboard — Wire SSE to Frontend
+
+**Goal:** Real-time compliance updates from Go backend to React frontend.
+
+- [ ] Add `useComplianceSSE()` React hook connecting to `/api/v1/events`
+- [ ] Parse SSE `compliance` events, update dashboard state in real time
+- [ ] Show connection status indicator (connected / reconnecting / disconnected)
+- [ ] Fallback to polling if SSE connection fails (air-gap environments)
+- [ ] Add visual indicator when data refreshes (subtle flash or timestamp update)
+
+### 6.6 Dashboard — Honesty Indicators
+
+**Goal:** Every checklist item shows HOW it was verified.
+
+- [ ] Add `verificationMethod` field to `ChecklistItem` type:
+  - `"direct"` — measured locally (self-test, binary hash, OS FIPS mode)
+  - `"api"` — queried from Cloudflare API (Access policy, cipher config)
+  - `"probe"` — TLS handshake inspection (negotiated cipher, TLS version)
+  - `"inherited"` — relies on provider's FedRAMP authorization
+  - `"reported"` — client-reported via WARP/device posture
+- [ ] Display verification method badge next to each status badge in dashboard
+- [ ] Update mock data with correct verification methods per item
+- [ ] Tooltip on badge explains what "inherited" or "reported" means
+
+### 6.7 Live Compliance Checks — Local System
+
+**Goal:** Replace mock data with real system queries for Segment 2 and 3 items.
+
+- [ ] `checkBoringCryptoLinked()` — already implemented, wire to dashboard
+- [ ] `checkOSFIPSMode()` — read `/proc/sys/crypto/fips_enabled`, wire to dashboard
+- [ ] `checkBinaryIntegrity()` — hash running binary, compare to manifest `binary_sha256`
+- [ ] `checkCipherSuites()` — already implemented, wire to dashboard
+- [ ] `checkTunnelStatus()` — query cloudflared metrics endpoint (`localhost:2000/metrics`)
+  - Tunnel protocol (QUIC/HTTP2)
+  - Connection count (tunnel redundancy)
+  - Uptime
+  - Last heartbeat
+  - Version
+- [ ] `checkLocalService()` — attempt connection to ingress target, check if TLS, inspect cipher
+- [ ] `checkConfigDrift()` — hash current config file, compare to known-good baseline
+
+### 6.8 Live Compliance Checks — Cloudflare API
+
+**Goal:** Replace mock data with real Cloudflare API queries for Edge items.
+
+- [ ] Cloudflare API client (`pkg/cfapi/`) with token auth
+- [ ] `checkAccessPolicy()` — `GET /zones/{zone_id}/access/apps`
+- [ ] `checkCipherRestriction()` — `GET /zones/{zone_id}/settings/ciphers`
+- [ ] `checkMinTLSVersion()` — `GET /zones/{zone_id}/settings/min_tls_version`
+- [ ] `checkEdgeCertificate()` — `GET /zones/{zone_id}/ssl/certificate_packs`
+- [ ] `checkHSTS()` — `GET /zones/{zone_id}/settings/security_header`
+- [ ] `checkTunnelHealth()` — `GET /accounts/{account_id}/cfd_tunnel/{tunnel_id}`
+- [ ] Store Cloudflare API token in config (`configs/cloudflared-fips.yaml`) or env var
+- [ ] Rate limiting and caching (respect Cloudflare API limits)
+
+### 6.9 Live Compliance Checks — Client-Side FIPS Detection
+
+**Goal:** Detect whether connecting clients use FIPS-capable TLS.
+
+- [ ] **TLS ClientHello inspection:** In Go dashboard server, use `tls.Config.GetConfigForClient` callback
+  - Check if client offers ChaCha20-Poly1305 (non-FIPS; absence = FIPS signal)
+  - Check if client offers only AES-GCM + AES-CBC ciphers
+  - Log full cipher suite list per client connection
+- [ ] **JA3/JA4 fingerprinting:** Compute JA4 hash from ClientHello
+  - Maintain a known-FIPS fingerprint database (Windows FIPS IE/Edge, RHEL Firefox, macOS Safari)
+  - Dashboard shows per-connection: JA4 hash, FIPS match yes/no, browser identification
+- [ ] **WARP device posture integration:** Custom service-to-service API
+  - Endpoint agent checks OS FIPS mode (`/proc/sys/crypto/fips_enabled`, registry key)
+  - Reports to Cloudflare Access as custom posture check
+  - Dashboard queries Cloudflare for device posture results
+- [ ] Dashboard "Client Posture" section wired to real data from above sources
+
+### 6.10 Deployment Tier Support
+
+**Goal:** Product supports all three deployment tiers documented in architecture.
+
+#### Tier 1: Standard Cloudflare Tunnel (works today with 6.7 + 6.8)
+- [ ] Config option: `deployment_tier: standard`
+- [ ] Dashboard shows Tier 1 honesty indicators (edge items marked "inherited")
+
+#### Tier 2: Regional Services + Keyless SSL
+- [ ] Config option: `deployment_tier: regional_keyless`
+- [ ] Cloudflare API checks verify Regional Services is active for the zone
+- [ ] Cloudflare API checks verify Keyless SSL is configured
+- [ ] Dashboard shows HSM status and key location
+- [ ] Documentation: setup guide for Keyless SSL + Cloudflare Tunnel integration
+
+#### Tier 3: Self-Hosted FIPS Edge Proxy
+- [ ] `cmd/fips-proxy/main.go` — lightweight Go reverse proxy built with BoringCrypto
+  - TLS termination with FIPS cipher enforcement
+  - ClientHello inspection and JA4 fingerprinting built in
+  - Forwards to origin or to Cloudflare for backend security services
+  - Logs all TLS metadata for compliance dashboard consumption
+- [ ] Config option: `deployment_tier: self_hosted`
+- [ ] Dashboard connects to FIPS proxy for client-side TLS metadata
+- [ ] Dockerfile for deploying FIPS proxy in GovCloud (AWS/Azure/Google)
+- [ ] Terraform/CloudFormation templates for GovCloud deployment (stretch goal)
+
+### 6.11 FIPS 140-3 Migration
+
+**Goal:** Smooth transition before September 21, 2026 deadline.
+
+- [ ] Verify BoringCrypto FIPS 140-3 (#4735) works with current `GOEXPERIMENT=boringcrypto` integration
+  - Check if Go ships the 140-3 certified `.syso` or the older 140-2 version
+  - If 140-2 only: build from BoringSSL source at the 140-3 certified tag
+- [ ] Track Go native FIPS 140-3 CMVP validation status (currently MIP, CAVP A6650)
+  - When validated: add `GoNativeBackend` as primary recommendation
+  - Update build matrix to use `GODEBUG=fips140=on` instead of `GOEXPERIMENT=boringcrypto`
+- [ ] Dashboard: show FIPS standard version (140-2 vs 140-3) prominently
+- [ ] Dashboard: show days until 140-2 sunset with warning if still using 140-2 module
+- [ ] Update AO documentation templates with 140-3 references and migration guidance
+- [ ] Test all three deployment tiers with 140-3 modules
+
+### 6.12 Artifact Signing
+
+**Goal:** Cryptographically sign all build artifacts.
+
+- [ ] Container images: sign with cosign (Sigstore) in CI
+- [ ] Binaries and packages: sign with GPG key stored in GitHub Actions secrets
+- [ ] Publish public key for verification
+- [ ] Self-test verifies binary signature at startup (optional, configurable)
+- [ ] Build manifest includes signature hashes
+- [ ] Document key rotation procedure in AO package
+
+### Implementation Priority
+
+| Priority | Phase | Rationale |
+|----------|-------|-----------|
+| **P0 — Now** | 6.2 Fix CI builds | Broken builds undermine credibility |
+| **P0 — Now** | 6.5 Wire SSE frontend | Dashboard feels static without it |
+| **P0 — Now** | 6.6 Honesty indicators | Core differentiator — transparency |
+| **P1 — Next** | 6.7 Local system checks | Replaces mock data with real values |
+| **P1 — Next** | 6.1 Modular crypto backend | Required for multi-platform |
+| **P1 — Next** | 6.3 Real packaging | Users need installable artifacts |
+| **P2 — Soon** | 6.8 Cloudflare API integration | Fills edge section with real data |
+| **P2 — Soon** | 6.4 Real SBOM | Government procurement requirement |
+| **P2 — Soon** | 6.9 Client FIPS detection | End-to-end observability |
+| **P3 — Plan** | 6.10 Deployment tiers | Infrastructure-dependent |
+| **P3 — Plan** | 6.11 FIPS 140-3 migration | Deadline Sept 2026 |
+| **P3 — Plan** | 6.12 Artifact signing | Trust chain completion |
+
+---
+
 ## Technical Stack
 
-| Component | Technology | Status |
-|-----------|-----------|--------|
-| cloudflared build | Go 1.24 + `GOEXPERIMENT=boringcrypto`, RHEL UBI 9 | [x] Dockerfile.fips works e2e; build.sh orchestrates; CI matrix defined |
-| Dashboard backend | Go (sidecar binary) | [x] HTTP handlers, SSE endpoint, JSON export — serves static checker data, not live queries |
-| Dashboard frontend | React + TypeScript + Tailwind | [x] Built, all 39 items, expandable, screenshots captured |
-| Self-test suite | Go (KATs, cipher validation, BoringCrypto detection) | [x] Real NIST vectors, real runtime checks |
-| Compliance checks | syscalls + metrics API + Cloudflare API + TLS probing | [ ] Stub only — no live system queries |
-| Doc generation | Go templates → Markdown → PDF via pandoc | [ ] Not started |
-| CI — compliance | GitHub Actions: lint, test, docs check, manifest validation | [x] Fully implemented |
-| CI — build | GitHub Actions: 6-entry matrix, RHEL UBI 9 container | [x] Matrix defined, linux/amd64 compiles; macOS/Windows cross-compile fails silently |
-| SBOM | CycloneDX + SPDX | [ ] Schema stubs only, no real dependency enumeration |
-| Packaging | rpmbuild / dpkg-deb / WiX / OCI buildah | [ ] All echo stubs — no .spec, no DEBIAN/control, no WiX, no buildah invocation |
-| Artifact signing | cosign / GPG | [ ] Echo stub with documentation |
-| SSE real-time | Go backend → React frontend | [ ] Backend handler done; frontend EventSource consumer not wired |
+| Component | Technology | Status | Roadmap |
+|-----------|-----------|--------|---------|
+| cloudflared build | Go 1.24 + `GOEXPERIMENT=boringcrypto`, RHEL UBI 9 | [x] Dockerfile.fips works e2e; build.sh orchestrates | — |
+| Modular crypto backend | BoringCrypto / Go native / systemcrypto / RHEL OpenSSL | [ ] Not started | 6.1 |
+| Dashboard backend | Go (sidecar binary) | [x] HTTP handlers, SSE endpoint, JSON export — static data | 6.7, 6.8 |
+| Dashboard frontend | React + TypeScript + Tailwind | [x] Built, all 39 items, expandable, screenshots | 6.5, 6.6 |
+| Self-test suite | Go (KATs, cipher validation, BoringCrypto detection) | [x] Real NIST vectors, real runtime checks | 6.1 |
+| Local compliance checks | syscalls, cloudflared metrics, binary hash | [ ] Not started | 6.7 |
+| Cloudflare API integration | Access, cipher config, tunnel health, certificates | [ ] Not started | 6.8 |
+| Client FIPS detection | ClientHello inspection, JA4 fingerprint, WARP posture | [ ] Not started | 6.9 |
+| FIPS edge proxy | Go reverse proxy with BoringCrypto for Tier 3 | [ ] Not started | 6.10 |
+| CI — compliance | GitHub Actions: lint, test, docs check, manifest | [x] Fully implemented | — |
+| CI — build | GitHub Actions: 6-entry matrix, RHEL UBI 9 | [x] Partial — linux works; macOS/Windows broken | 6.2 |
+| Packaging | rpmbuild / dpkg-deb / WiX / OCI / .pkg | [ ] All echo stubs | 6.3 |
+| SBOM | CycloneDX + SPDX via real tooling | [ ] Schema stubs only | 6.4 |
+| Artifact signing | cosign / GPG | [ ] Echo stub | 6.12 |
+| SSE real-time | Go backend → React EventSource | [ ] Backend done; frontend not wired | 6.5 |
+| Honesty indicators | Verification method badges on dashboard items | [ ] Not started | 6.6 |
+| FIPS 140-3 migration | Module migration before Sept 2026 sunset | [ ] Research done; implementation not started | 6.11 |
+| Doc generation | Go templates → Markdown → PDF via pandoc | [ ] Not started | — |
 
 ---
 
@@ -563,22 +773,30 @@ Schema (implemented):
 ├── CLAUDE.md                    # This file — spec & roadmap
 ├── build/
 │   ├── Dockerfile.fips          # RHEL UBI 9 FIPS build container
+│   ├── Dockerfile.fips-proxy    # [planned] FIPS edge proxy container (Tier 3)
 │   ├── build.sh                 # Build orchestrator (clones upstream)
+│   ├── cloudflared-fips.spec    # [planned] RPM spec file
+│   ├── debian/                  # [planned] DEB packaging (control, postinst, prerm)
 │   └── patches/README.md
 ├── cmd/
 │   ├── selftest/main.go         # Standalone self-test CLI
-│   └── dashboard/main.go        # Dashboard server (localhost-only)
+│   ├── dashboard/main.go        # Dashboard server (localhost-only)
+│   └── fips-proxy/main.go       # [planned] FIPS edge proxy (Tier 3)
 ├── internal/
 │   ├── selftest/                # Self-test orchestrator, ciphers, KATs
 │   ├── compliance/              # Compliance state aggregation
-│   └── dashboard/               # HTTP API handlers + SSE
+│   ├── dashboard/               # HTTP API handlers + SSE
+│   └── tlsprobe/                # [planned] TLS ClientHello inspector, JA4 fingerprinting
 ├── pkg/
 │   ├── buildinfo/               # Linker-injected build metadata
-│   └── manifest/                # Build manifest types + read/write
+│   ├── manifest/                # Build manifest types + read/write
+│   ├── fipsbackend/             # [planned] Modular FIPS crypto backend interface
+│   └── cfapi/                   # [planned] Cloudflare API client
 ├── dashboard/                   # React + TypeScript + Tailwind (Vite)
 │   └── src/
 │       ├── types/compliance.ts  # TS types matching spec schema
 │       ├── data/mockData.ts     # Mock data: all 39 checklist items
+│       ├── hooks/               # [planned] useComplianceSSE, useVerificationMethod
 │       ├── components/          # StatusBadge, ChecklistItem, etc.
 │       └── pages/DashboardPage.tsx
 ├── configs/
@@ -587,7 +805,8 @@ Schema (implemented):
 ├── scripts/
 │   ├── check-fips.sh            # Post-build FIPS validation
 │   ├── generate-manifest.sh     # Produce build-manifest.json
-│   └── verify-boring.sh         # Verify BoringCrypto symbols
+│   ├── verify-boring.sh         # Verify BoringCrypto symbols
+│   └── take-screenshots.cjs     # Headless dashboard screenshots
 ├── docs/
 │   ├── ao-narrative.md          # SSP template
 │   ├── crypto-module-usage.md   # Operation → Algorithm → Module → Cert
@@ -596,7 +815,9 @@ Schema (implemented):
 │   ├── continuous-monitoring-plan.md # Ongoing compliance verification
 │   ├── incident-response-addendum.md # Crypto failure procedures
 │   ├── control-mapping.md       # NIST 800-53 control mapping
-│   └── architecture-diagram.md  # Mermaid diagrams
+│   ├── architecture-diagram.md  # Mermaid diagrams
+│   ├── deployment-tier-guide.md # [planned] Tier 1/2/3 setup guides
+│   └── screenshots/             # Dashboard screenshots (5 PNGs)
 └── .github/workflows/
     ├── fips-build.yml           # 6-entry matrix (10 platform targets)
     └── compliance-check.yml     # PR validation
