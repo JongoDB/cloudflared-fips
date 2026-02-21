@@ -1,4 +1,4 @@
-.PHONY: build-fips selftest tui dashboard-dev dashboard-build lint test manifest docker-build docs sbom crypto-audit clean
+.PHONY: build-fips selftest setup status tui dashboard-dev dashboard-build lint test manifest docker-build docs sbom crypto-audit clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -27,7 +27,15 @@ selftest:
 		go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/selftest ./cmd/selftest
 	$(OUTPUT_DIR)/selftest
 
-# Build the TUI (setup wizard + status monitor)
+# Run the setup wizard (no build step required)
+setup:
+	@go run ./cmd/tui setup
+
+# Run the live compliance status monitor (no build step required)
+status:
+	@go run ./cmd/tui status
+
+# Build the TUI binary (optional — for distribution)
 tui:
 	@mkdir -p $(OUTPUT_DIR)
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips-tui ./cmd/tui

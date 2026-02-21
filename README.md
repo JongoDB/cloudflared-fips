@@ -187,8 +187,7 @@ The product detects client FIPS capability through:
 ### Configure with the setup wizard
 
 ```bash
-go build -o cloudflared-fips-tui ./cmd/tui
-./cloudflared-fips-tui setup
+make setup
 ```
 
 Walks through 5 pages: tunnel config, dashboard wiring, deployment tier, FIPS options, review — then writes `configs/cloudflared-fips.yaml`.
@@ -204,7 +203,7 @@ npm run dev
 ### Monitor compliance from the terminal
 
 ```bash
-./cloudflared-fips-tui status --api localhost:8080 --interval 5s
+make status
 ```
 
 Polls the dashboard API and renders all 41 checklist items with pass/warn/fail in a scrollable terminal view. Useful for headless/SSH environments.
@@ -323,7 +322,7 @@ A lightweight alternative to the web dashboard for headless and SSH environments
 ### Setup Wizard
 
 ```bash
-./cloudflared-fips-tui setup
+make setup
 ```
 
 Interactive 5-page wizard:
@@ -341,7 +340,13 @@ Navigation: `Tab`/`Enter` = next, `Shift+Tab` = back, `Ctrl+C` = quit.
 ### Status Monitor
 
 ```bash
-./cloudflared-fips-tui status [--api localhost:8080] [--interval 5s]
+make status
+```
+
+Or with custom options:
+
+```bash
+go run ./cmd/tui status --api localhost:8080 --interval 5s
 ```
 
 Polls `GET /api/v1/compliance` and renders all 41 items grouped by section:
