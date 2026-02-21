@@ -38,6 +38,11 @@ dashboard/dist/
 
 # Build output
 build-output/
+tui
+docs/generated/
+
+# Vite cache
+.vite/
 
 # Upstream cloudflared source (cloned at build time, not committed)
 upstream-cloudflared/
