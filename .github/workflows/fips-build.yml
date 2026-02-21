@@ -104,13 +104,17 @@ jobs:
             exit 1
           fi
 
-      - name: Generate SBOM
-        working-directory: upstream-cloudflared
+      - name: Install SBOM tools
         run: |
-          echo '{"bomFormat":"CycloneDX","specVersion":"1.5","serialNumber":"urn:uuid:'$(cat /proc/sys/kernel/random/uuid)'","version":1,"metadata":{"component":{"name":"cloudflared-fips","version":"'"${UPSTREAM_VERSION}-fips"'"}}}' \
-            > /tmp/sbom.cyclonedx.json
-          echo '{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"cloudflared-fips","documentNamespace":"https://github.com/cloudflared-fips/cloudflared-fips"}' \
-            > /tmp/sbom.spdx.json
+          /usr/local/go/bin/go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest 2>/dev/null || true
+          echo "$(/usr/local/go/bin/go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Generate SBOM
+        run: |
+          bash scripts/generate-sbom.sh \
+            upstream-cloudflared \
+            /tmp \
+            "${UPSTREAM_VERSION}-fips"
 
       - name: Build self-test binary
         if: matrix.goarch == 'amd64'
