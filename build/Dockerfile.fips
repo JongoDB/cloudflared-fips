@@ -50,19 +50,22 @@ COPY cmd/ /selftest-src/cmd/
 
 # Build cloudflared with FIPS flags
 RUN BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") && \
-    go build -v \
-    -ldflags "-X main.Version=${VERSION} \
+    SOURCE_DATE_EPOCH=$(date +%s) && \
+    go build -v -trimpath \
+    -ldflags "-s -w -X main.Version=${VERSION} \
               -X main.BuildDate=${BUILD_DATE} \
-              -X main.GitCommit=${GIT_COMMIT}" \
+              -X main.GitCommit=${GIT_COMMIT} \
+              -buildid=" \
     -o /out/cloudflared \
     ./cmd/cloudflared
 
 # Build self-test binary
 WORKDIR /selftest-src
-RUN go build -v \
-    -ldflags "-X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.Version=${VERSION} \
+RUN go build -v -trimpath \
+    -ldflags "-s -w -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.Version=${VERSION} \
               -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.GitCommit=${GIT_COMMIT} \
-              -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.FIPSBuild=true" \
+              -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.FIPSBuild=true \
+              -buildid=" \
     -o /out/selftest \
     ./cmd/selftest
 

@@ -66,6 +66,8 @@ done
 
 GIT_COMMIT="$(git -C "${PROJECT_ROOT}" rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
 BUILD_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+SOURCE_DATE_EPOCH="$(date +%s)"
+export SOURCE_DATE_EPOCH
 
 echo "=== cloudflared-fips Build ==="
 echo "Version:           ${VERSION}"

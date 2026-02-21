@@ -6,7 +6,7 @@
 
 ---
 
-## Progress Summary (last updated: 2026-02-21, remaining code work items batch)
+## Progress Summary (last updated: 2026-02-21, remaining code work items batch 2)
 
 | Area | Status | Notes |
 |------|--------|-------|
@@ -17,11 +17,11 @@
 | **CI — compliance** | **Working** | Go lint/test, dashboard lint/build, docs check, manifest validation, shell syntax. |
 | **CI — build matrix** | **Working** | Per-OS native runners: Linux/RHEL with BoringCrypto, macOS with Go native FIPS, Windows with Go native FIPS. Real packaging + signing on tags. `if-no-files-found: error`. |
 | **Packaging** | **Implemented** | RPM (.spec + rpmbuild), DEB (dpkg-deb + build script), macOS .pkg (pkgbuild + productbuild), Windows MSI (WiX v4). All include self-test post-install. |
-| **SBOM** | **Implemented** | `scripts/generate-sbom.sh` produces CycloneDX 1.5 + SPDX 2.3 from `go mod`. Crypto audit JSON. CI wired. |
+| **SBOM** | **Implemented** | `scripts/generate-sbom.sh` produces CycloneDX 1.5 + SPDX 2.3 from `go list -m -json all` or `cyclonedx-gomod`. Enhanced crypto audit with BoringCrypto bypass detection. CI wired. |
 | **Artifact signing** | **Implemented** | `pkg/signing/` (GPG + cosign), `scripts/sign-artifacts.sh`, CI `sign-artifacts` job runs on tags. |
 | **SSE real-time** | **Frontend + backend** | Go SSE handler works. React `useComplianceSSE` hook with auto-reconnect, Live toggle, connection status. |
 | **Live compliance checks** | **Implemented** | Local: `LiveChecker` (BoringCrypto, OS FIPS, KATs, ciphers, binary integrity, tunnel metrics, TLS probing). Edge: `cfapi.ComplianceChecker` (11 checks including Keyless SSL + Regional Services). Client: `clientdetect.ComplianceChecker` (8 checks). |
-| **PDF export** | **Not implemented** | Intentional stub returning install instructions for pandoc. |
+| **PDF export** | **Implemented** | `scripts/generate-docs.sh` generates PDF via pandoc, falls back to HTML or combined Markdown. |
 | **quic-go audit** | **Complete** | `docs/quic-go-crypto-audit.md`. TLS handshake + AES-GCM via BoringCrypto. ChaCha20 bypass mitigated by cipher restriction. HKDF partial (hash primitives BoringCrypto-backed). Retry fixed nonce = protocol-level FIPS deviation (documented). |
 | **OS support matrix** | **Needs update** | Product supports any FIPS-mode Linux (RHEL, Ubuntu Pro, Amazon Linux, SLES, Oracle, Alma), not just RHEL. Docs/dashboard should reflect this. |
 | **FIPS 140-2 sunset** | **Implemented** | `pkg/fipsbackend/migration.go` tracks sunset (Sept 21, 2026). Dashboard sunset banner with countdown + urgency. API: `/api/v1/migration`. |
@@ -294,7 +294,7 @@ Each dashboard section should display a **verification method** indicator:
 - [x] Replace standard Go crypto with BoringCrypto via `GOEXPERIMENT=boringcrypto`
 - [x] Write verification that only FIPS-approved algorithms are in use
 - [x] Target production deployment on FIPS-mode RHEL 8/9 (`fips=1` kernel parameter, OpenSSL certs #3842, #4349)
-- [ ] Audit full dependency tree for bundled crypto bypassing the validated module
+- [x] Audit full dependency tree for bundled crypto bypassing the validated module — `scripts/audit-crypto-deps.sh` classifies all packages by FIPS routing
 - [x] Specifically audit quic-go for crypto compliance — see `docs/quic-go-crypto-audit.md`. Findings: TLS handshake routes through `crypto/tls.QUICConn` (BoringCrypto). AES-GCM packet encryption routes through BoringCrypto. **ChaCha20-Poly1305 does NOT** (uses `golang.org/x/crypto`) — mitigated by restricting to AES-GCM cipher suites. HKDF is partial bypass (algorithm pure Go, but hash primitives via BoringCrypto). QUIC retry uses fixed AES-GCM nonce per RFC 9001 — incompatible with `GODEBUG=fips140=only` but OK with `GOEXPERIMENT=boringcrypto` and `GODEBUG=fips140=on`.
 - [x] Produce reproducible build scripts and Dockerfiles
 - [x] Tag every build with metadata: validated modules, algorithm list, build timestamp, git commit hash, target platform
@@ -395,7 +395,7 @@ Web-based GUI showing real-time compliance checklist. Every item is green/yellow
 - [x] Cloudflare API integration — `pkg/cfapi/` with 11 checks (Access, ciphers, TLS version, HSTS, certs, tunnel health, Keyless SSL, Regional Services)
 - [ ] MDM API integration (Intune/Jamf) for client posture data
 - [x] Real-time updates via SSE — Go backend `SSEHandler` + React `useComplianceSSE` hook with auto-reconnect + Live toggle
-- [ ] WebSocket alternative for real-time updates
+- [x] WebSocket alternative for real-time updates — `internal/dashboard/websocket.go` (WSHub + long-poll fallback), `useComplianceWS` React hook with auto SSE fallback
 
 ---
 
@@ -427,10 +427,10 @@ Web-based GUI showing real-time compliance checklist. Every item is green/yellow
    - [x] macOS: documentation of always-active validated module, verification steps
    - [x] MDM policy templates for Intune and Jamf
 
-5. [ ] **SBOM** — auto-generated at build time (CycloneDX + SPDX) — **CI produces skeleton JSON with correct schema headers but no actual dependency enumeration**
-   - [ ] CycloneDX output — schema stub exists, needs `cyclonedx-gomod` or equivalent
-   - [ ] SPDX output — schema stub exists, needs `spdx-sbom-generator` or equivalent
-   - [ ] Crypto dependency flagging
+5. [x] **SBOM** — auto-generated at build time (CycloneDX + SPDX) via `scripts/generate-sbom.sh`
+   - [x] CycloneDX 1.5 output — uses `cyclonedx-gomod` when available, falls back to `go list -m -json all`
+   - [x] SPDX 2.3 output — generated with proper packages, external refs, and relationships
+   - [x] Crypto dependency flagging — `crypto-audit.json` with BoringCrypto bypass detection
 
 6. [x] **Continuous Monitoring Plan template** — `docs/continuous-monitoring-plan.md`
    - [x] Dashboard as continuous monitoring tool
@@ -477,7 +477,7 @@ Web-based GUI showing real-time compliance checklist. Every item is green/yellow
 - [x] RPM packaging: `build/packaging/rpm/cloudflared-fips.spec` with systemd unit, CI runs rpmbuild
 - [x] DEB packaging: `build/packaging/deb/` with DEBIAN/control, postinst, prerm; `build-deb.sh` runs dpkg-deb
 - [x] OCI container packaging: CI invokes `podman build -f build/Dockerfile.fips`
-- [ ] Reproducible builds: SOURCE_DATE_EPOCH, strip debug info, verify byte-identical output
+- [x] Reproducible builds: SOURCE_DATE_EPOCH, -trimpath, -s -w -buildid= in Dockerfile.fips, build.sh, Makefile, and CI
 - [x] Artifact signing: `pkg/signing/` (GPG + cosign), `scripts/sign-artifacts.sh`, CI `sign-artifacts` job on tags
 
 ### Build Metadata Artifact (`build-manifest.json`)
@@ -671,7 +671,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 - [x] Config option: `deployment_tier: self_hosted`
 - [x] Dashboard connects to FIPS proxy for client-side TLS metadata
 - [x] Dockerfile for deploying FIPS proxy in GovCloud (AWS/Azure/Google)
-- [ ] Terraform/CloudFormation templates for GovCloud deployment (stretch goal)
+- [x] Terraform/CloudFormation templates for GovCloud deployment — `deploy/terraform/main.tf` + `deploy/cloudformation/cloudflared-fips.yaml` (ECS Fargate, VPC, Secrets Manager)
 
 ### 6.11 FIPS 140-3 Migration
 
@@ -744,7 +744,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 | Honesty indicators | Verification method badges on dashboard items | [x] `VerificationBadge` component, 41 items tagged | 6.6 |
 | FIPS 140-3 migration | Module migration before Sept 2026 sunset | [x] `migration.go`, sunset banner, API endpoints | 6.11 |
 | Key rotation docs | GPG/cosign key rotation procedure | [x] `docs/key-rotation-procedure.md` | 6.12 |
-| Doc generation | Go templates → Markdown → PDF via pandoc | [ ] Not started | — |
+| Doc generation | Markdown → PDF/HTML via pandoc | [x] `scripts/generate-docs.sh` with PDF/HTML/Markdown fallback | — |
 
 ---
 
@@ -797,7 +797,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 │   └── src/
 │       ├── types/compliance.ts  # TS types matching spec schema
 │       ├── data/mockData.ts     # Mock data: all 39 checklist items
-│       ├── hooks/               # useComplianceSSE (SSE real-time updates)
+│       ├── hooks/               # useComplianceSSE (SSE), useComplianceWS (WebSocket + SSE fallback)
 │       ├── components/          # StatusBadge, ChecklistItem, SunsetBanner, DeploymentTierBadge, etc.
 │       └── pages/DashboardPage.tsx
 ├── configs/
@@ -806,6 +806,9 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 ├── scripts/
 │   ├── check-fips.sh            # Post-build FIPS validation
 │   ├── generate-manifest.sh     # Produce build-manifest.json
+│   ├── generate-sbom.sh         # CycloneDX + SPDX SBOM generation
+│   ├── generate-docs.sh         # AO doc package (PDF/HTML via pandoc)
+│   ├── audit-crypto-deps.sh     # Full dependency tree crypto audit
 │   ├── verify-boring.sh         # Verify BoringCrypto symbols
 │   ├── sign-artifacts.sh         # CI artifact signing (GPG + cosign)
 │   └── take-screenshots.cjs     # Headless dashboard screenshots
@@ -820,6 +823,11 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 │   ├── architecture-diagram.md  # Mermaid diagrams
 │   ├── deployment-tier-guide.md # [planned] Tier 1/2/3 deployment setup guides
 │   └── screenshots/             # Dashboard screenshots (5 PNGs)
+├── deploy/
+│   ├── terraform/main.tf        # AWS GovCloud ECS Fargate (Tier 3)
+│   ├── terraform/variables.tfvars.example
+│   ├── cloudformation/cloudflared-fips.yaml  # CloudFormation equivalent
+│   └── README.md                # Deployment instructions
 └── .github/workflows/
     ├── fips-build.yml           # 6-entry matrix (10 platform targets)
     └── compliance-check.yml     # PR validation

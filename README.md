@@ -138,7 +138,7 @@ The product detects client FIPS capability through:
 ├── internal/
 │   ├── selftest/                    # KATs, cipher validation, BoringCrypto detection
 │   ├── compliance/                  # Live compliance checker (system + config + binary)
-│   └── dashboard/                   # HTTP API handlers + SSE real-time events
+│   └── dashboard/                   # HTTP API handlers + SSE + WebSocket
 ├── pkg/
 │   ├── buildinfo/                   # Linker-injected build metadata
 │   ├── manifest/                    # Build manifest types + read/write
@@ -156,7 +156,12 @@ The product detects client FIPS capability through:
 │   ├── verify-boring.sh             # Verify BoringCrypto symbols in binary
 │   ├── generate-manifest.sh         # Produce build-manifest.json
 │   ├── generate-sbom.sh             # CycloneDX + SPDX SBOM generation
+│   ├── generate-docs.sh             # AO doc package (PDF/HTML via pandoc)
+│   ├── audit-crypto-deps.sh         # Full dependency tree crypto audit
 │   └── sign-artifacts.sh            # GPG signing + signature manifest
+├── deploy/
+│   ├── terraform/                   # AWS GovCloud Terraform (ECS Fargate)
+│   └── cloudformation/              # AWS CloudFormation equivalent
 ├── docs/                            # AO package: SSP, crypto usage, control mapping,
 │                                    # hardening guide, monitoring plan, IR addendum
 └── .github/workflows/
@@ -205,6 +210,24 @@ make manifest
 make docker-build
 ```
 
+### Generate SBOMs
+
+```bash
+make sbom
+```
+
+### Run crypto dependency audit
+
+```bash
+make crypto-audit
+```
+
+### Generate AO documentation package
+
+```bash
+make docs
+```
+
 ## Dashboard
 
 The compliance dashboard displays 41 checklist items across five sections:
@@ -251,6 +274,7 @@ Sunset banner with progress bar, deployment tier badge, compliance summary (80%)
 | `GET /api/v1/selftest` | On-demand FIPS self-test |
 | `GET /api/v1/backend` | Active FIPS crypto backend info |
 | `GET /api/v1/events` | SSE stream (real-time updates) |
+| `GET /api/v1/ws` | WebSocket (real-time updates with SSE fallback) |
 | `GET /api/v1/clients` | TLS ClientHello inspection results |
 | `GET /api/v1/posture` | Device posture reports |
 | `POST /api/v1/posture` | Submit device posture report |

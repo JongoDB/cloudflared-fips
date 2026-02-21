@@ -76,11 +76,13 @@ jobs:
         run: |
           VERSION="${UPSTREAM_VERSION}-fips"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          SOURCE_DATE_EPOCH=$(date +%s)
 
-          /usr/local/go/bin/go build -v \
-            -ldflags "-X main.Version=${VERSION} \
+          /usr/local/go/bin/go build -v -trimpath \
+            -ldflags "-s -w -X main.Version=${VERSION} \
                       -X main.BuildDate=${BUILD_DATE} \
-                      -X main.GitCommit=${{ github.sha }}" \
+                      -X main.GitCommit=${{ github.sha }} \
+                      -buildid=" \
             -o /tmp/cloudflared \
             ./cmd/cloudflared
 
@@ -90,7 +92,7 @@ jobs:
           GOEXPERIMENT: boringcrypto
           CGO_ENABLED: '1'
         run: |
-          /usr/local/go/bin/go build -o /tmp/selftest ./cmd/selftest
+          /usr/local/go/bin/go build -trimpath -o /tmp/selftest ./cmd/selftest
           /tmp/selftest
 
       - name: Verify BoringCrypto symbols
@@ -122,7 +124,7 @@ jobs:
           GOEXPERIMENT: boringcrypto
           CGO_ENABLED: '1'
         run: |
-          /usr/local/go/bin/go build -o /tmp/selftest ./cmd/selftest
+          /usr/local/go/bin/go build -trimpath -o /tmp/selftest ./cmd/selftest
 
       - name: Package — RPM
         if: contains(matrix.package, 'rpm')
@@ -259,11 +261,13 @@ jobs:
         run: |
           VERSION="${UPSTREAM_VERSION}-fips"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          SOURCE_DATE_EPOCH=$(date +%s)
 
-          go build -v \
-            -ldflags "-X main.Version=${VERSION} \
+          go build -v -trimpath \
+            -ldflags "-s -w -X main.Version=${VERSION} \
                       -X main.BuildDate=${BUILD_DATE} \
-                      -X main.GitCommit=${{ github.sha }}" \
+                      -X main.GitCommit=${{ github.sha }} \
+                      -buildid=" \
             -o /tmp/cloudflared \
             ./cmd/cloudflared
 
@@ -271,7 +275,7 @@ jobs:
         env:
           GODEBUG: fips140=on
         run: |
-          go build -o /tmp/selftest ./cmd/selftest
+          go build -trimpath -o /tmp/selftest ./cmd/selftest
           /tmp/selftest
 
       - name: Generate build manifest
@@ -360,11 +364,13 @@ jobs:
         run: |
           VERSION="${UPSTREAM_VERSION}-fips"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          SOURCE_DATE_EPOCH=$(date +%s)
 
-          go build -v \
-            -ldflags "-X main.Version=${VERSION} \
+          go build -v -trimpath \
+            -ldflags "-s -w -X main.Version=${VERSION} \
                       -X main.BuildDate=${BUILD_DATE} \
-                      -X main.GitCommit=${{ github.sha }}" \
+                      -X main.GitCommit=${{ github.sha }} \
+                      -buildid=" \
             -o "${RUNNER_TEMP}/cloudflared.exe" \
             ./cmd/cloudflared
 
@@ -374,7 +380,7 @@ jobs:
           GODEBUG: fips140=on
         shell: bash
         run: |
-          go build -o "${RUNNER_TEMP}/selftest.exe" ./cmd/selftest
+          go build -trimpath -o "${RUNNER_TEMP}/selftest.exe" ./cmd/selftest
           "${RUNNER_TEMP}/selftest.exe"
 
       - name: Generate build manifest

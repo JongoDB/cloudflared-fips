@@ -1,0 +1,11 @@
+# Example variable values for cloudflared-fips deployment
+# Copy to terraform.tfvars and fill in your values
+
+aws_region      = "us-gov-west-1"
+tunnel_token    = "YOUR_TUNNEL_TOKEN_HERE"
+origin_url      = "https://your-service.internal:8443"
+container_image = "your-registry.gov/cloudflared-fips:v2025.2.0-fips"
+container_cpu   = 512
+container_memory = 1024
+desired_count   = 2
+environment     = "production"

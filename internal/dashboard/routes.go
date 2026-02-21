@@ -12,3 +12,9 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/v1/compliance/export", h.HandleExport)
 	mux.HandleFunc("GET /api/v1/events", h.HandleSSE)
 }
+
+// RegisterRoutesWithWS sets up the API routes including WebSocket support.
+func RegisterRoutesWithWS(mux *http.ServeMux, h *Handler, hub *WSHub) {
+	RegisterRoutes(mux, h)
+	mux.HandleFunc("GET /api/v1/ws", hub.HandleWS)
+}
