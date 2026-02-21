@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ChecklistItem as ChecklistItemType } from '../types/compliance'
 import StatusBadge from './StatusBadge'
+import VerificationBadge from './VerificationBadge'
 
 interface ChecklistItemProps {
   item: ChecklistItemType
@@ -23,6 +24,7 @@ export default function ChecklistItem({ item }: ChecklistItemProps) {
           <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
             {item.severity}
           </span>
+          <VerificationBadge method={item.verificationMethod} />
         </div>
         <svg
           className={`w-5 h-5 text-gray-400 shrink-0 transition-transform ${

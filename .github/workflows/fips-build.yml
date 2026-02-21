@@ -14,34 +14,23 @@ env:
   GO_VERSION: '1.24.0'
 
 jobs:
-  build-matrix:
-    name: Build ${{ matrix.goos }}/${{ matrix.goarch }} (${{ matrix.package }})
+  # ── Linux builds: RHEL UBI 9 container with GOEXPERIMENT=boringcrypto ──
+  build-linux:
+    name: Build linux/${{ matrix.goarch }}
     runs-on: ubuntu-latest
-    # RHEL runner preferred for production; see docs for self-hosted RHEL runner setup
     container:
       image: registry.access.redhat.com/ubi9/ubi:latest
     strategy:
       fail-fast: false
       matrix:
+        goarch: [amd64, arm64]
         include:
-          - goos: linux
-            goarch: amd64
+          - goarch: amd64
             package: rpm,deb,container
-          - goos: linux
-            goarch: arm64
+            cc: gcc
+          - goarch: arm64
             package: rpm,deb,container
-          - goos: darwin
-            goarch: amd64
-            package: binary
-          - goos: darwin
-            goarch: arm64
-            package: binary
-          - goos: windows
-            goarch: amd64
-            package: exe,msi
-          - goos: windows
-            goarch: arm64
-            package: exe
+            cc: aarch64-linux-gnu-gcc
 
     steps:
       - name: Checkout cloudflared-fips
@@ -51,6 +40,11 @@ jobs:
         run: |
           dnf install -y gcc gcc-c++ make git openssl-devel curl jq
           dnf clean all
+
+      - name: Install cross-compiler (arm64)
+        if: matrix.goarch == 'arm64'
+        run: |
+          dnf install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       - name: Install Go ${{ env.GO_VERSION }}
         run: |
@@ -65,115 +59,78 @@ jobs:
           echo "UPSTREAM_COMMIT=$(git -C upstream-cloudflared rev-parse --short HEAD)" >> $GITHUB_ENV
 
       - name: Dependency crypto audit
+        working-directory: upstream-cloudflared
         run: |
           echo "=== Crypto Dependency Audit ==="
-          echo "Auditing quic-go and all crypto imports for FIPS compliance..."
-          cd upstream-cloudflared
           /usr/local/go/bin/go list -deps ./cmd/cloudflared 2>/dev/null | grep -i crypto || true
-          echo ""
-          echo "Verifying quic-go routes TLS through BoringCrypto..."
-          grep -r "crypto/tls" vendor/ 2>/dev/null | head -20 || true
           echo "GOEXPERIMENT=boringcrypto will replace all crypto/* with BoringCrypto"
 
-      - name: Cross-compile cloudflared with FIPS crypto
+      - name: Build cloudflared with FIPS crypto
         env:
           GOEXPERIMENT: boringcrypto
           CGO_ENABLED: '1'
-          GOOS: ${{ matrix.goos }}
+          GOOS: linux
           GOARCH: ${{ matrix.goarch }}
+          CC: ${{ matrix.cc }}
         working-directory: upstream-cloudflared
         run: |
-          VERSION="${{ env.UPSTREAM_VERSION }}-fips"
+          VERSION="${UPSTREAM_VERSION}-fips"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-          BINARY_NAME="cloudflared"
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME="cloudflared.exe"
-          fi
-
-          # CGO cross-compilation for non-linux requires appropriate toolchain
-          # For linux/arm64 from linux/amd64: requires gcc-aarch64-linux-gnu
-          if [ "${{ matrix.goos }}" = "linux" ] && [ "${{ matrix.goarch }}" = "arm64" ]; then
-            dnf install -y gcc-aarch64-linux-gnu 2>/dev/null || true
-            export CC=aarch64-linux-gnu-gcc
-          fi
-
-          # For non-linux targets, CGO cross-compile may require additional setup
-          # Document: macOS/Windows cross-compile from Linux works for pure Go;
-          # BoringCrypto CGO may require native build environment
           /usr/local/go/bin/go build -v \
             -ldflags "-X main.Version=${VERSION} \
                       -X main.BuildDate=${BUILD_DATE} \
                       -X main.GitCommit=${{ github.sha }}" \
-            -o "/tmp/${BINARY_NAME}" \
-            ./cmd/cloudflared || echo "Cross-compile for ${{ matrix.goos }}/${{ matrix.goarch }} requires native toolchain — see docs"
+            -o /tmp/cloudflared \
+            ./cmd/cloudflared
 
-      - name: Run FIPS self-test (linux/amd64 native only)
-        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+      - name: Run FIPS self-test (amd64 only)
+        if: matrix.goarch == 'amd64'
         env:
           GOEXPERIMENT: boringcrypto
           CGO_ENABLED: '1'
         run: |
           /usr/local/go/bin/go build -o /tmp/selftest ./cmd/selftest
-          /tmp/selftest || echo "Self-test completed with warnings"
+          /tmp/selftest
 
-      - name: Verify BoringCrypto symbols (linux/amd64 native only)
-        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+      - name: Verify BoringCrypto symbols
+        if: matrix.goarch == 'amd64'
         run: |
-          /usr/local/go/bin/go tool nm /tmp/cloudflared 2>/dev/null \
-            | grep -c '_Cfunc__goboringcrypto_' || \
-            echo "WARNING: BoringCrypto symbols not found"
+          BORING_COUNT=$(/usr/local/go/bin/go tool nm /tmp/cloudflared 2>/dev/null \
+            | grep -c '_Cfunc__goboringcrypto_' || true)
+          echo "BoringCrypto symbols found: ${BORING_COUNT}"
+          if [ "${BORING_COUNT}" -lt 1 ]; then
+            echo "::error::BoringCrypto symbols not found in binary"
+            exit 1
+          fi
 
-      - name: Generate SBOM (CycloneDX + SPDX)
+      - name: Generate SBOM
         working-directory: upstream-cloudflared
         run: |
-          # CycloneDX
-          echo '{"bomFormat":"CycloneDX","specVersion":"1.5","serialNumber":"urn:uuid:'$(cat /proc/sys/kernel/random/uuid)'","version":1,"metadata":{"component":{"name":"cloudflared-fips","version":"${{ env.UPSTREAM_VERSION }}-fips"}}}' \
+          echo '{"bomFormat":"CycloneDX","specVersion":"1.5","serialNumber":"urn:uuid:'$(cat /proc/sys/kernel/random/uuid)'","version":1,"metadata":{"component":{"name":"cloudflared-fips","version":"'"${UPSTREAM_VERSION}-fips"'"}}}' \
             > /tmp/sbom.cyclonedx.json
-          # SPDX
           echo '{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"cloudflared-fips","documentNamespace":"https://github.com/cloudflared-fips/cloudflared-fips"}' \
             > /tmp/sbom.spdx.json
-          echo "SBOM generated in CycloneDX and SPDX formats"
 
       - name: Package — RPM
         if: contains(matrix.package, 'rpm')
         run: |
-          echo "=== RPM Packaging ==="
-          echo "Building RPM for ${{ matrix.goos }}/${{ matrix.goarch }}..."
+          echo "RPM packaging — requires rpmbuild tooling and .spec file (stub)"
           dnf install -y rpm-build 2>/dev/null || true
-          # RPM spec and rpmbuild would go here
-          # rpmbuild -bb cloudflared-fips.spec
-          echo "RPM packaging step — requires rpmbuild tooling and .spec file"
 
       - name: Package — DEB
         if: contains(matrix.package, 'deb')
         run: |
-          echo "=== DEB Packaging ==="
-          echo "Building DEB for ${{ matrix.goos }}/${{ matrix.goarch }}..."
-          # dpkg-deb packaging would go here
-          echo "DEB packaging step — requires dpkg-deb (run in Debian container stage)"
+          echo "DEB packaging — requires dpkg-deb (stub)"
 
       - name: Package — Container (OCI)
         if: contains(matrix.package, 'container')
         run: |
-          echo "=== Container Packaging ==="
-          echo "Building OCI image for ${{ matrix.goos }}/${{ matrix.goarch }}..."
-          # docker/buildah build would go here
-          # Uses RHEL UBI 9 minimal as base
-          echo "Container packaging — uses build/Dockerfile.fips"
+          echo "Container packaging — uses build/Dockerfile.fips (stub)"
 
-      - name: Package — MSI (Windows)
-        if: contains(matrix.package, 'msi')
+      - name: Generate build manifest
         run: |
-          echo "=== MSI Packaging ==="
-          echo "Building MSI for ${{ matrix.goos }}/${{ matrix.goarch }}..."
-          # WiX toolset packaging would go here
-          # Document: macOS code signing requires Apple developer certificate
-          echo "MSI packaging step — requires WiX toolset"
-
-      - name: Generate build metadata JSON
-        run: |
-          VERSION="${{ env.UPSTREAM_VERSION }}-fips"
+          VERSION="${UPSTREAM_VERSION}-fips"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           BINARY_SHA256=""
           SBOM_SHA256=""
@@ -189,8 +146,8 @@ jobs:
             "version": "${VERSION}",
             "commit": "${{ github.sha }}",
             "build_time": "${BUILD_DATE}",
-            "cloudflared_upstream_version": "${{ env.UPSTREAM_VERSION }}",
-            "cloudflared_upstream_commit": "${{ env.UPSTREAM_COMMIT }}",
+            "cloudflared_upstream_version": "${UPSTREAM_VERSION}",
+            "cloudflared_upstream_commit": "${UPSTREAM_COMMIT}",
             "crypto_engine": "boringcrypto",
             "boringssl_version": "fips-20220613",
             "fips_certificates": [
@@ -205,29 +162,193 @@ jobs:
                 "algorithms": ["AES-GCM-128","AES-GCM-256","SHA-256","SHA-384","RSA-2048","ECDSA-P256","ECDH-P256"]
               }
             ],
-            "target_platform": "${{ matrix.goos }}/${{ matrix.goarch }}",
+            "target_platform": "linux/${{ matrix.goarch }}",
             "package_format": "${{ matrix.package }}",
             "sbom_sha256": "${SBOM_SHA256}",
             "binary_sha256": "${BINARY_SHA256}"
           }
           EOJSON
 
-      - name: Sign artifacts
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflared-fips-linux-${{ matrix.goarch }}
+          path: |
+            /tmp/cloudflared
+            /tmp/build-manifest.json
+            /tmp/sbom.*.json
+          if-no-files-found: error
+
+  # ── macOS builds: native runner, Go native FIPS 140-3 (GODEBUG=fips140=on) ──
+  build-darwin:
+    name: Build darwin/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            runner: macos-13
+          - goarch: arm64
+            runner: macos-14
+
+    steps:
+      - name: Checkout cloudflared-fips
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Clone upstream cloudflared
         run: |
-          echo "=== Artifact Signing ==="
-          echo "Signing key management requirements:"
-          echo "  - Store signing key in GitHub Actions secrets or external KMS"
-          echo "  - Use cosign for container image signing"
-          echo "  - Use GPG for binary/package signing"
-          echo "  - Document key rotation procedures in AO package"
-          echo "Signing step — integrate cosign or GPG in production"
+          git clone --depth 1 https://github.com/cloudflare/cloudflared.git upstream-cloudflared
+          echo "UPSTREAM_VERSION=$(git -C upstream-cloudflared describe --tags 2>/dev/null || echo 'main')" >> $GITHUB_ENV
+          echo "UPSTREAM_COMMIT=$(git -C upstream-cloudflared rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Build cloudflared with Go native FIPS
+        env:
+          # GOEXPERIMENT=boringcrypto is Linux-only.
+          # Go 1.24+ native FIPS 140-3 module (CAVP A6650, CMVP pending).
+          # When CMVP validation completes, this becomes the standard macOS path.
+          GODEBUG: fips140=on
+          CGO_ENABLED: '0'
+          GOOS: darwin
+          GOARCH: ${{ matrix.goarch }}
+        working-directory: upstream-cloudflared
+        run: |
+          VERSION="${UPSTREAM_VERSION}-fips"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          go build -v \
+            -ldflags "-X main.Version=${VERSION} \
+                      -X main.BuildDate=${BUILD_DATE} \
+                      -X main.GitCommit=${{ github.sha }}" \
+            -o /tmp/cloudflared \
+            ./cmd/cloudflared
+
+      - name: Generate build manifest
+        run: |
+          VERSION="${UPSTREAM_VERSION}-fips"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          BINARY_SHA256=$(shasum -a 256 /tmp/cloudflared | awk '{print $1}')
+
+          cat > /tmp/build-manifest.json <<EOJSON
+          {
+            "version": "${VERSION}",
+            "commit": "${{ github.sha }}",
+            "build_time": "${BUILD_DATE}",
+            "cloudflared_upstream_version": "${UPSTREAM_VERSION}",
+            "cloudflared_upstream_commit": "${UPSTREAM_COMMIT}",
+            "crypto_engine": "go-fips140-native",
+            "boringssl_version": "n/a",
+            "fips_certificates": [
+              {
+                "module": "Go Cryptographic Module",
+                "certificate": "CAVP A6650 (CMVP pending)",
+                "algorithms": ["AES-GCM-128","AES-GCM-256","SHA-256","SHA-384","HMAC-SHA-256","ECDSA-P256","RSA-2048","ECDH-P256"]
+              }
+            ],
+            "target_platform": "darwin/${{ matrix.goarch }}",
+            "package_format": "binary",
+            "sbom_sha256": "",
+            "binary_sha256": "${BINARY_SHA256}"
+          }
+          EOJSON
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cloudflared-fips-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: cloudflared-fips-darwin-${{ matrix.goarch }}
           path: |
-            /tmp/cloudflared*
+            /tmp/cloudflared
             /tmp/build-manifest.json
-            /tmp/sbom.*.json
-          if-no-files-found: warn
+          if-no-files-found: error
+
+  # ── Windows builds: native runner, Go native FIPS 140-3 (GODEBUG=fips140=on) ──
+  build-windows:
+    name: Build windows/${{ matrix.goarch }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+
+    steps:
+      - name: Checkout cloudflared-fips
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Clone upstream cloudflared
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/cloudflare/cloudflared.git upstream-cloudflared
+          echo "UPSTREAM_VERSION=$(git -C upstream-cloudflared describe --tags 2>/dev/null || echo 'main')" >> $GITHUB_ENV
+          echo "UPSTREAM_COMMIT=$(git -C upstream-cloudflared rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Build cloudflared with Go native FIPS
+        env:
+          # GOEXPERIMENT=boringcrypto is Linux-only.
+          # Go 1.24+ native FIPS 140-3 module (CAVP A6650, CMVP pending).
+          # Alternative: Microsoft Build of Go with GOEXPERIMENT=systemcrypto
+          # uses Windows CNG (CMVP validated) — requires MSFT Go fork.
+          GODEBUG: fips140=on
+          CGO_ENABLED: '0'
+          GOOS: windows
+          GOARCH: ${{ matrix.goarch }}
+        working-directory: upstream-cloudflared
+        shell: bash
+        run: |
+          VERSION="${UPSTREAM_VERSION}-fips"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          go build -v \
+            -ldflags "-X main.Version=${VERSION} \
+                      -X main.BuildDate=${BUILD_DATE} \
+                      -X main.GitCommit=${{ github.sha }}" \
+            -o "${RUNNER_TEMP}/cloudflared.exe" \
+            ./cmd/cloudflared
+
+      - name: Generate build manifest
+        shell: bash
+        run: |
+          VERSION="${UPSTREAM_VERSION}-fips"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          BINARY_SHA256=$(sha256sum "${RUNNER_TEMP}/cloudflared.exe" | awk '{print $1}')
+
+          cat > "${RUNNER_TEMP}/build-manifest.json" <<EOJSON
+          {
+            "version": "${VERSION}",
+            "commit": "${{ github.sha }}",
+            "build_time": "${BUILD_DATE}",
+            "cloudflared_upstream_version": "${UPSTREAM_VERSION}",
+            "cloudflared_upstream_commit": "${UPSTREAM_COMMIT}",
+            "crypto_engine": "go-fips140-native",
+            "boringssl_version": "n/a",
+            "fips_certificates": [
+              {
+                "module": "Go Cryptographic Module",
+                "certificate": "CAVP A6650 (CMVP pending)",
+                "algorithms": ["AES-GCM-128","AES-GCM-256","SHA-256","SHA-384","HMAC-SHA-256","ECDSA-P256","RSA-2048","ECDH-P256"]
+              }
+            ],
+            "target_platform": "windows/${{ matrix.goarch }}",
+            "package_format": "${{ matrix.goarch == 'amd64' && 'exe,msi' || 'exe' }}",
+            "sbom_sha256": "",
+            "binary_sha256": "${BINARY_SHA256}"
+          }
+          EOJSON
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflared-fips-windows-${{ matrix.goarch }}
+          path: |
+            ${{ runner.temp }}/cloudflared.exe
+            ${{ runner.temp }}/build-manifest.json
+          if-no-files-found: error

@@ -1,16 +1,24 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import Layout from '../components/Layout'
 import SummaryBar from '../components/SummaryBar'
 import BuildManifestPanel from '../components/BuildManifestPanel'
 import ChecklistSection from '../components/ChecklistSection'
 import ExportButtons from '../components/ExportButtons'
 import { mockSections, mockManifest } from '../data/mockData'
+import { useComplianceSSE } from '../hooks/useComplianceSSE'
 import type { ComplianceSummary } from '../types/compliance'
 
 export default function DashboardPage() {
+  const [sseEnabled, setSSEEnabled] = useState(false)
+
+  const { sections, sseStatus } = useComplianceSSE({
+    enabled: sseEnabled,
+    fallbackSections: mockSections,
+  })
+
   const summary: ComplianceSummary = useMemo(() => {
     const result = { total: 0, passed: 0, failed: 0, warnings: 0, unknown: 0 }
-    for (const section of mockSections) {
+    for (const section of sections) {
       for (const item of section.items) {
         result.total++
         switch (item.status) {
@@ -30,7 +38,7 @@ export default function DashboardPage() {
       }
     }
     return result
-  }, [])
+  }, [sections])
 
   return (
     <Layout>
@@ -40,7 +48,14 @@ export default function DashboardPage() {
             Localhost-only dashboard &mdash; all assets bundled, air-gap friendly
           </p>
         </div>
-        <ExportButtons sections={mockSections} manifest={mockManifest} summary={summary} />
+        <div className="flex items-center gap-4">
+          <SSEToggle
+            enabled={sseEnabled}
+            onToggle={() => setSSEEnabled(!sseEnabled)}
+            status={sseStatus}
+          />
+          <ExportButtons sections={sections} manifest={mockManifest} summary={summary} />
+        </div>
       </div>
       <SummaryBar summary={summary} />
       <BuildManifestPanel manifest={mockManifest} />
@@ -48,10 +63,61 @@ export default function DashboardPage() {
         <h2 className="text-lg font-semibold text-gray-900 mb-4">
           Compliance Checklist
         </h2>
-        {mockSections.map((section) => (
+        {sections.map((section) => (
           <ChecklistSection key={section.id} section={section} />
         ))}
       </div>
     </Layout>
+  )
+}
+
+function SSEToggle({
+  enabled,
+  onToggle,
+  status,
+}: {
+  enabled: boolean
+  onToggle: () => void
+  status: { connected: boolean; lastUpdate: Date | null; error: string | null }
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={onToggle}
+        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+          enabled ? 'bg-blue-600' : 'bg-gray-200'
+        }`}
+        role="switch"
+        aria-checked={enabled}
+        aria-label="Toggle live updates"
+      >
+        <span
+          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+            enabled ? 'translate-x-4' : 'translate-x-0'
+          }`}
+        />
+      </button>
+      <span className="text-xs text-gray-500">Live</span>
+      {enabled && (
+        <span
+          className={`inline-flex items-center gap-1 text-xs ${
+            status.connected ? 'text-green-600' : 'text-gray-400'
+          }`}
+          title={
+            status.error ??
+            (status.lastUpdate
+              ? `Last update: ${status.lastUpdate.toLocaleTimeString()}`
+              : 'Connecting...')
+          }
+        >
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              status.connected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
+            }`}
+          />
+          {status.connected ? 'Connected' : status.error ? 'Retrying' : 'Connecting'}
+        </span>
+      )}
+    </div>
   )
 }
