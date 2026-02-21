@@ -7,6 +7,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/cloudflared-fips/cloudflared-fips/internal/compliance"
 	"github.com/cloudflared-fips/cloudflared-fips/internal/dashboard"
+	"github.com/cloudflared-fips/cloudflared-fips/internal/ipc"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/cfapi"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/clientdetect"
@@ -40,6 +42,17 @@ func main() {
 	cfZoneID := flag.String("cf-zone-id", "", "Cloudflare zone ID (or set CF_ZONE_ID env)")
 	cfAccountID := flag.String("cf-account-id", "", "Cloudflare account ID (or set CF_ACCOUNT_ID env)")
 	cfTunnelID := flag.String("cf-tunnel-id", "", "Cloudflare tunnel ID (or set CF_TUNNEL_ID env)")
+
+	// MDM integration (Intune/Jamf)
+	mdmProvider := flag.String("mdm-provider", "", "MDM provider: intune, jamf (or set MDM_PROVIDER env)")
+	mdmAPIToken := flag.String("mdm-api-token", "", "MDM API token (or set MDM_API_TOKEN env)")
+	mdmBaseURL := flag.String("mdm-base-url", "", "MDM base URL — Jamf only (or set MDM_BASE_URL env)")
+	mdmTenantID := flag.String("mdm-tenant-id", "", "Azure AD tenant ID — Intune only (or set MDM_TENANT_ID env)")
+	mdmClientID := flag.String("mdm-client-id", "", "Azure AD client ID — Intune only (or set MDM_CLIENT_ID env)")
+	mdmClientSecret := flag.String("mdm-client-secret", "", "Azure AD client secret — Intune only (or set MDM_CLIENT_SECRET env)")
+
+	// IPC socket for CloudSH integration
+	ipcSocket := flag.String("ipc-socket", "", "Unix socket path for CloudSH IPC (e.g., /var/run/cloudflared-fips/compliance.sock)")
 
 	flag.Parse()
 
@@ -153,12 +166,60 @@ func main() {
 		json.NewEncoder(w).Encode(manifest)
 	})
 
+	// MDM integration
+	mdmProviderStr := envOrFlag(*mdmProvider, "MDM_PROVIDER")
+	if mdmProviderStr != "" {
+		mdmConfig := clientdetect.MDMConfig{
+			Provider:     clientdetect.MDMProvider(mdmProviderStr),
+			APIToken:     envOrFlag(*mdmAPIToken, "MDM_API_TOKEN"),
+			BaseURL:      envOrFlag(*mdmBaseURL, "MDM_BASE_URL"),
+			TenantID:     envOrFlag(*mdmTenantID, "MDM_TENANT_ID"),
+			ClientID:     envOrFlag(*mdmClientID, "MDM_CLIENT_ID"),
+			ClientSecret: envOrFlag(*mdmClientSecret, "MDM_CLIENT_SECRET"),
+		}
+		mdmClient := clientdetect.NewMDMClient(mdmConfig)
+		if mdmClient.IsConfigured() {
+			fmt.Fprintf(os.Stderr, "MDM integration enabled: %s\n", mdmProviderStr)
+			mux.HandleFunc("GET /api/v1/mdm/devices", func(w http.ResponseWriter, r *http.Request) {
+				devices, err := mdmClient.FetchDevices()
+				if err != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadGateway)
+					json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(devices)
+			})
+			mux.HandleFunc("GET /api/v1/mdm/summary", func(w http.ResponseWriter, r *http.Request) {
+				summary := mdmClient.ComplianceSummary()
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(summary)
+			})
+		} else {
+			fmt.Fprintf(os.Stderr, "MDM provider %s configured but missing credentials\n", mdmProviderStr)
+		}
+	}
+
 	// Serve the React frontend (all assets bundled, air-gap friendly)
 	fs := http.FileServer(http.Dir(*staticDir))
 	mux.Handle("/", fs)
 
 	fmt.Fprintf(os.Stderr, "Deployment tier: %s\n", *deployTier)
 	fmt.Fprintf(os.Stderr, "Client detection: TLS inspector active, posture API at /api/v1/posture\n")
+
+	// Start IPC socket server for CloudSH integration (if configured)
+	if *ipcSocket != "" {
+		ipcCtx, ipcCancel := context.WithCancel(context.Background())
+		defer ipcCancel()
+		ipcServer := ipc.NewServer(*ipcSocket, checker, *manifestPath)
+		go func() {
+			fmt.Fprintf(os.Stderr, "CloudSH IPC socket: %s\n", ipcServer.SocketPath())
+			if err := ipcServer.Start(ipcCtx); err != nil {
+				fmt.Fprintf(os.Stderr, "IPC server error: %v\n", err)
+			}
+		}()
+	}
 
 	if err := http.ListenAndServe(*addr, mux); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)

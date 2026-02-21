@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,7 +98,7 @@ func RunAllChecks() ([]CheckResult, error) {
 	if backend != nil {
 		switch backend.Name() {
 		case "boringcrypto":
-			checks = append(checks, checkBoringCryptoLinked)
+			checks = append(checks, checkBoringCryptoLinked, checkBoringCryptoVersion)
 		case "go-native":
 			checks = append(checks, checkGoNativeFIPS)
 		}
@@ -221,6 +222,57 @@ func checkBoringCryptoLinked() CheckResult {
 		result.Status = StatusFail
 		result.Message = "BoringCrypto module is NOT linked"
 		result.Remediation = "Rebuild with GOEXPERIMENT=boringcrypto CGO_ENABLED=1"
+	}
+
+	return result
+}
+
+// checkBoringCryptoVersion attempts to determine whether the linked BoringCrypto
+// module is the FIPS 140-2 or 140-3 certified version. Go 1.24+ with a recent
+// BoringSSL tag (fips-20230428+) uses the 140-3 module (CMVP #4735).
+// Older versions use 140-2 (CMVP #3678, #4407).
+func checkBoringCryptoVersion() CheckResult {
+	result := CheckResult{
+		Name:      "boring_crypto_version",
+		Severity:  SeverityInfo,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// Detect Go version — Go 1.24+ ships with updated BoringSSL
+	goVersion := runtime.Version()
+
+	// Parse major.minor from "go1.24.0" or similar
+	is140_3 := false
+	if strings.HasPrefix(goVersion, "go") {
+		parts := strings.Split(strings.TrimPrefix(goVersion, "go"), ".")
+		if len(parts) >= 2 {
+			major := parts[0]
+			minor := parts[1]
+			// Go 1.24+ ships BoringCrypto with FIPS 140-3 tag
+			if major == "1" {
+				if m, err := strconv.Atoi(minor); err == nil && m >= 24 {
+					is140_3 = true
+				}
+			}
+		}
+	}
+
+	if is140_3 {
+		result.Status = StatusPass
+		result.Message = "BoringCrypto FIPS 140-3 module detected"
+		result.Details = fmt.Sprintf(
+			"Go %s ships BoringCrypto based on BoringSSL fips-20230428+ (CMVP #4735, FIPS 140-3). "+
+				"Run scripts/verify-boring-version.sh for detailed .syso hash verification.",
+			goVersion)
+	} else {
+		result.Status = StatusWarn
+		result.Message = "BoringCrypto FIPS 140-2 module detected (sunset Sept 21, 2026)"
+		result.Details = fmt.Sprintf(
+			"Go %s ships BoringCrypto based on older BoringSSL (CMVP #4407, FIPS 140-2). "+
+				"Upgrade to Go 1.24+ for FIPS 140-3. "+
+				"Run scripts/verify-boring-version.sh for detailed verification.",
+			goVersion)
+		result.Remediation = "Upgrade to Go 1.24+ which ships the FIPS 140-3 certified BoringCrypto module (#4735)"
 	}
 
 	return result

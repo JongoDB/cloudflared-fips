@@ -283,6 +283,8 @@ Sunset banner with progress bar, deployment tier badge, compliance summary (80%)
 | `GET /api/v1/migration/backends` | All backend migration details |
 | `GET /api/v1/signatures` | Artifact signature manifest |
 | `GET /api/v1/compliance/export` | JSON export of full compliance state |
+| `GET /api/v1/mdm/devices` | MDM-enrolled device compliance list |
+| `GET /api/v1/mdm/summary` | MDM fleet compliance summary |
 | `GET /health` | Health check |
 
 ## FIPS Build Pipeline

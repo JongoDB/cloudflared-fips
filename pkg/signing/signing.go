@@ -33,6 +33,12 @@ type SignatureManifest struct {
 	PublicKey  string          `json:"public_key_url,omitempty"`
 }
 
+// DefaultPublicKeyPath is the path to the project's public key relative to the repo root.
+const DefaultPublicKeyPath = "configs/public-key.asc"
+
+// DefaultPublicKeyURL is the URL where the public key can be downloaded.
+const DefaultPublicKeyURL = "https://github.com/cloudflared-fips/cloudflared-fips/releases/latest/download/public-key.asc"
+
 // HashFile computes the SHA-256 hash of a file.
 func HashFile(path string) (string, error) {
 	data, err := os.ReadFile(path)

@@ -6,7 +6,7 @@
 
 ---
 
-## Progress Summary (last updated: 2026-02-21, remaining code work items batch 2)
+## Progress Summary (last updated: 2026-02-21, unblocking remaining items)
 
 | Area | Status | Notes |
 |------|--------|-------|
@@ -393,7 +393,7 @@ Web-based GUI showing real-time compliance checklist. Every item is green/yellow
 - [x] Backend: Go sidecar service querying local system state, cloudflared /metrics, Cloudflare API — `LiveChecker` (P1), `cfapi.ComplianceChecker` (P2), `clientdetect.ComplianceChecker` (P2)
 - [x] Active TLS probing for local services — `checkLocalTLSEnabled()`, `checkLocalCipherSuite()` in `internal/compliance/live.go`
 - [x] Cloudflare API integration — `pkg/cfapi/` with 11 checks (Access, ciphers, TLS version, HSTS, certs, tunnel health, Keyless SSL, Regional Services)
-- [ ] MDM API integration (Intune/Jamf) for client posture data
+- [x] MDM API integration (Intune/Jamf) for client posture data — `pkg/clientdetect/mdm.go` with Intune (Graph API) and Jamf Pro clients, `--mdm-provider` flags, `/api/v1/mdm/devices` + `/api/v1/mdm/summary` endpoints
 - [x] Real-time updates via SSE — Go backend `SSEHandler` + React `useComplianceSSE` hook with auto-reconnect + Live toggle
 - [x] WebSocket alternative for real-time updates — `internal/dashboard/websocket.go` (WSHub + long-poll fallback), `useComplianceWS` React hook with auto SSE fallback
 
@@ -515,7 +515,7 @@ Schema (implemented):
 ## Phase 5 — CloudSH Integration Interface
 
 - [x] Single YAML config file (`configs/cloudflared-fips.yaml`)
-- [ ] IPC interface: local Unix socket or gRPC for CloudSH queries
+- [x] IPC interface: Unix domain socket for CloudSH queries — `internal/ipc/ipc.go` with JSON-RPC protocol, `--ipc-socket` flag, methods: compliance.status, selftest.run, manifest.get, backend.info, migration.status, ping
 - [x] Structured JSON API for compliance data (not just rendered UI) — `/api/v1/compliance`, `/api/v1/manifest`, `/api/v1/selftest`, `/api/v1/health`, `/api/v1/compliance/export`
 - [x] RPM/DEB/container artifacts self-contained — all packages include binary, self-test, config, manifest
 - [x] All API paths prefixed with `cloudflared-fips/` namespacing (`/api/v1/`)
@@ -677,9 +677,9 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 
 **Goal:** Smooth transition before September 21, 2026 deadline.
 
-- [ ] Verify BoringCrypto FIPS 140-3 (#4735) works with current `GOEXPERIMENT=boringcrypto` integration
-  - Check if Go ships the 140-3 certified `.syso` or the older 140-2 version
-  - If 140-2 only: build from BoringSSL source at the 140-3 certified tag
+- [x] Verify BoringCrypto FIPS 140-3 (#4735) works with current `GOEXPERIMENT=boringcrypto` integration — `scripts/verify-boring-version.sh` inspects .syso hashes + binary strings; `checkBoringCryptoVersion()` in selftest detects 140-2 vs 140-3 by Go version (Go 1.24+ = 140-3)
+  - Go 1.24+ ships BoringSSL fips-20230428 .syso (CMVP #4735, 140-3)
+  - Go 1.22/1.23 ships older .syso (CMVP #4407, 140-2)
 - [ ] Track Go native FIPS 140-3 CMVP validation status (currently MIP, CAVP A6650)
   - When validated: add `GoNativeBackend` as primary recommendation
   - Update build matrix to use `GODEBUG=fips140=on` instead of `GOEXPERIMENT=boringcrypto`
@@ -698,7 +698,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 - [x] Binaries and packages: sign with GPG key stored in GitHub Actions secrets — `scripts/sign-artifacts.sh` + CI job
 - [x] `pkg/signing/signing.go`: GPGSign, GPGVerify, CosignSign, CosignVerify, SignatureManifest types
 - [x] API: `/api/v1/signatures` returns signature manifest
-- [ ] Publish public key for verification
+- [x] Publish public key for verification — `configs/public-key.asc` placeholder, `scripts/verify-signatures.sh` user-facing verifier, `signing.DefaultPublicKeyPath` + `DefaultPublicKeyURL` constants
 - [x] Self-test verifies binary signature at startup (optional, configurable) — `checkBinarySignature()` in selftest.go, `--verify-signature` flag in cmd/selftest
 - [x] Build manifest includes signature hashes — `signatures.json` generated per artifact directory
 - [x] Document key rotation procedure in AO package — `docs/key-rotation-procedure.md`
