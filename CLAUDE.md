@@ -6,7 +6,7 @@
 
 ---
 
-## Progress Summary (last updated: 2026-02-21, post-P1)
+## Progress Summary (last updated: 2026-02-21, post-P2)
 
 | Area | Status | Notes |
 |------|--------|-------|
@@ -17,10 +17,10 @@
 | **CI — compliance** | **Working** | Go lint/test, dashboard lint/build, docs check, manifest validation, shell syntax. |
 | **CI — build matrix** | **Working** | Per-OS jobs: Linux/RHEL with boringcrypto, macOS with Go native FIPS, Windows with Go native FIPS. `if-no-files-found: error`. |
 | **Packaging** | **Implemented** | RPM (.spec + rpmbuild), DEB (dpkg-deb + build script), macOS .pkg (pkgbuild + productbuild), Windows MSI (WiX v4). All include self-test post-install. |
-| **SBOM** | **Not implemented** | Schema stubs in CI, no real dependency enumeration. |
+| **SBOM** | **Implemented** | `scripts/generate-sbom.sh` produces CycloneDX 1.5 + SPDX 2.3 from `go mod`. Crypto audit JSON. CI wired. |
 | **Artifact signing** | **Not implemented** | Echo stub with documentation. |
 | **SSE real-time** | **Frontend + backend** | Go SSE handler works. React `useComplianceSSE` hook with auto-reconnect, Live toggle, connection status. |
-| **Live compliance checks** | **Local implemented** | `LiveChecker` queries: BoringCrypto detection, OS FIPS mode, KATs, cipher suites, binary integrity, tunnel metrics, local TLS probing, config drift. CF API + MDM still TODO. |
+| **Live compliance checks** | **Implemented** | Local: `LiveChecker` (BoringCrypto, OS FIPS, KATs, ciphers, binary integrity, tunnel metrics, TLS probing). Edge: `cfapi.ComplianceChecker` (9 checks). Client: `clientdetect.ComplianceChecker` (8 checks). |
 | **PDF export** | **Not implemented** | Intentional stub returning install instructions for pandoc. |
 | **quic-go audit** | **Not started** | Need to verify quic-go TLS routes through BoringCrypto, not its own crypto. |
 | **OS support matrix** | **Needs update** | Product supports any FIPS-mode Linux (RHEL, Ubuntu Pro, Amazon Linux, SLES, Oracle, Alma), not just RHEL. Docs/dashboard should reflect this. |
@@ -29,7 +29,7 @@
 | **macOS/Windows targets** | **CI implemented** | Per-OS CI jobs use `GODEBUG=fips140=on` (Go native FIPS 140-3, CAVP A6650, CMVP pending). |
 | **Modular crypto backend** | **Implemented** | `pkg/fipsbackend/` with Backend interface. BoringCrypto, GoNative, SystemCrypto backends. `Detect()` auto-selects. Live checker uses it. Dashboard display TODO. |
 | **Deployment tiers** | **Documented** | Three tiers defined: Standard Tunnel, Tunnel+Regional+Keyless, Self-hosted FIPS proxy. Implementation not started. |
-| **Client FIPS detection** | **Not implemented** | ClientHello cipher inspection + JA4 fingerprinting + WARP device posture. Approaches researched, code not written. |
+| **Client FIPS detection** | **Implemented** | `pkg/clientdetect/` with TLS Inspector (ClientHello analysis, JA4 fingerprinting), PostureCollector (device agent API), ComplianceChecker (8-item Client Posture section). |
 | **Dashboard honesty indicators** | **Implemented** | VerificationBadge component. All 39 items tagged: direct/api/probe/inherited/reported. Color-coded with tooltips. |
 
 ---
@@ -569,11 +569,11 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 
 **Goal:** Full dependency-level SBOMs flagging crypto operations.
 
-- [ ] Install `cyclonedx-gomod` in CI; generate real CycloneDX SBOM from `go.mod`
-- [ ] Install `spdx-sbom-generator` or use `go mod download -json` → SPDX conversion
-- [ ] Post-process SBOM: annotate dependencies that import `crypto/*` packages
-- [ ] For each crypto dependency: add `fips_module` property indicating which validated module handles it
-- [ ] Include SBOMs in build artifacts and manifest (`sbom_sha256` is real)
+- [x] `scripts/generate-sbom.sh`: uses `cyclonedx-gomod` when available, falls back to `go mod` graph
+- [x] Generates CycloneDX 1.5 and SPDX 2.3 SBOMs with real module dependencies
+- [x] Post-process: `crypto-audit.json` lists all `crypto/*` imports and annotates FIPS module
+- [x] CI installs `cyclonedx-gomod` and calls `generate-sbom.sh` (replaces echo stubs)
+- [x] SBOM hashes computed by script; `sbom_sha256` in manifest is real
 
 ### 6.5 Dashboard — Wire SSE to Frontend
 
@@ -618,32 +618,32 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 
 **Goal:** Replace mock data with real Cloudflare API queries for Edge items.
 
-- [ ] Cloudflare API client (`pkg/cfapi/`) with token auth
-- [ ] `checkAccessPolicy()` — `GET /zones/{zone_id}/access/apps`
-- [ ] `checkCipherRestriction()` — `GET /zones/{zone_id}/settings/ciphers`
-- [ ] `checkMinTLSVersion()` — `GET /zones/{zone_id}/settings/min_tls_version`
-- [ ] `checkEdgeCertificate()` — `GET /zones/{zone_id}/ssl/certificate_packs`
-- [ ] `checkHSTS()` — `GET /zones/{zone_id}/settings/security_header`
-- [ ] `checkTunnelHealth()` — `GET /accounts/{account_id}/cfd_tunnel/{tunnel_id}`
-- [ ] Store Cloudflare API token in config (`configs/cloudflared-fips.yaml`) or env var
-- [ ] Rate limiting and caching (respect Cloudflare API limits)
+- [x] `pkg/cfapi/` with rate-limited, caching Cloudflare API client (bearer token auth)
+- [x] `checkAccessPolicy()` — queries `/zones/{zone_id}/access/apps`
+- [x] `checkCipherRestriction()` — queries `/zones/{zone_id}/settings/ciphers`, validates FIPS-approved names
+- [x] `checkMinTLSVersion()` — queries `/zones/{zone_id}/settings/min_tls_version`, requires 1.2+
+- [x] `checkEdgeCertificate()` — queries `/zones/{zone_id}/ssl/certificate_packs`, checks expiry
+- [x] `checkHSTS()` — queries `/zones/{zone_id}/settings/security_header`
+- [x] `checkTunnelHealth()` — queries `/accounts/{account_id}/cfd_tunnel/{tunnel_id}`
+- [x] Token via `--cf-api-token` flag or `CF_API_TOKEN` env var
+- [x] In-memory cache with configurable TTL (default 60s) to respect API limits
 
 ### 6.9 Live Compliance Checks — Client-Side FIPS Detection
 
 **Goal:** Detect whether connecting clients use FIPS-capable TLS.
 
-- [ ] **TLS ClientHello inspection:** In Go dashboard server, use `tls.Config.GetConfigForClient` callback
-  - Check if client offers ChaCha20-Poly1305 (non-FIPS; absence = FIPS signal)
-  - Check if client offers only AES-GCM + AES-CBC ciphers
-  - Log full cipher suite list per client connection
-- [ ] **JA3/JA4 fingerprinting:** Compute JA4 hash from ClientHello
-  - Maintain a known-FIPS fingerprint database (Windows FIPS IE/Edge, RHEL Firefox, macOS Safari)
-  - Dashboard shows per-connection: JA4 hash, FIPS match yes/no, browser identification
-- [ ] **WARP device posture integration:** Custom service-to-service API
-  - Endpoint agent checks OS FIPS mode (`/proc/sys/crypto/fips_enabled`, registry key)
-  - Reports to Cloudflare Access as custom posture check
-  - Dashboard queries Cloudflare for device posture results
-- [ ] Dashboard "Client Posture" section wired to real data from above sources
+- [x] **TLS ClientHello inspection:** `pkg/clientdetect/Inspector` with `GetConfigForClient` callback
+  - Detects ChaCha20-Poly1305 absence as FIPS signal
+  - Checks for RC4/DES/3DES (banned) and AES-GCM (required)
+  - Logs full cipher suite list per connection with rolling buffer (max 1000)
+- [x] **JA4 fingerprinting:** Simplified JA4-style hash from ClientHello (version, cipher count, ALPN, sorted cipher hash)
+  - `KnownFIPSFingerprints` map for matching (requires population from tested clients)
+- [x] **Device posture API:** `PostureCollector` with HTTP handlers
+  - `POST /api/v1/posture` — agents report OS FIPS mode, OS type, MDM enrollment, disk encryption
+  - `GET /api/v1/posture` — list all device postures
+  - `GET /api/v1/clients` — TLS inspection results + FIPS stats
+- [x] `ComplianceChecker` produces "Client Posture" section (8 items) from TLS + posture data
+- [ ] Populate `KnownFIPSFingerprints` from tested FIPS clients (Windows FIPS, RHEL, macOS)
 
 ### 6.10 Deployment Tier Support
 
