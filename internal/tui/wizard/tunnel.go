@@ -11,6 +11,9 @@ import (
 	"github.com/cloudflared-fips/cloudflared-fips/internal/tui/config"
 )
 
+// loginCompleteMsg is sent when the interactive cloudflared login finishes.
+type loginCompleteMsg struct{ err error }
+
 // Async messages for tunnel CLI operations.
 type tunnelsListedMsg struct {
 	tunnels []common.CLITunnel
@@ -55,6 +58,8 @@ type TunnelPage struct {
 	hasCLI bool
 	// Whether the error is due to missing cert.pem (needs cloudflared login)
 	needsLogin bool
+	// Whether cloudflared login is currently running (TUI is suspended)
+	loggingIn bool
 
 	focus  int // active field index (depends on source mode)
 	width  int
@@ -206,6 +211,28 @@ func (p *TunnelPage) focusContentField(idx int) {
 func (p *TunnelPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	// Handle async messages
 	switch msg := msg.(type) {
+	case loginCompleteMsg:
+		p.loggingIn = false
+		if msg.err != nil {
+			// Login failed or was cancelled — show error, let user retry
+			if p.currentSource() == tunnelSourceSelect {
+				p.tunnelErr = fmt.Sprintf("login failed: %v", msg.err)
+			} else {
+				p.createErr = fmt.Sprintf("login failed: %v", msg.err)
+			}
+			return p, nil
+		}
+		// Login succeeded — clear error state and auto-retry the operation
+		p.needsLogin = false
+		if p.currentSource() == tunnelSourceSelect {
+			p.tunnelErr = ""
+			p.tunnelsLoaded = false
+			return p, p.fetchTunnelList()
+		}
+		// Create mode: auto-retry tunnel creation with the name already entered
+		p.createErr = ""
+		return p, p.triggerCreate()
+
 	case tunnelsListedMsg:
 		p.tunnelsLoaded = true
 		if msg.err != nil {
@@ -256,6 +283,11 @@ func (p *TunnelPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 				return p, cmd
 			}
 
+			// If login is needed, Enter triggers interactive cloudflared login
+			if p.needsLogin && p.focus == 1 {
+				return p, p.triggerLogin()
+			}
+
 			// For create mode on the name field: trigger creation
 			if p.currentSource() == tunnelSourceCreate && p.focus == 1 {
 				if msg.String() == "enter" || msg.String() == "tab" {
@@ -293,6 +325,15 @@ func (p *TunnelPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 
 	// Delegate to focused component
 	return p, p.updateFocusedField(msg)
+}
+
+// triggerLogin suspends the TUI and runs "cloudflared login" interactively.
+func (p *TunnelPage) triggerLogin() tea.Cmd {
+	p.loggingIn = true
+	cmd := common.LoginCmd()
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return loginCompleteMsg{err: err}
+	})
 }
 
 func (p *TunnelPage) isCurrentFieldSelector() bool {
@@ -471,14 +512,17 @@ func (p *TunnelPage) View() string {
 
 func (p *TunnelPage) viewSelect() string {
 	var b strings.Builder
-	if !p.tunnelsLoaded {
+	if p.loggingIn {
+		b.WriteString(common.HintStyle.Render("  Logging in via browser..."))
+		b.WriteString("\n")
+	} else if !p.tunnelsLoaded {
 		b.WriteString(common.HintStyle.Render("  Loading tunnels..."))
 		b.WriteString("\n")
 	} else if p.tunnelErr != "" {
 		b.WriteString(common.ErrorStyle.Render("  ! "+p.tunnelErr))
 		b.WriteString("\n")
 		if p.needsLogin {
-			b.WriteString(common.HintStyle.Render("  Run: cloudflared login"))
+			b.WriteString(common.HintStyle.Render("  Press Enter to log in via browser"))
 			b.WriteString("\n")
 		}
 	} else if len(p.tunnelPicker.Options) == 0 {
@@ -495,7 +539,10 @@ func (p *TunnelPage) viewCreate() string {
 	var b strings.Builder
 	b.WriteString(p.tunnelName.View())
 	b.WriteString("\n")
-	if p.creating {
+	if p.loggingIn {
+		b.WriteString(common.HintStyle.Render("  Logging in via browser..."))
+		b.WriteString("\n")
+	} else if p.creating {
 		b.WriteString(common.HintStyle.Render("  Creating tunnel..."))
 		b.WriteString("\n")
 	}
@@ -503,7 +550,7 @@ func (p *TunnelPage) viewCreate() string {
 		b.WriteString(common.ErrorStyle.Render("  ! "+p.createErr))
 		b.WriteString("\n")
 		if p.needsLogin {
-			b.WriteString(common.HintStyle.Render("  Run: cloudflared login"))
+			b.WriteString(common.HintStyle.Render("  Press Enter to log in via browser"))
 			b.WriteString("\n")
 		}
 	}

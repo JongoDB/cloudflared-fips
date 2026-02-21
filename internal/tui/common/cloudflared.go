@@ -94,6 +94,27 @@ func firstLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// IsLoggedIn checks whether cloudflared has an origin certificate (~/.cloudflared/cert.pem).
+func IsLoggedIn() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(home, ".cloudflared", "cert.pem"))
+	return err == nil
+}
+
+// LoginCmd returns an exec.Cmd for "cloudflared login". The caller should
+// pass this to tea.ExecProcess to suspend the TUI and hand the terminal to
+// cloudflared (which prints a URL and opens a browser).
+func LoginCmd() *exec.Cmd {
+	path, err := DetectCloudflared()
+	if err != nil {
+		path = "cloudflared"
+	}
+	return exec.Command(path, "login")
+}
+
 // FindCredentialsFile returns the default credentials file path for a tunnel
 // UUID. Returns empty string if the file does not exist.
 func FindCredentialsFile(uuid string) string {
