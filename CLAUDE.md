@@ -745,6 +745,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 | FIPS 140-3 migration | Module migration before Sept 2026 sunset | [x] `migration.go`, sunset banner, API endpoints | 6.11 |
 | Key rotation docs | GPG/cosign key rotation procedure | [x] `docs/key-rotation-procedure.md` | 6.12 |
 | Doc generation | Markdown → PDF/HTML via pandoc | [x] `scripts/generate-docs.sh` with PDF/HTML/Markdown fallback | — |
+| TUI | Bubbletea + Bubbles + Lipgloss | [x] Setup wizard (5 pages) + live status monitor. `cmd/tui/`, `internal/tui/` | — |
 
 ---
 
@@ -781,12 +782,18 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 ├── cmd/
 │   ├── selftest/main.go         # Standalone self-test CLI
 │   ├── dashboard/main.go        # Dashboard server (localhost-only)
-│   └── fips-proxy/main.go       # FIPS edge proxy (Tier 3)
+│   ├── fips-proxy/main.go       # FIPS edge proxy (Tier 3)
+│   └── tui/main.go              # TUI: setup wizard + status monitor
 ├── internal/
 │   ├── selftest/                # Self-test orchestrator, ciphers, KATs
 │   ├── compliance/              # Compliance state aggregation
 │   ├── dashboard/               # HTTP API handlers + SSE
-│   └── ipc/                     # Unix domain socket JSON-RPC for CloudSH
+│   ├── ipc/                     # Unix domain socket JSON-RPC for CloudSH
+│   └── tui/                     # Terminal UI (Bubbletea)
+│       ├── config/              # Config struct, YAML write/read, validators
+│       ├── common/              # Shared components: textinput, toggle, selector, ingress, styles
+│       ├── wizard/              # 5-page setup wizard (tunnel, dashboard, tier, fips, review)
+│       └── status/              # Live compliance status monitor (polls API)
 ├── pkg/
 │   ├── buildinfo/               # Linker-injected build metadata
 │   ├── manifest/                # Build manifest types + read/write
