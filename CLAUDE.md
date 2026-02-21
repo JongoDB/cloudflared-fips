@@ -6,7 +6,7 @@
 
 ---
 
-## Progress Summary (last updated: 2026-02-21)
+## Progress Summary (last updated: 2026-02-21, post-P1)
 
 | Area | Status | Notes |
 |------|--------|-------|
@@ -16,18 +16,18 @@
 | **AO documentation** | **Complete (templates)** | 8 docs: SSP, crypto usage, justification letter, hardening guide, monitoring plan, IR addendum, control mapping, architecture. |
 | **CI — compliance** | **Working** | Go lint/test, dashboard lint/build, docs check, manifest validation, shell syntax. |
 | **CI — build matrix** | **Working** | Per-OS jobs: Linux/RHEL with boringcrypto, macOS with Go native FIPS, Windows with Go native FIPS. `if-no-files-found: error`. |
-| **Packaging** | **Not implemented** | RPM, DEB, MSI, OCI container steps are all echo stubs. No .spec, DEBIAN/control, or WiX files. |
+| **Packaging** | **Implemented** | RPM (.spec + rpmbuild), DEB (dpkg-deb + build script), macOS .pkg (pkgbuild + productbuild), Windows MSI (WiX v4). All include self-test post-install. |
 | **SBOM** | **Not implemented** | Schema stubs in CI, no real dependency enumeration. |
 | **Artifact signing** | **Not implemented** | Echo stub with documentation. |
 | **SSE real-time** | **Frontend + backend** | Go SSE handler works. React `useComplianceSSE` hook with auto-reconnect, Live toggle, connection status. |
-| **Live compliance checks** | **Not implemented** | Backend serves static checker data. No syscall queries, Cloudflare API, TLS probing, or MDM integration. |
+| **Live compliance checks** | **Local implemented** | `LiveChecker` queries: BoringCrypto detection, OS FIPS mode, KATs, cipher suites, binary integrity, tunnel metrics, local TLS probing, config drift. CF API + MDM still TODO. |
 | **PDF export** | **Not implemented** | Intentional stub returning install instructions for pandoc. |
 | **quic-go audit** | **Not started** | Need to verify quic-go TLS routes through BoringCrypto, not its own crypto. |
 | **OS support matrix** | **Needs update** | Product supports any FIPS-mode Linux (RHEL, Ubuntu Pro, Amazon Linux, SLES, Oracle, Alma), not just RHEL. Docs/dashboard should reflect this. |
 | **FIPS 140-2 sunset** | **Action needed** | All FIPS 140-2 certs (including BoringCrypto #3678/#4407) expire Sept 21, 2026. Must plan migration to FIPS 140-3. |
 | **Edge FIPS honesty** | **Implemented** | Cloudflare Edge items show "Inherited" or "API" verification badges. Tooltip explains FedRAMP reliance. |
 | **macOS/Windows targets** | **CI implemented** | Per-OS CI jobs use `GODEBUG=fips140=on` (Go native FIPS 140-3, CAVP A6650, CMVP pending). |
-| **Modular crypto backend** | **Not implemented** | Product should let users select FIPS module (BoringCrypto, Go native, systemcrypto) based on platform. Dashboard should show active module + CMVP cert. |
+| **Modular crypto backend** | **Implemented** | `pkg/fipsbackend/` with Backend interface. BoringCrypto, GoNative, SystemCrypto backends. `Detect()` auto-selects. Live checker uses it. Dashboard display TODO. |
 | **Deployment tiers** | **Documented** | Three tiers defined: Standard Tunnel, Tunnel+Regional+Keyless, Self-hosted FIPS proxy. Implementation not started. |
 | **Client FIPS detection** | **Not implemented** | ClientHello cipher inspection + JA4 fingerprinting + WARP device posture. Approaches researched, code not written. |
 | **Dashboard honesty indicators** | **Implemented** | VerificationBadge component. All 39 items tagged: direct/api/probe/inherited/reported. Color-coded with tooltips. |
@@ -529,20 +529,12 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 
 **Goal:** Users select their FIPS module per platform. Dashboard reports active module + CMVP cert.
 
-- [ ] Add `pkg/fipsbackend/` package with interface:
-  ```go
-  type FIPSBackend interface {
-      Name() string              // "boringcrypto", "go-native", "systemcrypto", "rhel-openssl"
-      CMVPCertificate() string   // "#4735", "pending (CAVP A6650)", etc.
-      FIPSStandard() string      // "140-2", "140-3", "140-3 (pending)"
-      Validated() bool           // true if CMVP cert issued
-      SelfTest() (bool, error)   // run module-specific self-test
-  }
-  ```
-- [ ] Implement `BoringCryptoBackend` (current `GOEXPERIMENT=boringcrypto` — detect via build tags)
-- [ ] Implement `GoNativeBackend` (`GODEBUG=fips140=on` — detect via `crypto/fips140` package)
-- [ ] Implement `SystemCryptoBackend` (Microsoft `GOEXPERIMENT=systemcrypto` — detect via platform)
-- [ ] Build manifest: add `fips_backend` field identifying which module was used at build time
+- [x] Add `pkg/fipsbackend/` package with `Backend` interface (Name, DisplayName, CMVPCertificate, FIPSStandard, Validated, Active, SelfTest)
+- [x] Implement `BoringCrypto` backend — detects via TLS cipher suite restriction heuristic
+- [x] Implement `GoNative` backend — detects via `GODEBUG=fips140=on` env var
+- [x] Implement `SystemCrypto` backend — stub for Microsoft Go fork (`GOEXPERIMENT=systemcrypto`)
+- [x] `Detect()` auto-selects active backend; `DetectInfo()` returns JSON-serializable `Info` struct
+- [x] Build manifest `crypto_engine` field records backend per platform in CI
 - [ ] Dashboard: display active backend, cert number, validation status, and 140-2 vs 140-3 badge
 - [ ] Self-test suite: dispatch to backend-specific KAT runners
 
@@ -565,13 +557,13 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 
 **Goal:** Produce installable artifacts, not echo stubs.
 
-- [ ] **RPM:** Create `cloudflared-fips.spec` file; run `rpmbuild` in RHEL UBI 9 container
-- [ ] **DEB:** Create `DEBIAN/control`, `postinst`, `prerm`; run `dpkg-deb --build`
-- [ ] **OCI container:** Invoke `docker build -f build/Dockerfile.fips` or `buildah` in CI
-- [ ] **MSI (Windows):** Create WiX XML manifest; build with `wix build` on Windows runner
-- [ ] **macOS .pkg:** Create Distribution XML; build with `pkgbuild` + `productbuild` on macOS runner
-- [ ] All packages include: binary, self-test, sample config, build manifest
-- [ ] All packages run self-test as post-install verification
+- [x] **RPM:** `build/packaging/rpm/cloudflared-fips.spec` with systemd unit; CI runs `rpmbuild`
+- [x] **DEB:** `build/packaging/deb/` with DEBIAN/control, postinst, prerm; `build-deb.sh` runs `dpkg-deb`
+- [x] **OCI container:** CI invokes `podman build -f build/Dockerfile.fips` (podman/docker required)
+- [x] **MSI (Windows):** `build/packaging/windows/cloudflared-fips.wxs` for WiX v4; CI runs `wix build`
+- [x] **macOS .pkg:** `build/packaging/macos/build-pkg.sh` using `pkgbuild` + `productbuild` with optional codesigning
+- [x] All packages include: binary, self-test, sample config, build manifest
+- [x] All packages run self-test as post-install verification
 
 ### 6.4 Real SBOM Generation
 
@@ -611,18 +603,16 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 
 **Goal:** Replace mock data with real system queries for Segment 2 and 3 items.
 
-- [ ] `checkBoringCryptoLinked()` — already implemented, wire to dashboard
-- [ ] `checkOSFIPSMode()` — read `/proc/sys/crypto/fips_enabled`, wire to dashboard
-- [ ] `checkBinaryIntegrity()` — hash running binary, compare to manifest `binary_sha256`
-- [ ] `checkCipherSuites()` — already implemented, wire to dashboard
-- [ ] `checkTunnelStatus()` — query cloudflared metrics endpoint (`localhost:2000/metrics`)
-  - Tunnel protocol (QUIC/HTTP2)
-  - Connection count (tunnel redundancy)
-  - Uptime
-  - Last heartbeat
-  - Version
-- [ ] `checkLocalService()` — attempt connection to ingress target, check if TLS, inspect cipher
-- [ ] `checkConfigDrift()` — hash current config file, compare to known-good baseline
+- [x] `checkBoringCryptoActive()` — detects active FIPS backend via `fipsbackend.Detect()`
+- [x] `checkOSFIPSMode()` — reads `/proc/sys/crypto/fips_enabled` on Linux
+- [x] `checkBinaryIntegrity()` — SHA-256 of running binary vs manifest `binary_sha256`
+- [x] `checkCipherSuites()` — verifies all TLS suites are FIPS-approved
+- [x] `checkTunnelProtocol()` / `checkTunnelRedundancy()` — queries cloudflared metrics endpoint
+- [x] `checkLocalTLSEnabled()` / `checkLocalCipherSuite()` / `checkLocalCertificateValid()` — TLS probes ingress targets
+- [x] `checkConfigDrift()` — verifies config file present (baseline hash comparison requires external CM)
+- [x] `checkFIPSBackend()` — reports active backend name, CMVP cert, 140-2 vs 140-3 status
+- [x] `LiveChecker` with functional options: `WithManifestPath`, `WithConfigPath`, `WithMetricsAddr`, `WithIngressTargets`
+- [x] `cmd/dashboard/main.go` updated with `--config`, `--metrics-addr`, `--ingress-targets` flags
 
 ### 6.8 Live Compliance Checks — Cloudflare API
 
