@@ -178,6 +178,12 @@ The product detects client FIPS capability through:
 ## Prerequisites
 
 - **Go 1.24+** — required for all Go commands (`make setup`, `make status`, `make build-fips`, etc.). CGO support needed for Linux FIPS builds only.
+  ```bash
+  # macOS
+  brew install go
+
+  # Or download from https://go.dev/dl/
+  ```
 - **Docker** (for FIPS container builds)
 - **Node.js 22+** (for web dashboard development)
 - **RHEL UBI 9** base image (pulled automatically by Docker)
