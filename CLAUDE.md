@@ -6,7 +6,7 @@
 
 ---
 
-## Progress Summary (last updated: 2026-02-21, unblocking remaining items)
+## Progress Summary (last updated: 2026-02-21, final cleanup)
 
 | Area | Status | Notes |
 |------|--------|-------|
@@ -773,8 +773,10 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 │   ├── Dockerfile.fips          # RHEL UBI 9 FIPS build container
 │   ├── Dockerfile.fips-proxy    # FIPS edge proxy container (Tier 3)
 │   ├── build.sh                 # Build orchestrator (clones upstream)
-│   ├── cloudflared-fips.spec    # [planned] RPM spec file
-│   ├── debian/                  # [planned] DEB packaging (control, postinst, prerm)
+│   ├── packaging/rpm/           # RPM spec file + systemd unit
+│   ├── packaging/deb/           # DEB packaging (control, postinst, prerm)
+│   ├── packaging/macos/         # macOS .pkg build script
+│   ├── packaging/windows/       # Windows MSI (WiX v4)
 │   └── patches/README.md
 ├── cmd/
 │   ├── selftest/main.go         # Standalone self-test CLI
@@ -784,7 +786,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 │   ├── selftest/                # Self-test orchestrator, ciphers, KATs
 │   ├── compliance/              # Compliance state aggregation
 │   ├── dashboard/               # HTTP API handlers + SSE
-│   └── tlsprobe/                # [planned] TLS ClientHello inspector, JA4 fingerprinting
+│   └── ipc/                     # Unix domain socket JSON-RPC for CloudSH
 ├── pkg/
 │   ├── buildinfo/               # Linker-injected build metadata
 │   ├── manifest/                # Build manifest types + read/write
@@ -796,13 +798,14 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 ├── dashboard/                   # React + TypeScript + Tailwind (Vite)
 │   └── src/
 │       ├── types/compliance.ts  # TS types matching spec schema
-│       ├── data/mockData.ts     # Mock data: all 39 checklist items
+│       ├── data/mockData.ts     # Mock data: all 41 checklist items
 │       ├── hooks/               # useComplianceSSE (SSE), useComplianceWS (WebSocket + SSE fallback)
 │       ├── components/          # StatusBadge, ChecklistItem, SunsetBanner, DeploymentTierBadge, etc.
 │       └── pages/DashboardPage.tsx
 ├── configs/
 │   ├── cloudflared-fips.yaml    # Sample tunnel + FIPS config
-│   └── build-manifest.json      # Sample manifest (spec schema)
+│   ├── build-manifest.json      # Sample manifest (spec schema)
+│   └── public-key.asc           # GPG public key for artifact verification
 ├── scripts/
 │   ├── check-fips.sh            # Post-build FIPS validation
 │   ├── generate-manifest.sh     # Produce build-manifest.json
@@ -810,7 +813,9 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 │   ├── generate-docs.sh         # AO doc package (PDF/HTML via pandoc)
 │   ├── audit-crypto-deps.sh     # Full dependency tree crypto audit
 │   ├── verify-boring.sh         # Verify BoringCrypto symbols
-│   ├── sign-artifacts.sh         # CI artifact signing (GPG + cosign)
+│   ├── verify-boring-version.sh # BoringCrypto 140-2 vs 140-3 detection
+│   ├── verify-signatures.sh     # GPG artifact signature verification
+│   ├── sign-artifacts.sh        # CI artifact signing (GPG + cosign)
 │   └── take-screenshots.cjs     # Headless dashboard screenshots
 ├── docs/
 │   ├── ao-narrative.md          # SSP template
@@ -821,7 +826,9 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 │   ├── incident-response-addendum.md # Crypto failure procedures
 │   ├── control-mapping.md       # NIST 800-53 control mapping
 │   ├── architecture-diagram.md  # Mermaid diagrams
-│   ├── deployment-tier-guide.md # [planned] Tier 1/2/3 deployment setup guides
+│   ├── deployment-tier-guide.md # Tier 1/2/3 deployment setup + HSM guides
+│   ├── key-rotation-procedure.md # GPG/cosign key rotation procedure
+│   ├── quic-go-crypto-audit.md  # quic-go FIPS crypto analysis
 │   └── screenshots/             # Dashboard screenshots (5 PNGs)
 ├── deploy/
 │   ├── terraform/main.tf        # AWS GovCloud ECS Fargate (Tier 3)

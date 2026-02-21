@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -170,6 +169,3 @@ func startDashboard(addr string, inspector *clientdetect.Inspector) {
 		fmt.Fprintf(os.Stderr, "Dashboard error: %v\n", err)
 	}
 }
-
-// Ensure io import is used (for potential future streaming)
-var _ = io.EOF
