@@ -22,7 +22,7 @@
 | **SSE real-time** | **Frontend + backend** | Go SSE handler works. React `useComplianceSSE` hook with auto-reconnect, Live toggle, connection status. |
 | **Live compliance checks** | **Implemented** | Local: `LiveChecker` (BoringCrypto, OS FIPS, KATs, ciphers, binary integrity, tunnel metrics, TLS probing). Edge: `cfapi.ComplianceChecker` (11 checks including Keyless SSL + Regional Services). Client: `clientdetect.ComplianceChecker` (8 checks). |
 | **PDF export** | **Not implemented** | Intentional stub returning install instructions for pandoc. |
-| **quic-go audit** | **Not started** | Need to verify quic-go TLS routes through BoringCrypto, not its own crypto. |
+| **quic-go audit** | **Complete** | `docs/quic-go-crypto-audit.md`. TLS handshake + AES-GCM via BoringCrypto. ChaCha20 bypass mitigated by cipher restriction. HKDF partial (hash primitives BoringCrypto-backed). Retry fixed nonce = protocol-level FIPS deviation (documented). |
 | **OS support matrix** | **Needs update** | Product supports any FIPS-mode Linux (RHEL, Ubuntu Pro, Amazon Linux, SLES, Oracle, Alma), not just RHEL. Docs/dashboard should reflect this. |
 | **FIPS 140-2 sunset** | **Implemented** | `pkg/fipsbackend/migration.go` tracks sunset (Sept 21, 2026). Dashboard sunset banner with countdown + urgency. API: `/api/v1/migration`. |
 | **Edge FIPS honesty** | **Implemented** | Cloudflare Edge items show "Inherited" or "API" verification badges. Tooltip explains FedRAMP reliance. |
@@ -295,7 +295,7 @@ Each dashboard section should display a **verification method** indicator:
 - [x] Write verification that only FIPS-approved algorithms are in use
 - [x] Target production deployment on FIPS-mode RHEL 8/9 (`fips=1` kernel parameter, OpenSSL certs #3842, #4349)
 - [ ] Audit full dependency tree for bundled crypto bypassing the validated module
-- [ ] Specifically audit quic-go for crypto compliance — verify TLS operations route through BoringCrypto
+- [x] Specifically audit quic-go for crypto compliance — see `docs/quic-go-crypto-audit.md`. Findings: TLS handshake routes through `crypto/tls.QUICConn` (BoringCrypto). AES-GCM packet encryption routes through BoringCrypto. **ChaCha20-Poly1305 does NOT** (uses `golang.org/x/crypto`) — mitigated by restricting to AES-GCM cipher suites. HKDF is partial bypass (algorithm pure Go, but hash primitives via BoringCrypto). QUIC retry uses fixed AES-GCM nonce per RFC 9001 — incompatible with `GODEBUG=fips140=only` but OK with `GOEXPERIMENT=boringcrypto` and `GODEBUG=fips140=on`.
 - [x] Produce reproducible build scripts and Dockerfiles
 - [x] Tag every build with metadata: validated modules, algorithm list, build timestamp, git commit hash, target platform
 - [x] Cross-compile build step must fail (not silently succeed) — fixed in P0: `|| echo` removed, per-OS jobs with `if-no-files-found: error`
