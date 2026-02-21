@@ -6,6 +6,34 @@
 
 ---
 
+## Progress Summary (last updated: 2026-02-20)
+
+| Area | Status | Notes |
+|------|--------|-------|
+| **FIPS build system** | **Working** | Dockerfile.fips builds on RHEL UBI 9 with BoringCrypto verification + self-test gates. build.sh orchestrates full flow. |
+| **Self-test suite** | **Working** | Real NIST CAVP vectors. BoringCrypto detection, OS FIPS mode, cipher suite validation, KATs. |
+| **Compliance dashboard** | **Working (mock data)** | All 39 checklist items render. Expandable items with what/why/fix/NIST ref. JSON export works. |
+| **AO documentation** | **Complete (templates)** | 8 docs: SSP, crypto usage, justification letter, hardening guide, monitoring plan, IR addendum, control mapping, architecture. |
+| **CI — compliance** | **Working** | Go lint/test, dashboard lint/build, docs check, manifest validation, shell syntax. |
+| **CI — build matrix** | **Partial** | 6-entry matrix defined. linux/amd64 compiles. **macOS/Windows will never work** — `GOEXPERIMENT=boringcrypto` is Linux-only. Need to remove or replace with alternative FIPS approach. |
+| **Packaging** | **Not implemented** | RPM, DEB, MSI, OCI container steps are all echo stubs. No .spec, DEBIAN/control, or WiX files. |
+| **SBOM** | **Not implemented** | Schema stubs in CI, no real dependency enumeration. |
+| **Artifact signing** | **Not implemented** | Echo stub with documentation. |
+| **SSE real-time** | **Backend only** | Go SSE handler works. React frontend has no EventSource consumer. |
+| **Live compliance checks** | **Not implemented** | Backend serves static checker data. No syscall queries, Cloudflare API, TLS probing, or MDM integration. |
+| **PDF export** | **Not implemented** | Intentional stub returning install instructions for pandoc. |
+| **quic-go audit** | **Not started** | Need to verify quic-go TLS routes through BoringCrypto, not its own crypto. |
+| **OS support matrix** | **Needs update** | Product supports any FIPS-mode Linux (RHEL, Ubuntu Pro, Amazon Linux, SLES, Oracle, Alma), not just RHEL. Docs/dashboard should reflect this. |
+| **FIPS 140-2 sunset** | **Action needed** | All FIPS 140-2 certs (including BoringCrypto #3678/#4407) expire Sept 21, 2026. Must plan migration to FIPS 140-3. |
+| **Edge FIPS honesty** | **Needs update** | Dashboard "Cloudflare Edge" section should disclose that edge crypto module FIPS validation is not independently verifiable. |
+| **macOS/Windows targets** | **Architecture issue** | `GOEXPERIMENT=boringcrypto` is Linux-only. Need Microsoft systemcrypto or Go native FIPS for these platforms. |
+| **Modular crypto backend** | **Not implemented** | Product should let users select FIPS module (BoringCrypto, Go native, systemcrypto) based on platform. Dashboard should show active module + CMVP cert. |
+| **Deployment tiers** | **Documented** | Three tiers defined: Standard Tunnel, Tunnel+Regional+Keyless, Self-hosted FIPS proxy. Implementation not started. |
+| **Client FIPS detection** | **Not implemented** | ClientHello cipher inspection + JA4 fingerprinting + WARP device posture. Approaches researched, code not written. |
+| **Dashboard honesty indicators** | **Not implemented** | Each item needs verification method label: Verified (direct/API/probe), Inherited (FedRAMP), Reported (client). |
+
+---
+
 ## Product Vision
 
 Three core deliverables:
@@ -44,6 +72,219 @@ Within deployment boundary. Loopback may be out of scope for FIPS (AO interpreta
 
 ---
 
+## Critical Architecture Findings (researched 2026-02-20)
+
+### Finding 1: BoringCrypto is statically linked — OS OpenSSL is NOT required for our binary
+
+`GOEXPERIMENT=boringcrypto` compiles pre-built BoringSSL `.syso` object files directly into the Go binary. The FIPS-validated crypto (CMVP #3678, #4407) travels with the binary. It does **not** call the host OS's OpenSSL.
+
+**Implication:** Our cloudflared-fips binary uses FIPS-validated crypto on ANY Linux (amd64/arm64), not just RHEL. However, an AO will want the entire system stack in FIPS mode (kernel crypto, SSH, disk encryption), which requires an OS with its own FIPS-validated modules.
+
+### Finding 2: Supported host OSes (broader than RHEL)
+
+| Distro | FIPS Validation | OS FIPS Mode | Notes |
+|--------|----------------|--------------|-------|
+| RHEL 8/9 | 140-2 + 140-3 | `fips=1` boot param | Industry standard for FedRAMP |
+| Ubuntu Pro 20.04/22.04 | 140-2 + 140-3 | `fips=1` boot param | Requires Pro subscription |
+| Amazon Linux 2/2023 | 140-2 + 140-3 | `fips-mode-setup --enable` | Native AWS integration |
+| SUSE SLES 15 | 140-3 | `fips=1` boot param | Common in enterprise |
+| Oracle Linux 8/9 | 140-2 + 140-3 | `fips=1` boot param | |
+| AlmaLinux 9.2+ | 140-3 | `fips=1` boot param | |
+
+### Finding 3: `GOEXPERIMENT=boringcrypto` is Linux-only
+
+Build constraint: `//go:build boringcrypto && linux && (amd64 || arm64) && !android && !msan`
+
+**No Windows. No macOS.** The `.syso` files only exist for linux/amd64 and linux/arm64. This means:
+- Our CI matrix entries for macOS/Windows with BoringCrypto **will always fail** (currently swallowed by `|| echo`)
+- Alternatives for non-Linux: Microsoft Build of Go (`systemcrypto` → CNG/CommonCrypto), or Go 1.24+ native FIPS 140-3 module (`GODEBUG=fips140=on`) — but the native module has **not yet completed CMVP validation**
+
+### Finding 4: FIPS 140-2 sunset — September 21, 2026
+
+All FIPS 140-2 certificates (including BoringCrypto #3678, #4407) move to the CMVP Historical List on **September 21, 2026**. After that date, only FIPS 140-3 validated modules are acceptable for new federal acquisitions. Our product must plan migration to either:
+- Go 1.24+ native FIPS 140-3 module (CAVP cert A6650, CMVP validation in progress)
+- BoringCrypto FIPS 140-3 (Google CMVP #4735)
+- Microsoft Build of Go with system crypto backends
+
+### Finding 5: Cloudflare's edge crypto is NOT independently FIPS-validated
+
+**Cloudflare does NOT hold a CMVP certificate.** They are not listed as a vendor in the NIST CMVP database.
+
+- Cloudflare uses BoringSSL on their edge (migrated from OpenSSL in 2017)
+- BoringSSL contains a FIPS-validated sub-module (BoringCrypto), but the CMVP certificates belong to **Google, Inc.**, not Cloudflare
+- Using the same code ≠ having your own validation. NIST: "non-validated cryptography is viewed as providing no protection"
+- There is no Cloudflare API endpoint to verify FIPS mode is enabled on the edge server handling your request
+
+**What Cloudflare DOES have:**
+- FedRAMP Moderate authorization (FedRAMP High in process)
+- Configurable FIPS-compliant cipher suites (verifiable via API)
+- Keyless SSL for customer-controlled FIPS 140-2 Level 3 HSMs
+- Cloudflare for Government (same infrastructure, logical separation via Regional Services)
+
+**What we CAN verify about the edge externally:**
+- Negotiated TLS cipher suite (TLS probing: `openssl s_client`, `testssl.sh`)
+- TLS version (1.2/1.3)
+- Cipher suite configuration (API: `GET /zones/{zone_id}/settings/ciphers`)
+- Minimum TLS version setting (API)
+- Edge certificate validity and chain
+
+**What we CANNOT verify:**
+- Whether the edge crypto module runs in FIPS mode
+- Which BoringSSL build/version is running
+- Internal Cloudflare backbone encryption
+- Key storage protections at rest (unless using Keyless SSL)
+
+### Finding 6: Dashboard honesty implications
+
+Our dashboard's "Cloudflare Edge" section shows 9 items. The honest status:
+
+| Item | Verifiable? | How |
+|------|-------------|-----|
+| Access policy active | Yes | Cloudflare API |
+| IdP connected | Yes | Cloudflare API |
+| Auth method | Yes | Cloudflare API |
+| MFA enforced | Yes | Cloudflare API |
+| Cipher suite restriction | Yes (config) | API + TLS probe — but cannot verify the **module** is validated |
+| Min TLS version | Yes (config) | API |
+| Edge certificate valid | Yes | TLS probe |
+| HSTS enforced | Yes (config) | HTTP header check |
+| Last auth event | Yes | Cloudflare API |
+
+**None of these verify that Cloudflare's edge crypto module is FIPS-validated.** The dashboard should clearly indicate: "Cipher configuration verified via API; edge crypto module FIPS validation inherited through Cloudflare's FedRAMP Moderate authorization, not independently verifiable."
+
+### Finding 7: The cloudflared binary from Cloudflare is NOT FIPS-built
+
+The official `cloudflared` binary distributed by Cloudflare uses standard Go crypto. It is not built with `GOEXPERIMENT=boringcrypto` or `GODEBUG=fips140=on`. **This is the entire reason our product exists.**
+
+**However:** Cloudflare's repo does contain `build-packages-fips.sh` and `check-fips.sh` — they have the scripts to produce FIPS builds but do not ship them as default.
+
+---
+
+## Go FIPS Crypto Module Matrix
+
+### Four approaches, compared
+
+| | BoringCrypto (Google) | Go Native FIPS 140-3 | Microsoft systemcrypto | Red Hat golang-fips |
+|---|---|---|---|---|
+| **Mechanism** | Static `.syso` linked into binary | Pure Go, compiled in | `dlopen` to platform libs | `dlopen` to OpenSSL |
+| **Requires CGO** | Yes | **No** | Yes (Linux); No (Win/Mac) | Yes |
+| **FIPS 140-2 certs** | #2964, #3318, #3678, #3753, #4156, #4407 | None | Windows CNG #4825 | Via host OS OpenSSL |
+| **FIPS 140-3 certs** | **#4735**, #4953 (interim) | **None yet** (CAVP A6650, MIP list) | OpenSSL #4985 (Linux) | Via RHEL OpenSSL #4746, #4857 |
+| **Linux amd64** | Yes | Yes | Yes | Yes |
+| **Linux arm64** | Yes | Yes | Yes | Yes |
+| **Windows amd64** | **No** | Yes | Yes (CNG) | No |
+| **Windows arm64** | **No** | Yes | Yes (CNG) | No |
+| **macOS amd64** | **No** | Yes | Yes (CommonCrypto) | No |
+| **macOS arm64** | **No** | Yes | Yes (CommonCrypto) | No |
+| **Build flag** | `GOEXPERIMENT=boringcrypto` | `GODEBUG=fips140=on` | `GOEXPERIMENT=systemcrypto` | Auto-detects OS FIPS mode |
+| **Future** | Planned removal once Google migrates | **The future standard** | Default in MS Go 1.25+ | Planned sunset for upstream native |
+
+### Host OS FIPS Validation Matrix
+
+| OS / Distro | FIPS 140-2 | FIPS 140-3 | FIPS Mode Activation | Notes |
+|-------------|-----------|-----------|---------------------|-------|
+| RHEL 8 | Validated (OpenSSL, GnuTLS, Kernel) | — | `fips-mode-setup --enable` | Industry standard for FedRAMP |
+| RHEL 9 | — | Validated (#4746, #4857, #4780, #4796) | `fips-mode-setup --enable` | First OS with full 140-3 suite |
+| Ubuntu Pro 20.04 | Validated (#2888, #2962) | — | `ua enable fips` | Requires Pro subscription |
+| Ubuntu Pro 22.04 | — | Validated | `ua enable fips` | Requires Pro subscription |
+| Amazon Linux 2 | Validated (#3553, #3567, #4593) | — | `sudo fips-mode-setup --enable` | Native AWS integration |
+| Amazon Linux 2023 | — | Validated (June 2025) | `sudo fips-mode-setup --enable` | FIPS 140-3 Level 1 |
+| SUSE SLES 15 SP6+ | — | Validated (OpenSSL 3) | `fips=1` boot param | |
+| Oracle Linux 8 | Validated (#4215, #3893) | — | `fips-mode-setup --enable` | |
+| Oracle Linux 9 | — | Validated | `fips-mode-setup --enable` | |
+| AlmaLinux 9.2+ | — | Validated | `fips-mode-setup --enable` | Funded by CloudLinux |
+| Windows Server 2022+ | Validated (CNG #4825) | In process | GPO: "Use FIPS compliant algorithms" | |
+| macOS (all recent) | Validated (CommonCrypto, per-release) | In process | Always active — no switch | Apple submits per major release |
+
+### FIPS 140-2 Sunset: September 21, 2026
+
+All 140-2 certificates (including BoringCrypto #3678/#4407, Windows CNG #4825) move to the CMVP Historical List. After that date, only 140-3 validated modules are acceptable for new federal acquisitions.
+
+**Our migration path (in priority order):**
+1. **BoringCrypto 140-3 (#4735)** — already validated, works today with `GOEXPERIMENT=boringcrypto` on Linux. Verify the Go integration uses the 140-3 certified version.
+2. **Go native FIPS 140-3** — once CMVP validates (currently MIP). Broadest platform support, no CGO. This is the long-term answer.
+3. **Microsoft systemcrypto** — for Windows/macOS targets where BoringCrypto doesn't work. Delegates to platform-validated modules.
+
+**Product design: the crypto backend should be modular.** Users must be able to select their FIPS module based on their deployment platform and compliance requirements. The dashboard should display which module is in use and its exact CMVP certificate number and FIPS standard (140-2 vs 140-3).
+
+---
+
+## End-to-End Observability Architecture
+
+### The Gap: Cloudflare's Edge
+
+Cloudflare Tunnel **requires** traffic to flow through Cloudflare's edge. There is no bypass. The edge uses BoringSSL but does not hold its own CMVP certificate. This creates an observability gap.
+
+### Deployment Tiers (increasing FIPS assurance)
+
+#### Tier 1: Standard Cloudflare Tunnel (current architecture)
+```
+Client → Cloudflare Edge → cloudflared-fips → Origin
+```
+- **What we control:** Segment 2 (our binary) and Segment 3 (origin)
+- **What we verify:** Edge cipher config (API), TLS version (probe), client cipher suite (ClientHello)
+- **What we trust:** Cloudflare's FedRAMP Moderate authorization
+- **Gap:** Edge crypto module not independently FIPS-validated
+
+#### Tier 2: Cloudflare Tunnel + Regional Services + Keyless SSL
+```
+Client → Cloudflare FedRAMP DC (Regional Services) → Keyless SSL (customer HSM) → cloudflared-fips → Origin
+```
+- **Additional controls:** TLS termination restricted to FedRAMP-compliant US data centers; private keys stay in customer's FIPS 140-2 Level 3 HSMs (AWS CloudHSM, Azure HSM, etc.)
+- **Improvement:** Key material never touches Cloudflare's infrastructure
+- **Remaining gap:** Bulk encryption (AES-GCM) still performed by Cloudflare's edge BoringSSL
+
+#### Tier 3: Self-Hosted FIPS Edge Proxy (full control)
+```
+Client → FIPS Proxy (GovCloud) → [optional: Cloudflare for WAF/DDoS] → cloudflared-fips → Origin
+```
+- **Full control:** Client TLS terminates at a FIPS-validated proxy we control (our Go binary with BoringCrypto, or nginx with FIPS OpenSSL) deployed in AWS GovCloud / Azure Government / Google Assured Workloads
+- **Optional Cloudflare:** Can still use Cloudflare on the backend for security services (WAF, DDoS, bot management) with a separate tunnel
+- **No gap:** Every TLS termination point uses a FIPS-validated module we control or can verify
+
+### FedRAMP Cloud Environments for Tier 3
+
+| Provider | FedRAMP Level | HSM | FIPS OS Options |
+|----------|--------------|-----|-----------------|
+| AWS GovCloud | High + IL5 | CloudHSM (Level 3) | RHEL, Amazon Linux, Ubuntu Pro |
+| Azure Government | High | Dedicated HSM (Level 3) | Windows Server, RHEL |
+| Google Assured Workloads | High (select) | Cloud HSM (Level 3) | RHEL, custom |
+| Oracle Cloud Government | High + FedRAMP+ | Software (Level 1) | Oracle Linux |
+
+### Client-Side FIPS Observability
+
+#### What we CAN detect (and should implement)
+
+| Method | What it detects | Reliability | Implementation |
+|--------|----------------|-------------|----------------|
+| **TLS ClientHello inspection** | Absence of ChaCha20-Poly1305 = FIPS mode | High | Go `tls.Config.GetConfigForClient` → inspect `ClientHelloInfo.CipherSuites` |
+| **JA3/JA4 fingerprinting** | FIPS-mode browser produces distinct fingerprint | High | Cloudflare exposes JA3/JA4 in WAF rules; or compute server-side |
+| **WARP + custom device posture** | OS FIPS mode enabled | High | Custom service-to-service API checking `/proc/sys/crypto/fips_enabled` (Linux) or registry key (Windows) |
+| **Cloudflare Access device posture** | MDM enrollment, disk encryption, OS version | High | Native Cloudflare Access integration |
+| **Negotiated cipher suite logging** | Which cipher was actually used | Definitive | Server-side TLS connection metadata |
+
+#### What we CANNOT detect
+
+| Gap | Why | Mitigation |
+|-----|-----|------------|
+| Client crypto module is FIPS-**validated** (has CMVP cert) | No external API to query a browser's CMVP status | Document in AO package; require managed endpoints with known OS/browser combinations |
+| Client browser uses BoringSSL vs OS crypto | Chrome on Linux uses BoringSSL regardless of OS FIPS mode | Document as known gap; recommend Firefox with NSS FIPS mode on Linux |
+| Non-managed device compliance | BYOD can't be verified | Require WARP + MDM enrollment via Cloudflare Access |
+
+### Dashboard Honesty Requirements
+
+Each dashboard section should display a **verification method** indicator:
+
+| Indicator | Meaning |
+|-----------|---------|
+| **Verified (direct)** | We directly measured this value (e.g., self-test result, binary hash) |
+| **Verified (API)** | Confirmed via Cloudflare API or system call (e.g., cipher config, OS FIPS mode) |
+| **Verified (probe)** | Confirmed via TLS handshake inspection (e.g., negotiated cipher) |
+| **Inherited (FedRAMP)** | Relies on Cloudflare's FedRAMP authorization, not independently verified |
+| **Reported (client)** | Client-reported via WARP/device posture — trust depends on endpoint management |
+
+---
+
 ## Phase 1 — FIPS-Compliant cloudflared Build
 
 ### Build Goals
@@ -56,22 +297,23 @@ Within deployment boundary. Loopback may be out of scope for FIPS (AO interpreta
 - [ ] Specifically audit quic-go for crypto compliance — verify TLS operations route through BoringCrypto
 - [x] Produce reproducible build scripts and Dockerfiles
 - [x] Tag every build with metadata: validated modules, algorithm list, build timestamp, git commit hash, target platform
+- [ ] Cross-compile build step must fail (not silently succeed) when compilation errors occur — currently `|| echo` swallows failures in CI
 
 ### Startup Self-Test
 
 - [x] Confirms BoringCrypto is the active crypto provider (not standard Go crypto)
 - [x] Confirms OS FIPS mode is enabled (`/proc/sys/crypto/fips_enabled == 1` on Linux; document macOS and Windows equivalents)
 - [x] Confirms only FIPS-approved cipher suites are configured
-- [x] Runs BoringCrypto's built-in known-answer tests (KATs)
+- [x] Runs BoringCrypto's built-in known-answer tests (KATs) — real NIST CAVP vectors for AES-GCM, SHA-256, SHA-384, HMAC-SHA-256, ECDSA P-256, RSA-2048
 - [x] Refuses to start if any check fails with clear, actionable error messages
 - [x] Logs all results to structured JSON for compliance audit trail
 
 ### SBOM Generation
 
-- [ ] Auto-generate SBOM at build time listing every dependency and version
+- [ ] Auto-generate SBOM at build time listing every dependency and version — **current CI generates skeleton JSON with correct schema headers but no actual dependency enumeration; needs `cyclonedx-gomod` or `spdx-sbom-generator`**
 - [ ] Flag whether each dependency performs cryptographic operations
 - [ ] For each crypto dependency: which validated module it delegates to
-- [ ] Output as CycloneDX and SPDX format (both accepted by government procurement)
+- [ ] Output as CycloneDX and SPDX format (both accepted by government procurement) — **schema stubs exist, need real tooling**
 
 ---
 
@@ -141,17 +383,17 @@ Web-based GUI showing real-time compliance checklist. Every item is green/yellow
 
 ### Dashboard Implementation
 
-- [x] React + TypeScript frontend, Tailwind CSS
+- [x] React + TypeScript frontend, Tailwind CSS — built and verified rendering
 - [x] Mock data covering all three segments (validates UX before wiring real sources)
-- [x] Export compliance report as JSON
-- [x] PDF export stub (requires pandoc backend)
-- [x] Dashboard localhost-only by default
+- [x] Export compliance report as JSON — working via ExportButtons component (Blob download)
+- [x] PDF export stub (requires pandoc backend) — intentional stub with install instructions
+- [x] Dashboard localhost-only by default — Go server binds `127.0.0.1:8080`
 - [x] Air-gap friendly: all assets bundled, no CDN dependencies at runtime
-- [ ] Backend: Go sidecar service querying local system state, cloudflared /metrics, Cloudflare API
+- [ ] Backend: Go sidecar service querying local system state, cloudflared /metrics, Cloudflare API — **handler scaffolded but serves static checker data, not live system queries**
 - [ ] Active TLS probing (connect to tunnel hostname, inspect negotiated cipher/TLS version)
 - [ ] Cloudflare API integration (Access policy status, tunnel health, cipher config)
 - [ ] MDM API integration (Intune/Jamf) for client posture data
-- [ ] Real-time updates via SSE (endpoint scaffolded, needs real data sources)
+- [ ] Real-time updates via SSE — **Go backend SSE handler implemented (`/api/v1/events`, 30s ticker), but React frontend has NO EventSource consumer wired up**
 - [ ] WebSocket alternative for real-time updates
 
 ---
@@ -184,9 +426,9 @@ Web-based GUI showing real-time compliance checklist. Every item is green/yellow
    - [x] macOS: documentation of always-active validated module, verification steps
    - [x] MDM policy templates for Intune and Jamf
 
-5. [ ] **SBOM** — auto-generated at build time (CycloneDX + SPDX)
-   - [ ] CycloneDX output
-   - [ ] SPDX output
+5. [ ] **SBOM** — auto-generated at build time (CycloneDX + SPDX) — **CI produces skeleton JSON with correct schema headers but no actual dependency enumeration**
+   - [ ] CycloneDX output — schema stub exists, needs `cyclonedx-gomod` or equivalent
+   - [ ] SPDX output — schema stub exists, needs `spdx-sbom-generator` or equivalent
    - [ ] Crypto dependency flagging
 
 6. [x] **Continuous Monitoring Plan template** — `docs/continuous-monitoring-plan.md`
@@ -209,29 +451,33 @@ Web-based GUI showing real-time compliance checklist. Every item is green/yellow
 
 ### Target Platforms (10 total)
 
-| Platform | Arch | Output | Status |
-|----------|------|--------|--------|
-| Linux (RPM) | amd64 | .rpm (RHEL 8/9) | [x] CI matrix entry |
-| Linux (RPM) | arm64 | .rpm (RHEL 8/9 ARM) | [x] CI matrix entry |
-| Linux (DEB) | amd64 | .deb (Ubuntu/Debian) | [x] CI matrix entry |
-| Linux (DEB) | arm64 | .deb (Ubuntu/Debian ARM) | [x] CI matrix entry |
-| macOS | arm64 (Apple Silicon) | .pkg / binary | [x] CI matrix entry |
-| macOS | amd64 (Intel) | .pkg / binary | [x] CI matrix entry |
-| Windows | amd64 | .msi / .exe | [x] CI matrix entry |
-| Windows | arm64 | .msi / .exe | [x] CI matrix entry |
-| Container | amd64 | OCI image (RHEL UBI 9 base) | [x] CI matrix entry |
-| Container | arm64 | OCI image (RHEL UBI 9 base) | [x] CI matrix entry |
+| Platform | Arch | Output | CI Matrix | Compile | Package |
+|----------|------|--------|-----------|---------|---------|
+| Linux (RPM) | amd64 | .rpm (RHEL 8/9) | [x] | [x] native | [ ] rpmbuild stub |
+| Linux (RPM) | arm64 | .rpm (RHEL 8/9 ARM) | [x] | [~] cross-compile, needs toolchain | [ ] rpmbuild stub |
+| Linux (DEB) | amd64 | .deb (Ubuntu/Debian) | [x] | [x] native | [ ] dpkg-deb stub |
+| Linux (DEB) | arm64 | .deb (Ubuntu/Debian ARM) | [x] | [~] cross-compile, needs toolchain | [ ] dpkg-deb stub |
+| macOS | arm64 (Apple Silicon) | .pkg / binary | [x] | [ ] CGO cross-compile fails silently | [ ] no .pkg step |
+| macOS | amd64 (Intel) | .pkg / binary | [x] | [ ] CGO cross-compile fails silently | [ ] no .pkg step |
+| Windows | amd64 | .msi / .exe | [x] | [ ] CGO cross-compile fails silently | [ ] WiX stub |
+| Windows | arm64 | .msi / .exe | [x] | [ ] CGO cross-compile fails silently | [ ] no MSI step |
+| Container | amd64 | OCI image (RHEL UBI 9 base) | [x] | [x] via Dockerfile.fips | [ ] buildah stub |
+| Container | arm64 | OCI image (RHEL UBI 9 base) | [x] | [~] Dockerfile.fips needs multi-arch | [ ] buildah stub |
+
+> **Key issue:** `GOEXPERIMENT=boringcrypto` requires `CGO_ENABLED=1`, which means cross-compiling to macOS/Windows from a Linux runner needs a C cross-compiler for each target OS. The current CI swallows these failures with `|| echo`. Options: (a) use native macOS/Windows runners, (b) use CGO_ENABLED=0 and accept no BoringCrypto for those platforms, or (c) use a cross-compilation toolchain like zig cc.
 
 ### Build Strategy
 
-- [x] Primary FIPS build: RHEL UBI 9 container with `GOEXPERIMENT=boringcrypto`
-- [x] Cross-compilation: Go native cross-compile (GOOS/GOARCH)
+- [x] Primary FIPS build: RHEL UBI 9 container with `GOEXPERIMENT=boringcrypto` — Dockerfile.fips is complete with BoringCrypto verification and self-test gates
+- [x] Cross-compilation: Go native cross-compile (GOOS/GOARCH) — CI matrix covers all 6 entries / 10 targets, **but non-linux CGO cross-compile will fail silently (swallowed by `|| echo`); needs native toolchains or separate runners**
 - [x] BoringCrypto on all platforms (document platform-specific caveats)
-- [ ] Windows builds: cross-compile + MSI packaging via WiX toolset
-- [ ] macOS builds: cross-compile + .pkg creation (document Apple code signing requirement)
-- [ ] RPM packaging: rpmbuild in RHEL UBI 9 container
-- [ ] DEB packaging: dpkg-deb in Debian container
+- [ ] Windows builds: cross-compile + MSI packaging via WiX toolset — **CI step is echo stub only**
+- [ ] macOS builds: cross-compile + .pkg creation (document Apple code signing requirement) — **CI step outputs binary only, no .pkg packaging**
+- [ ] RPM packaging: rpmbuild in RHEL UBI 9 container — **CI step is echo stub; no .spec file exists**
+- [ ] DEB packaging: dpkg-deb in Debian container — **CI step is echo stub; no DEBIAN/control file exists**
+- [ ] OCI container packaging: buildah/docker build — **CI step is echo stub; Dockerfile.fips exists but is not invoked by the CI packaging step**
 - [ ] Reproducible builds: SOURCE_DATE_EPOCH, strip debug info, verify byte-identical output
+- [ ] Artifact signing: cosign for containers, GPG for binaries — **CI step is echo stub with documentation only**
 
 ### Build Metadata Artifact (`build-manifest.json`)
 
@@ -269,8 +515,8 @@ Schema (implemented):
 
 - [x] Single YAML config file (`configs/cloudflared-fips.yaml`)
 - [ ] IPC interface: local Unix socket or gRPC for CloudSH queries
-- [x] Structured JSON API for compliance data (not just rendered UI)
-- [ ] RPM/DEB/container artifacts self-contained and importable as CloudSH plugin
+- [x] Structured JSON API for compliance data (not just rendered UI) — `/api/v1/compliance`, `/api/v1/manifest`, `/api/v1/selftest`, `/api/v1/health`, `/api/v1/compliance/export`
+- [ ] RPM/DEB/container artifacts self-contained and importable as CloudSH plugin — **packaging not yet implemented**
 - [x] All API paths prefixed with `cloudflared-fips/` namespacing (`/api/v1/`)
 
 ---
@@ -279,13 +525,18 @@ Schema (implemented):
 
 | Component | Technology | Status |
 |-----------|-----------|--------|
-| cloudflared build | Go 1.24 + `GOEXPERIMENT=boringcrypto`, RHEL UBI 9 | [x] Scaffolded |
-| Dashboard backend | Go (sidecar binary) | [x] Scaffolded |
-| Dashboard frontend | React + TypeScript + Tailwind | [x] Built |
-| Compliance checks | syscalls + metrics API + Cloudflare API + TLS probing | [ ] Stub only |
+| cloudflared build | Go 1.24 + `GOEXPERIMENT=boringcrypto`, RHEL UBI 9 | [x] Dockerfile.fips works e2e; build.sh orchestrates; CI matrix defined |
+| Dashboard backend | Go (sidecar binary) | [x] HTTP handlers, SSE endpoint, JSON export — serves static checker data, not live queries |
+| Dashboard frontend | React + TypeScript + Tailwind | [x] Built, all 39 items, expandable, screenshots captured |
+| Self-test suite | Go (KATs, cipher validation, BoringCrypto detection) | [x] Real NIST vectors, real runtime checks |
+| Compliance checks | syscalls + metrics API + Cloudflare API + TLS probing | [ ] Stub only — no live system queries |
 | Doc generation | Go templates → Markdown → PDF via pandoc | [ ] Not started |
-| CI | GitHub Actions with RHEL UBI 9 container | [x] Scaffolded |
-| Packaging | rpmbuild / dpkg-deb / WiX / OCI buildah | [ ] Stubs only |
+| CI — compliance | GitHub Actions: lint, test, docs check, manifest validation | [x] Fully implemented |
+| CI — build | GitHub Actions: 6-entry matrix, RHEL UBI 9 container | [x] Matrix defined, linux/amd64 compiles; macOS/Windows cross-compile fails silently |
+| SBOM | CycloneDX + SPDX | [ ] Schema stubs only, no real dependency enumeration |
+| Packaging | rpmbuild / dpkg-deb / WiX / OCI buildah | [ ] All echo stubs — no .spec, no DEBIAN/control, no WiX, no buildah invocation |
+| Artifact signing | cosign / GPG | [ ] Echo stub with documentation |
+| SSE real-time | Go backend → React frontend | [ ] Backend handler done; frontend EventSource consumer not wired |
 
 ---
 
