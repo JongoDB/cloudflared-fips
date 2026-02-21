@@ -246,11 +246,12 @@ var KnownFIPSFingerprints = map[string]string{
 	// macOS always uses validated CommonCrypto but does include ChaCha20
 	// in the offering — so macOS Safari is NOT flagged as strict FIPS.
 	// However, macOS with MDM profiles restricting to FIPS can reduce suites.
-	"t13_04_h2": "macOS Safari (restricted profile, FIPS-approved suites only)",
+	// Restricted profile typically offers 3 suites (AES-GCM only, no CBC).
+	"t13_03_h2": "macOS Safari (restricted profile, FIPS-approved suites only)",
 
 	// Go HTTP client with FIPS build
-	// GOEXPERIMENT=boringcrypto restricts to ~8 suites, all AES-GCM/CBC
-	"t13_08_h2": "Go client (BoringCrypto FIPS build)",
+	// GOEXPERIMENT=boringcrypto restricts to ~9 suites, all AES-GCM/CBC
+	"t13_09_h2": "Go client (BoringCrypto FIPS build)",
 
 	// Cloudflare WARP with FIPS enforcement
 	"t13_05_h2": "Cloudflare WARP (FIPS enforcement enabled)",
