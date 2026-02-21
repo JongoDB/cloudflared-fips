@@ -267,6 +267,13 @@ jobs:
             -o /tmp/cloudflared \
             ./cmd/cloudflared
 
+      - name: Run FIPS self-test
+        env:
+          GODEBUG: fips140=on
+        run: |
+          go build -o /tmp/selftest ./cmd/selftest
+          /tmp/selftest
+
       - name: Generate build manifest
         run: |
           VERSION="${UPSTREAM_VERSION}-fips"
@@ -360,6 +367,15 @@ jobs:
                       -X main.GitCommit=${{ github.sha }}" \
             -o "${RUNNER_TEMP}/cloudflared.exe" \
             ./cmd/cloudflared
+
+      - name: Run FIPS self-test (amd64 only)
+        if: matrix.goarch == 'amd64'
+        env:
+          GODEBUG: fips140=on
+        shell: bash
+        run: |
+          go build -o "${RUNNER_TEMP}/selftest.exe" ./cmd/selftest
+          "${RUNNER_TEMP}/selftest.exe"
 
       - name: Generate build manifest
         shell: bash

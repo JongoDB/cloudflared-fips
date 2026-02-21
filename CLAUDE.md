@@ -6,14 +6,14 @@
 
 ---
 
-## Progress Summary (last updated: 2026-02-21, post-P3 + CF ref arch alignment)
+## Progress Summary (last updated: 2026-02-21, remaining code work items batch)
 
 | Area | Status | Notes |
 |------|--------|-------|
 | **FIPS build system** | **Working** | Dockerfile.fips builds on RHEL UBI 9 with BoringCrypto verification + self-test gates. build.sh orchestrates full flow. |
-| **Self-test suite** | **Working** | Real NIST CAVP vectors. BoringCrypto detection, OS FIPS mode, cipher suite validation, KATs. |
+| **Self-test suite** | **Working** | Real NIST CAVP vectors. Backend-specific dispatch (BoringCrypto/GoNative). QUIC cipher safety check. Optional binary signature verification. KATs, cipher validation, OS FIPS mode. |
 | **Compliance dashboard** | **Working** | 41 items with verification badges. SSE hook + Live toggle. Sunset banner + tier badge. JSON export. Live data wiring for all 5 sections. |
-| **AO documentation** | **Complete (templates)** | 8 docs: SSP, crypto usage, justification letter, hardening guide, monitoring plan, IR addendum, control mapping, architecture. |
+| **AO documentation** | **Complete (templates)** | 9 docs: SSP (with 140-3 refs), crypto usage (with quic-go audit), justification letter, hardening guide, monitoring plan, IR addendum, control mapping, architecture, key rotation procedure. |
 | **CI — compliance** | **Working** | Go lint/test, dashboard lint/build, docs check, manifest validation, shell syntax. |
 | **CI — build matrix** | **Working** | Per-OS native runners: Linux/RHEL with BoringCrypto, macOS with Go native FIPS, Windows with Go native FIPS. Real packaging + signing on tags. `if-no-files-found: error`. |
 | **Packaging** | **Implemented** | RPM (.spec + rpmbuild), DEB (dpkg-deb + build script), macOS .pkg (pkgbuild + productbuild), Windows MSI (WiX v4). All include self-test post-install. |
@@ -27,7 +27,7 @@
 | **FIPS 140-2 sunset** | **Implemented** | `pkg/fipsbackend/migration.go` tracks sunset (Sept 21, 2026). Dashboard sunset banner with countdown + urgency. API: `/api/v1/migration`. |
 | **Edge FIPS honesty** | **Implemented** | Cloudflare Edge items show "Inherited" or "API" verification badges. Tooltip explains FedRAMP reliance. |
 | **macOS/Windows targets** | **CI implemented** | Per-OS CI jobs use `GODEBUG=fips140=on` (Go native FIPS 140-3, CAVP A6650, CMVP pending). |
-| **Modular crypto backend** | **Implemented** | `pkg/fipsbackend/` with Backend interface. BoringCrypto, GoNative, SystemCrypto backends. `Detect()` auto-selects. Live checker uses it. Dashboard display TODO. |
+| **Modular crypto backend** | **Implemented** | `pkg/fipsbackend/` with Backend interface. BoringCrypto, GoNative, SystemCrypto backends. `Detect()` auto-selects. Live checker uses it. Dashboard: FIPSBackendCard + `/api/v1/backend`. |
 | **Deployment tiers** | **Implemented** | `pkg/deployment/tier.go`, `cmd/fips-proxy/main.go` (Tier 3 proxy), `build/Dockerfile.fips-proxy`. Tier 2 reframed as Cloudflare's official FIPS 140 L3 ref arch (Keyless SSL + HSM + PKCS#11). `docs/deployment-tier-guide.md` with HSM setup for all 8 vendors. |
 | **Post-quantum crypto** | **Documented** | PQC readiness section in README. BoringSSL has ML-KEM; Go 1.24 has `crypto/mlkem`; CF edge uses PQC for origin. Not yet in FIPS 140-3 scope (FIPS 203/204/205 pending). |
 | **Client FIPS detection** | **Implemented** | `pkg/clientdetect/` with TLS Inspector (ClientHello analysis, JA4 fingerprinting), PostureCollector (device agent API), ComplianceChecker (8-item Client Posture section). |
@@ -536,8 +536,8 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 - [x] Implement `SystemCrypto` backend — stub for Microsoft Go fork (`GOEXPERIMENT=systemcrypto`)
 - [x] `Detect()` auto-selects active backend; `DetectInfo()` returns JSON-serializable `Info` struct
 - [x] Build manifest `crypto_engine` field records backend per platform in CI
-- [ ] Dashboard: display active backend, cert number, validation status, and 140-2 vs 140-3 badge
-- [ ] Self-test suite: dispatch to backend-specific KAT runners
+- [x] Dashboard: display active backend, cert number, validation status, and 140-2 vs 140-3 badge — `FIPSBackendCard` component + `/api/v1/backend` endpoint
+- [x] Self-test suite: dispatch to backend-specific KAT runners — `checkFIPSBackendActive()`, `runBackendSelfTest()`, `checkGoNativeFIPS()` in selftest.go
 
 ### 6.2 Fix CI Cross-Platform Builds
 
@@ -552,7 +552,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
   - container builds: stub — see 6.3
 - [x] Build manifest records which FIPS backend was used (`crypto_engine` field per platform)
 - [x] `if-no-files-found: error` ensures missing artifacts fail the job
-- [ ] Self-test: runs on all platforms where native execution is possible
+- [x] Self-test: runs on all platforms where native execution is possible — CI runs self-test on Linux (amd64), macOS (both arches), and Windows (amd64)
 
 ### 6.3 Real Packaging
 
@@ -584,7 +584,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 - [x] Parse SSE events (full snapshot + incremental patch), update dashboard state
 - [x] Show connection status indicator (connected / reconnecting / disconnected) with Live toggle
 - [x] Fallback to mock data when SSE disabled or disconnected (air-gap friendly)
-- [ ] Add visual indicator when data refreshes (subtle flash or timestamp update)
+- [x] Add visual indicator when data refreshes (subtle flash or timestamp update) — SSE toggle shows blue flash + timestamp on data update
 
 ### 6.6 Dashboard — Honesty Indicators
 
@@ -644,7 +644,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
   - `GET /api/v1/posture` — list all device postures
   - `GET /api/v1/clients` — TLS inspection results + FIPS stats
 - [x] `ComplianceChecker` produces "Client Posture" section (8 items) from TLS + posture data
-- [ ] Populate `KnownFIPSFingerprints` from tested FIPS clients (Windows FIPS, RHEL, macOS)
+- [x] Populate `KnownFIPSFingerprints` from tested FIPS clients (Windows FIPS, RHEL, macOS) — baseline fingerprints for Windows/RHEL/macOS/Go/WARP + `MatchKnownFIPSClient()` function
 
 ### 6.10 Deployment Tier Support
 
@@ -687,7 +687,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 - [x] Dashboard: show days until 140-2 sunset with warning if still using 140-2 module — SunsetBanner component with countdown, urgency colors, progress bar
 - [x] `pkg/fipsbackend/migration.go`: MigrationStatus with urgency levels, days countdown, recommended actions per backend
 - [x] API: `/api/v1/migration` returns current migration status, `/api/v1/migration/backends` returns all backend info
-- [ ] Update AO documentation templates with 140-3 references and migration guidance
+- [x] Update AO documentation templates with 140-3 references and migration guidance — ao-narrative.md and crypto-module-usage.md updated with 140-3 certs, quic-go audit findings, migration table, key rotation reference
 - [ ] Test all three deployment tiers with 140-3 modules
 
 ### 6.12 Artifact Signing
@@ -699,9 +699,9 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 - [x] `pkg/signing/signing.go`: GPGSign, GPGVerify, CosignSign, CosignVerify, SignatureManifest types
 - [x] API: `/api/v1/signatures` returns signature manifest
 - [ ] Publish public key for verification
-- [ ] Self-test verifies binary signature at startup (optional, configurable)
+- [x] Self-test verifies binary signature at startup (optional, configurable) — `checkBinarySignature()` in selftest.go, `--verify-signature` flag in cmd/selftest
 - [x] Build manifest includes signature hashes — `signatures.json` generated per artifact directory
-- [ ] Document key rotation procedure in AO package
+- [x] Document key rotation procedure in AO package — `docs/key-rotation-procedure.md`
 
 ### Implementation Priority
 
@@ -730,7 +730,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 | Modular crypto backend | BoringCrypto / Go native / systemcrypto / RHEL OpenSSL | [x] `pkg/fipsbackend/` with Backend interface, auto-detection | 6.1 |
 | Dashboard backend | Go (sidecar binary) | [x] HTTP handlers, SSE, live checks, CF API, client detection, 13 API endpoints | 6.7, 6.8 |
 | Dashboard frontend | React + TypeScript + Tailwind | [x] Built, 41 items, verification badges, sunset banner, tier badge, SSE | 6.5, 6.6 |
-| Self-test suite | Go (KATs, cipher validation, BoringCrypto detection) | [x] Real NIST vectors, real runtime checks | 6.1 |
+| Self-test suite | Go (KATs, cipher validation, backend dispatch, sig verify) | [x] Real NIST vectors, backend-specific dispatch, QUIC cipher check, optional GPG verify | 6.1 |
 | Local compliance checks | syscalls, cloudflared metrics, binary hash | [x] `LiveChecker` — 22 checks across tunnel/local/build sections | 6.7 |
 | Cloudflare API integration | Access, cipher config, tunnel health, certificates | [x] `pkg/cfapi/` — 11 checks including Keyless SSL + Regional Services | 6.8 |
 | Client FIPS detection | ClientHello inspection, JA4 fingerprint, WARP posture | [x] `pkg/clientdetect/` — Inspector, PostureCollector, 8 checks | 6.9 |
@@ -743,6 +743,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 | SSE real-time | Go backend → React EventSource | [x] `useComplianceSSE` hook + Live toggle + auto-reconnect | 6.5 |
 | Honesty indicators | Verification method badges on dashboard items | [x] `VerificationBadge` component, 41 items tagged | 6.6 |
 | FIPS 140-3 migration | Module migration before Sept 2026 sunset | [x] `migration.go`, sunset banner, API endpoints | 6.11 |
+| Key rotation docs | GPG/cosign key rotation procedure | [x] `docs/key-rotation-procedure.md` | 6.12 |
 | Doc generation | Go templates → Markdown → PDF via pandoc | [ ] Not started | — |
 
 ---

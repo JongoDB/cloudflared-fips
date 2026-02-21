@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Layout from '../components/Layout'
 import SummaryBar from '../components/SummaryBar'
 import BuildManifestPanel from '../components/BuildManifestPanel'
@@ -6,6 +6,7 @@ import ChecklistSection from '../components/ChecklistSection'
 import ExportButtons from '../components/ExportButtons'
 import SunsetBanner from '../components/SunsetBanner'
 import DeploymentTierBadge from '../components/DeploymentTierBadge'
+import FIPSBackendCard from '../components/FIPSBackendCard'
 import { mockSections, mockManifest } from '../data/mockData'
 import { useComplianceSSE } from '../hooks/useComplianceSSE'
 import type { ComplianceSummary } from '../types/compliance'
@@ -79,6 +80,7 @@ export default function DashboardPage() {
         </div>
       </div>
       <SummaryBar summary={summary} />
+      <FIPSBackendCard />
       <BuildManifestPanel manifest={mockManifest} />
       <div>
         <h2 className="text-lg font-semibold text-gray-900 mb-4">
@@ -101,6 +103,18 @@ function SSEToggle({
   onToggle: () => void
   status: { connected: boolean; lastUpdate: Date | null; error: string | null }
 }) {
+  const [flash, setFlash] = useState(false)
+  const prevUpdate = usePrevious(status.lastUpdate)
+
+  // Flash briefly when data refreshes
+  useEffect(() => {
+    if (status.lastUpdate && prevUpdate && status.lastUpdate !== prevUpdate) {
+      setFlash(true)
+      const timer = setTimeout(() => setFlash(false), 800)
+      return () => clearTimeout(timer)
+    }
+  }, [status.lastUpdate, prevUpdate])
+
   return (
     <div className="flex items-center gap-2">
       <button
@@ -121,8 +135,8 @@ function SSEToggle({
       <span className="text-xs text-gray-500">Live</span>
       {enabled && (
         <span
-          className={`inline-flex items-center gap-1 text-xs ${
-            status.connected ? 'text-green-600' : 'text-gray-400'
+          className={`inline-flex items-center gap-1 text-xs transition-colors duration-300 ${
+            flash ? 'text-blue-600' : status.connected ? 'text-green-600' : 'text-gray-400'
           }`}
           title={
             status.error ??
@@ -132,13 +146,28 @@ function SSEToggle({
           }
         >
           <span
-            className={`w-1.5 h-1.5 rounded-full ${
-              status.connected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
+            className={`w-1.5 h-1.5 rounded-full transition-colors duration-300 ${
+              flash ? 'bg-blue-500' : status.connected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
             }`}
           />
-          {status.connected ? 'Connected' : status.error ? 'Retrying' : 'Connecting'}
+          {status.connected
+            ? status.lastUpdate
+              ? `Updated ${status.lastUpdate.toLocaleTimeString()}`
+              : 'Connected'
+            : status.error
+              ? 'Retrying'
+              : 'Connecting'}
         </span>
       )}
     </div>
   )
+}
+
+/** Hook that returns the previous value of a variable */
+function usePrevious<T>(value: T): T | undefined {
+  const ref = useRef<T | undefined>(undefined)
+  useEffect(() => {
+    ref.current = value
+  })
+  return ref.current
 }

@@ -20,12 +20,16 @@ var FIPSApprovedCipherSuites = map[uint16]string{
 	tls.TLS_RSA_WITH_AES_256_GCM_SHA384: "TLS_RSA_WITH_AES_256_GCM_SHA384",
 }
 
-// FIPSApprovedTLS13Suites lists TLS 1.3 cipher suites.
-// All TLS 1.3 suites in Go's standard library are FIPS-approved.
+// FIPSApprovedTLS13Suites lists TLS 1.3 cipher suites that are FIPS-approved.
+// Note: TLS_CHACHA20_POLY1305_SHA256 is explicitly excluded. While Go's TLS 1.3
+// implementation always makes it available for negotiation (it cannot be disabled
+// via tls.Config.CipherSuites), ChaCha20-Poly1305 is NOT a FIPS-approved algorithm
+// and its implementation in golang.org/x/crypto does not route through BoringCrypto.
+// See docs/quic-go-crypto-audit.md for details.
 var FIPSApprovedTLS13Suites = map[uint16]string{
-	tls.TLS_AES_128_GCM_SHA256:       "TLS_AES_128_GCM_SHA256",
-	tls.TLS_AES_256_GCM_SHA384:       "TLS_AES_256_GCM_SHA384",
-	tls.TLS_CHACHA20_POLY1305_SHA256: "TLS_CHACHA20_POLY1305_SHA256",
+	tls.TLS_AES_128_GCM_SHA256: "TLS_AES_128_GCM_SHA256",
+	tls.TLS_AES_256_GCM_SHA384: "TLS_AES_256_GCM_SHA384",
+	// TLS_CHACHA20_POLY1305_SHA256 intentionally omitted — not FIPS-approved
 }
 
 // BannedCipherPatterns contains substrings that identify non-FIPS cipher suites.

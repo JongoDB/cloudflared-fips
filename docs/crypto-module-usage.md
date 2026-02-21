@@ -10,7 +10,8 @@ validated module and CMVP certificate number.
 ### Key Statement
 
 **No cryptographic algorithms are implemented in the application layer.**
-All cryptographic operations are delegated to FIPS 140-2 validated modules.
+All cryptographic operations are delegated to FIPS 140-2/3 validated modules.
+The active module is selected automatically based on platform and build configuration.
 
 ---
 
@@ -89,22 +90,55 @@ are documented for AO decision.
 
 ## quic-go Crypto Audit
 
-The `quic-go` library used by cloudflared for QUIC tunnel connections uses Go's
-`crypto/tls` package for its TLS 1.3 handshake. When built with
-`GOEXPERIMENT=boringcrypto`, all `crypto/*` packages are replaced by BoringCrypto
-implementations. Verified:
+Full audit: `docs/quic-go-crypto-audit.md`
 
-- `quic-go` does not implement its own TLS stack
-- `quic-go` delegates to `crypto/tls` for handshake and key derivation
-- `quic-go` uses `crypto/aes` for packet protection (replaced by BoringCrypto)
-- No independent crypto implementations that bypass the validated module
+The `quic-go` library used by cloudflared for QUIC tunnel connections uses Go's
+`crypto/tls.QUICConn` API (since v0.37). When built with `GOEXPERIMENT=boringcrypto`,
+all `crypto/*` packages are replaced by BoringCrypto implementations.
+
+| Operation | Routes through FIPS module? | Notes |
+|-----------|---------------------------|-------|
+| TLS 1.3 handshake | **Yes** (via `crypto/tls.QUICConn`) | RSA/ECDSA/ECDH via BoringCrypto |
+| AES-GCM packet encryption | **Yes** (`crypto/aes` + `crypto/cipher`) | Both 128 and 256 |
+| AES header protection | **Yes** (`crypto/aes`) | ECB block encrypt |
+| ChaCha20-Poly1305 encryption | **No** (`golang.org/x/crypto`) | Mitigated: cipher suites restricted to AES-GCM |
+| ChaCha20 header protection | **No** (`golang.org/x/crypto`) | Same mitigation |
+| HKDF extract/expand | **Partial** | Algorithm in pure Go; underlying HMAC/SHA via BoringCrypto |
+| QUIC retry integrity tag | **Protocol conflict** | Fixed nonce per RFC 9001; incompatible with `fips140=only` but OK with `boringcrypto` and `fips140=on` |
+
+### Known Deviations
+
+1. **HKDF partial bypass (low risk):** The HKDF algorithm logic (`golang.org/x/crypto/hkdf`) does not route through BoringCrypto, but its underlying HMAC and SHA primitives do. The cryptographic strength depends on the hash function, not the extract/expand logic. Go issue [#47234](https://github.com/golang/go/issues/47234) proposes adding HKDF to BoringCrypto.
+
+2. **QUIC retry fixed nonce (protocol-level):** RFC 9001 Section 5.8 requires QUIC retry integrity tags to use hard-coded, fixed AES-GCM nonces. This violates FIPS 140-3 nonce requirements but is not a security weakness — the retry keys are publicly known (published in the RFC) and the tag provides integrity, not confidentiality. `GOEXPERIMENT=boringcrypto` and `GODEBUG=fips140=on` do not enforce this restriction; only `GODEBUG=fips140=only` does (which panics on QUIC retry).
+
+---
+
+## FIPS Backend Selection
+
+| Platform | Backend | Build Flag | FIPS Standard | Certificate |
+|----------|---------|-----------|---------------|-------------|
+| Linux amd64/arm64 | BoringCrypto | `GOEXPERIMENT=boringcrypto` | 140-2 / 140-3 | #4407 / #4735 |
+| macOS (all arch) | Go Native | `GODEBUG=fips140=on` | 140-3 (pending) | CAVP A6650 |
+| Windows (all arch) | Go Native | `GODEBUG=fips140=on` | 140-3 (pending) | CAVP A6650 |
+| Windows (MS Go) | System Crypto | `GOEXPERIMENT=systemcrypto` | 140-2/3 | CNG (platform) |
+
+---
+
+## Key Rotation
+
+See `docs/key-rotation-procedure.md` for the artifact signing key rotation procedure.
 
 ---
 
 ## References
 
 - CMVP Certificate #3678: https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/3678
+- CMVP Certificate #4407: https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/4407
+- CMVP Certificate #4735: https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/4735
 - CMVP Certificate #4349: https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/4349
+- CAVP A6650: https://csrc.nist.gov/projects/cryptographic-algorithm-validation-program/details?validation=A6650
 - NIST SP 800-52 Rev. 2: Guidelines for TLS Implementations
 - NIST SP 800-57: Key Management
 - NIST SP 800-53 Rev. 5: Security and Privacy Controls
+- quic-go FIPS issues: https://github.com/quic-go/quic-go/issues/4894, https://github.com/quic-go/quic-go/issues/4958

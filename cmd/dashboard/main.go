@@ -104,6 +104,13 @@ func main() {
 	mux.HandleFunc("POST /api/v1/posture", postureCollector.HandlePostureReport)
 	mux.HandleFunc("GET /api/v1/posture", postureCollector.HandlePostureList)
 
+	// FIPS backend info
+	mux.HandleFunc("GET /api/v1/backend", func(w http.ResponseWriter, r *http.Request) {
+		info := fipsbackend.DetectInfo()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(info)
+	})
+
 	// Deployment tier info
 	mux.HandleFunc("GET /api/v1/deployment", func(w http.ResponseWriter, r *http.Request) {
 		tier := deployment.GetTier(*deployTier)
