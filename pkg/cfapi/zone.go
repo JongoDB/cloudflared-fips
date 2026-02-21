@@ -199,3 +199,62 @@ func (c *Client) GetRegionalTieredCache(zoneID string) (bool, error) {
 	}
 	return setting.Value == "on", nil
 }
+
+// Account represents a Cloudflare account.
+type Account struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Zone represents a Cloudflare zone.
+type Zone struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// VerifyToken checks that the configured API token is valid.
+// Uses GET /user/tokens/verify.
+func (c *Client) VerifyToken() error {
+	_, err := c.get("/user/tokens/verify")
+	return err
+}
+
+// ListAccounts returns all accounts accessible with the current token.
+func (c *Client) ListAccounts() ([]Account, error) {
+	data, err := c.get("/accounts?per_page=50")
+	if err != nil {
+		return nil, err
+	}
+	var accounts []Account
+	if err := json.Unmarshal(data, &accounts); err != nil {
+		return nil, fmt.Errorf("parse accounts: %w", err)
+	}
+	return accounts, nil
+}
+
+// ListZones returns zones for a given account.
+func (c *Client) ListZones(accountID string) ([]Zone, error) {
+	data, err := c.get(fmt.Sprintf("/zones?account.id=%s&per_page=50", accountID))
+	if err != nil {
+		return nil, err
+	}
+	var zones []Zone
+	if err := json.Unmarshal(data, &zones); err != nil {
+		return nil, fmt.Errorf("parse zones: %w", err)
+	}
+	return zones, nil
+}
+
+// ListTunnels returns non-deleted tunnels for a given account.
+func (c *Client) ListTunnels(accountID string) ([]TunnelInfo, error) {
+	data, err := c.get(fmt.Sprintf("/accounts/%s/cfd_tunnel?is_deleted=false&per_page=50", accountID))
+	if err != nil {
+		return nil, err
+	}
+	var tunnels []TunnelInfo
+	if err := json.Unmarshal(data, &tunnels); err != nil {
+		return nil, fmt.Errorf("parse tunnels: %w", err)
+	}
+	return tunnels, nil
+}

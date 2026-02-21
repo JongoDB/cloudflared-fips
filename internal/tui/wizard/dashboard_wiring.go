@@ -8,16 +8,48 @@ import (
 
 	"github.com/cloudflared-fips/cloudflared-fips/internal/tui/common"
 	"github.com/cloudflared-fips/cloudflared-fips/internal/tui/config"
+	"github.com/cloudflared-fips/cloudflared-fips/pkg/cfapi"
 )
+
+// Async messages for Cloudflare API discovery.
+type tokenVerifiedMsg struct {
+	accounts []cfapi.Account
+	err      error
+}
+
+type zonesLoadedMsg struct {
+	zones []cfapi.Zone
+	err   error
+}
+
+type tunnelsLoadedMsg struct {
+	tunnels []cfapi.TunnelInfo
+	err     error
+}
 
 // DashboardWiringPage is page 2: CF API token, zone/account/tunnel IDs, MDM.
 type DashboardWiringPage struct {
-	apiToken   common.TextInput
-	zoneID     common.TextInput
-	accountID  common.TextInput
-	tunnelID   common.TextInput
+	apiToken    common.TextInput
+	zoneID      common.TextInput
+	accountID   common.TextInput
+	tunnelID    common.TextInput
 	metricsAddr common.TextInput
 	mdmProvider common.Selector
+
+	// API-discovered selectors (replace text inputs when data available)
+	accountPicker common.Selector
+	zonePicker    common.Selector
+	tunnelPicker  common.Selector
+
+	// Discovery state
+	accounts       []cfapi.Account
+	zones          []cfapi.Zone
+	apiTunnels     []cfapi.TunnelInfo
+	accountsLoaded bool
+	zonesLoaded    bool
+	tunnelsLoaded  bool
+	discoveryErr   string
+	fetching       bool
 
 	// Conditional MDM fields
 	intuneTenantID     common.TextInput
@@ -31,8 +63,18 @@ type DashboardWiringPage struct {
 	height int
 }
 
+// hasAccounts returns true if API accounts were successfully loaded.
+func (p *DashboardWiringPage) hasAccounts() bool {
+	return p.accountsLoaded && len(p.accounts) > 0
+}
+
+// hasZones returns true if API zones were successfully loaded.
+func (p *DashboardWiringPage) hasZones() bool {
+	return p.zonesLoaded && len(p.zones) > 0
+}
+
 func (p *DashboardWiringPage) fieldCount() int {
-	base := 6 // apiToken, zoneID, accountID, tunnelID, metricsAddr, mdmProvider
+	base := 6 // apiToken, zone, account, tunnelID, metricsAddr, mdmProvider
 	switch p.mdmProvider.Selected() {
 	case "intune":
 		return base + 3
@@ -46,7 +88,6 @@ func (p *DashboardWiringPage) fieldCount() int {
 // NewDashboardWiringPage creates page 2.
 func NewDashboardWiringPage() *DashboardWiringPage {
 	apiToken := common.NewPasswordInput("Cloudflare API Token", "Bearer token", "(or set CF_API_TOKEN env var)")
-	// Pre-fill from env
 	if env := os.Getenv("CF_API_TOKEN"); env != "" {
 		apiToken.SetValue(env)
 	}
@@ -83,6 +124,9 @@ func NewDashboardWiringPage() *DashboardWiringPage {
 		tunnelID:           tunnelID,
 		metricsAddr:        metricsAddr,
 		mdmProvider:        mdm,
+		accountPicker:      common.NewSelector("Account", nil),
+		zonePicker:         common.NewSelector("Zone", nil),
+		tunnelPicker:       common.NewSelector("Tunnel (API)", nil),
 		intuneTenantID:     intuneTenantID,
 		intuneClientID:     intuneClientID,
 		intuneClientSecret: intuneClientSecret,
@@ -112,13 +156,15 @@ func (p *DashboardWiringPage) PrePopulateTunnelID(id string) {
 }
 
 func (p *DashboardWiringPage) updateFocus() {
-	// Blur all
 	p.apiToken.Blur()
 	p.zoneID.Blur()
 	p.accountID.Blur()
 	p.tunnelID.Blur()
 	p.metricsAddr.Blur()
 	p.mdmProvider.Blur()
+	p.accountPicker.Blur()
+	p.zonePicker.Blur()
+	p.tunnelPicker.Blur()
 	p.intuneTenantID.Blur()
 	p.intuneClientID.Blur()
 	p.intuneClientSecret.Blur()
@@ -129,9 +175,17 @@ func (p *DashboardWiringPage) updateFocus() {
 	case 0:
 		p.apiToken.Input.Focus()
 	case 1:
-		p.zoneID.Input.Focus()
+		if p.hasZones() {
+			p.zonePicker.Focus()
+		} else {
+			p.zoneID.Input.Focus()
+		}
 	case 2:
-		p.accountID.Input.Focus()
+		if p.hasAccounts() {
+			p.accountPicker.Focus()
+		} else {
+			p.accountID.Input.Focus()
+		}
 	case 3:
 		p.tunnelID.Input.Focus()
 	case 4:
@@ -139,7 +193,6 @@ func (p *DashboardWiringPage) updateFocus() {
 	case 5:
 		p.mdmProvider.Focus()
 	default:
-		// MDM conditional fields
 		idx := p.focus - 6
 		switch p.mdmProvider.Selected() {
 		case "intune":
@@ -163,9 +216,125 @@ func (p *DashboardWiringPage) updateFocus() {
 }
 
 func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
+	// Handle async API discovery messages
+	switch msg := msg.(type) {
+	case tokenVerifiedMsg:
+		p.fetching = false
+		if msg.err != nil {
+			p.discoveryErr = msg.err.Error()
+			return p, nil
+		}
+		p.accounts = msg.accounts
+		p.accountsLoaded = true
+		p.discoveryErr = ""
+
+		// Build account picker
+		opts := make([]common.SelectorOption, len(msg.accounts))
+		for i, a := range msg.accounts {
+			opts[i] = common.SelectorOption{
+				Value:       a.ID,
+				Label:       a.Name,
+				Description: a.ID,
+			}
+		}
+		p.accountPicker = common.NewSelector("Account", opts)
+
+		// Auto-fill account ID if only one
+		if len(msg.accounts) == 1 {
+			p.accountID.SetValue(msg.accounts[0].ID)
+			// Fetch zones for first account
+			return p, p.fetchZones(msg.accounts[0].ID)
+		}
+		return p, nil
+
+	case zonesLoadedMsg:
+		if msg.err != nil {
+			// Don't overwrite a more serious error
+			if p.discoveryErr == "" {
+				p.discoveryErr = "zones: " + msg.err.Error()
+			}
+			return p, nil
+		}
+		p.zones = msg.zones
+		p.zonesLoaded = true
+
+		opts := make([]common.SelectorOption, len(msg.zones))
+		for i, z := range msg.zones {
+			opts[i] = common.SelectorOption{
+				Value:       z.ID,
+				Label:       z.Name,
+				Description: z.ID + " (" + z.Status + ")",
+			}
+		}
+		p.zonePicker = common.NewSelector("Zone", opts)
+
+		// Auto-fill zone if only one
+		if len(msg.zones) == 1 {
+			p.zoneID.SetValue(msg.zones[0].ID)
+		}
+
+		// Update focus if currently on zone field
+		if p.focus == 1 {
+			p.updateFocus()
+		}
+		return p, nil
+
+	case tunnelsLoadedMsg:
+		if msg.err != nil {
+			return p, nil
+		}
+		p.apiTunnels = msg.tunnels
+		p.tunnelsLoaded = true
+
+		opts := make([]common.SelectorOption, len(msg.tunnels))
+		for i, t := range msg.tunnels {
+			opts[i] = common.SelectorOption{
+				Value:       t.ID,
+				Label:       t.Name,
+				Description: t.ID,
+			}
+		}
+		p.tunnelPicker = common.NewSelector("Tunnel (API)", opts)
+		return p, nil
+	}
+
 	if msg, ok := msg.(tea.KeyMsg); ok {
 		switch msg.String() {
 		case "tab", "enter":
+			// When leaving the API token field, trigger discovery
+			if p.focus == 0 && strings.TrimSpace(p.apiToken.Value()) != "" && !p.accountsLoaded && !p.fetching {
+				p.focus = 1
+				p.updateFocus()
+				return p, p.startDiscovery()
+			}
+
+			// When selecting an account from picker, fetch zones
+			if p.focus == 2 && p.hasAccounts() {
+				selectedID := p.accountPicker.Selected()
+				if selectedID != "" {
+					p.accountID.SetValue(selectedID)
+					if !p.zonesLoaded {
+						p.focus = 1
+						p.updateFocus()
+						return p, p.fetchZones(selectedID)
+					}
+				}
+			}
+
+			// When selecting a zone from picker, fill zone ID
+			if p.focus == 1 && p.hasZones() {
+				selectedID := p.zonePicker.Selected()
+				if selectedID != "" {
+					p.zoneID.SetValue(selectedID)
+					// Also fill account ID from zones data
+					for _, z := range p.zones {
+						if z.ID == selectedID {
+							break
+						}
+					}
+				}
+			}
+
 			if p.focus == 5 {
 				// On selector, enter shouldn't advance — only tab
 				break
@@ -191,9 +360,17 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	case 0:
 		cmd = p.apiToken.Update(msg)
 	case 1:
-		cmd = p.zoneID.Update(msg)
+		if p.hasZones() {
+			p.zonePicker.Update(msg)
+		} else {
+			cmd = p.zoneID.Update(msg)
+		}
 	case 2:
-		cmd = p.accountID.Update(msg)
+		if p.hasAccounts() {
+			p.accountPicker.Update(msg)
+		} else {
+			cmd = p.accountID.Update(msg)
+		}
 	case 3:
 		cmd = p.tunnelID.Update(msg)
 	case 4:
@@ -224,13 +401,43 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	return p, cmd
 }
 
+// startDiscovery verifies the token and fetches accounts.
+func (p *DashboardWiringPage) startDiscovery() tea.Cmd {
+	token := strings.TrimSpace(p.apiToken.Value())
+	p.fetching = true
+	p.discoveryErr = ""
+	return func() tea.Msg {
+		client := cfapi.NewClient(token)
+		if err := client.VerifyToken(); err != nil {
+			return tokenVerifiedMsg{err: err}
+		}
+		accounts, err := client.ListAccounts()
+		return tokenVerifiedMsg{accounts: accounts, err: err}
+	}
+}
+
+// fetchZones fetches zones for the given account.
+func (p *DashboardWiringPage) fetchZones(accountID string) tea.Cmd {
+	token := strings.TrimSpace(p.apiToken.Value())
+	return func() tea.Msg {
+		client := cfapi.NewClient(token)
+		zones, err := client.ListZones(accountID)
+		return zonesLoadedMsg{zones: zones, err: err}
+	}
+}
+
 func (p *DashboardWiringPage) Validate() bool {
 	valid := true
-	if !p.zoneID.RunValidation() {
-		valid = false
+	// If using pickers, values come from selected items — skip hex validation
+	if !p.hasZones() {
+		if !p.zoneID.RunValidation() {
+			valid = false
+		}
 	}
-	if !p.accountID.RunValidation() {
-		valid = false
+	if !p.hasAccounts() {
+		if !p.accountID.RunValidation() {
+			valid = false
+		}
 	}
 	if !p.metricsAddr.RunValidation() {
 		valid = false
@@ -240,8 +447,21 @@ func (p *DashboardWiringPage) Validate() bool {
 
 func (p *DashboardWiringPage) Apply(cfg *config.Config) {
 	cfg.Dashboard.CFAPIToken = strings.TrimSpace(p.apiToken.Value())
-	cfg.Dashboard.ZoneID = strings.TrimSpace(p.zoneID.Value())
-	cfg.Dashboard.AccountID = strings.TrimSpace(p.accountID.Value())
+
+	// Zone: prefer picker selection
+	if p.hasZones() {
+		cfg.Dashboard.ZoneID = p.zonePicker.Selected()
+	} else {
+		cfg.Dashboard.ZoneID = strings.TrimSpace(p.zoneID.Value())
+	}
+
+	// Account: prefer picker selection
+	if p.hasAccounts() {
+		cfg.Dashboard.AccountID = p.accountPicker.Selected()
+	} else {
+		cfg.Dashboard.AccountID = strings.TrimSpace(p.accountID.Value())
+	}
+
 	cfg.Dashboard.TunnelID = strings.TrimSpace(p.tunnelID.Value())
 	cfg.Dashboard.MetricsAddress = strings.TrimSpace(p.metricsAddr.Value())
 
@@ -262,11 +482,44 @@ func (p *DashboardWiringPage) Apply(cfg *config.Config) {
 func (p *DashboardWiringPage) View() string {
 	var b strings.Builder
 	b.WriteString(p.apiToken.View())
+	b.WriteString("\n")
+
+	// Show discovery status
+	if p.fetching {
+		b.WriteString(common.HintStyle.Render("  Verifying token and loading accounts..."))
+		b.WriteString("\n")
+	}
+	if p.discoveryErr != "" {
+		b.WriteString(common.ErrorStyle.Render("  ! "+p.discoveryErr))
+		b.WriteString("\n")
+	}
+	if p.accountsLoaded && len(p.accounts) > 0 {
+		b.WriteString(common.SuccessStyle.Render("  Token verified"))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	// Zone: picker or text input
+	if p.hasZones() {
+		b.WriteString(p.zonePicker.View())
+	} else {
+		b.WriteString(p.zoneID.View())
+	}
 	b.WriteString("\n\n")
-	b.WriteString(p.zoneID.View())
+
+	// Account: picker or text input
+	if p.hasAccounts() && len(p.accounts) > 1 {
+		b.WriteString(p.accountPicker.View())
+	} else if p.hasAccounts() {
+		// Single account — show as read-only info
+		b.WriteString(common.LabelStyle.Render("Account"))
+		b.WriteString("\n")
+		b.WriteString(common.HintStyle.Render("  " + p.accounts[0].Name + " (" + p.accounts[0].ID + ")"))
+	} else {
+		b.WriteString(p.accountID.View())
+	}
 	b.WriteString("\n\n")
-	b.WriteString(p.accountID.View())
-	b.WriteString("\n\n")
+
 	b.WriteString(p.tunnelID.View())
 	b.WriteString("\n\n")
 	b.WriteString(p.metricsAddr.View())

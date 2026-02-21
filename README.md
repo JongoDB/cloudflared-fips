@@ -184,6 +184,7 @@ The product detects client FIPS capability through:
 
   # Or download from https://go.dev/dl/
   ```
+- **`cloudflared`** (optional) — if installed, the setup wizard can list existing tunnels and create new ones automatically instead of requiring manual UUID entry. Install from [Cloudflare's downloads page](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
 - **Docker** (for FIPS container builds)
 - **Node.js 22+** (for web dashboard development)
 - **RHEL UBI 9** base image (pulled automatically by Docker)
@@ -337,8 +338,8 @@ Interactive 5-page wizard:
 
 | Page | Fields |
 |------|--------|
-| **1. Tunnel** | UUID, credentials file, protocol (QUIC/HTTP2), ingress rules (add/remove) |
-| **2. Dashboard Wiring** | CF API token, zone/account/tunnel IDs, metrics address, MDM provider (None/Intune/Jamf) |
+| **1. Tunnel** | Select existing / create new / enter manually, protocol (QUIC/HTTP2), ingress rules (add/remove) |
+| **2. Dashboard Wiring** | CF API token (auto-discovers accounts + zones), zone/account/tunnel IDs, metrics address, MDM provider (None/Intune/Jamf) |
 | **3. Deployment Tier** | Tier 1 (standard), Tier 2 (Keyless SSL + HSM), or Tier 3 (self-hosted proxy) with conditional fields |
 | **4. FIPS Options** | Self-test on start, fail-on-failure, binary signature verification, output path |
 | **5. Review & Write** | Scrollable summary (secrets masked), Enter writes `configs/cloudflared-fips.yaml` |
