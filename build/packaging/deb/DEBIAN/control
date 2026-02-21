@@ -1,0 +1,15 @@
+Package: cloudflared-fips
+Version: ${VERSION}
+Section: net
+Priority: optional
+Architecture: ${ARCH}
+Depends: libssl3 (>= 3.0), openssl
+Maintainer: cloudflared-fips maintainers <noreply@example.com>
+Homepage: https://github.com/cloudflared-fips/cloudflared-fips
+Description: FIPS 140-2 compliant Cloudflare Tunnel client
+ FIPS 140-2 compliant build of Cloudflare Tunnel (cloudflared) using
+ BoringCrypto (CMVP #4407). Includes runtime self-test suite, compliance
+ dashboard, and build manifest with full cryptographic provenance.
+ .
+ This package installs the FIPS-validated cloudflared binary, runs FIPS
+ self-tests on install, and creates a systemd service unit.

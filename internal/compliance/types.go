@@ -19,16 +19,28 @@ type Section struct {
 	Items       []ChecklistItem `json:"items"`
 }
 
+// VerificationMethod describes how a checklist item's status was determined.
+type VerificationMethod string
+
+const (
+	VerifyDirect    VerificationMethod = "direct"
+	VerifyAPI       VerificationMethod = "api"
+	VerifyProbe     VerificationMethod = "probe"
+	VerifyInherited VerificationMethod = "inherited"
+	VerifyReported  VerificationMethod = "reported"
+)
+
 // ChecklistItem represents a single compliance checklist entry.
 type ChecklistItem struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Status      Status `json:"status"`
-	Severity    string `json:"severity"`
-	What        string `json:"what"`
-	Why         string `json:"why"`
-	Remediation string `json:"remediation"`
-	NISTRef     string `json:"nist_ref"`
+	ID                 string             `json:"id"`
+	Name               string             `json:"name"`
+	Status             Status             `json:"status"`
+	Severity           string             `json:"severity"`
+	VerificationMethod VerificationMethod `json:"verificationMethod"`
+	What               string             `json:"what"`
+	Why                string             `json:"why"`
+	Remediation        string             `json:"remediation"`
+	NISTRef            string             `json:"nist_ref"`
 }
 
 // ComplianceReport is the top-level compliance state.

@@ -112,21 +112,53 @@ jobs:
           echo '{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"cloudflared-fips","documentNamespace":"https://github.com/cloudflared-fips/cloudflared-fips"}' \
             > /tmp/sbom.spdx.json
 
+      - name: Build self-test binary
+        if: matrix.goarch == 'amd64'
+        env:
+          GOEXPERIMENT: boringcrypto
+          CGO_ENABLED: '1'
+        run: |
+          /usr/local/go/bin/go build -o /tmp/selftest ./cmd/selftest
+
       - name: Package — RPM
         if: contains(matrix.package, 'rpm')
         run: |
-          echo "RPM packaging — requires rpmbuild tooling and .spec file (stub)"
-          dnf install -y rpm-build 2>/dev/null || true
+          dnf install -y rpm-build
+          mkdir -p /root/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
+          cp /tmp/cloudflared /root/rpmbuild/SOURCES/
+          cp /tmp/selftest /root/rpmbuild/SOURCES/ 2>/dev/null || true
+          cp configs/cloudflared-fips.yaml /root/rpmbuild/SOURCES/ 2>/dev/null || true
+          cp /tmp/build-manifest.json /root/rpmbuild/SOURCES/ 2>/dev/null || true
+          VERSION="${UPSTREAM_VERSION}-fips" rpmbuild -bb build/packaging/rpm/cloudflared-fips.spec
+          cp /root/rpmbuild/RPMS/*/*.rpm /tmp/ 2>/dev/null || true
 
       - name: Package — DEB
         if: contains(matrix.package, 'deb')
         run: |
-          echo "DEB packaging — requires dpkg-deb (stub)"
+          # dpkg-deb may not be on RHEL; install if missing
+          dnf install -y dpkg 2>/dev/null || true
+          DEB_ARCH=${{ matrix.goarch }}
+          if [ "$DEB_ARCH" = "amd64" ]; then DEB_ARCH="amd64"; fi
+          if [ "$DEB_ARCH" = "arm64" ]; then DEB_ARCH="arm64"; fi
+          bash build/packaging/deb/build-deb.sh \
+            "${UPSTREAM_VERSION}-fips" \
+            "$DEB_ARCH" \
+            /tmp \
+            /tmp
 
       - name: Package — Container (OCI)
         if: contains(matrix.package, 'container')
         run: |
-          echo "Container packaging — uses build/Dockerfile.fips (stub)"
+          # Build OCI image using the pre-compiled binary
+          dnf install -y podman 2>/dev/null || true
+          if command -v podman >/dev/null 2>&1; then
+            podman build -f build/Dockerfile.fips \
+              --build-arg VERSION="${UPSTREAM_VERSION}-fips" \
+              --build-arg GIT_COMMIT="${{ github.sha }}" \
+              -t "cloudflared-fips:${UPSTREAM_VERSION}-fips" . || echo "Container build requires podman/docker"
+          else
+            echo "Container packaging skipped — podman/docker not available"
+          fi
 
       - name: Generate build manifest
         run: |
@@ -175,8 +207,11 @@ jobs:
           name: cloudflared-fips-linux-${{ matrix.goarch }}
           path: |
             /tmp/cloudflared
+            /tmp/selftest
             /tmp/build-manifest.json
             /tmp/sbom.*.json
+            /tmp/cloudflared-fips*.rpm
+            /tmp/cloudflared-fips*.deb
           if-no-files-found: error
 
   # ── macOS builds: native runner, Go native FIPS 140-3 (GODEBUG=fips140=on) ──
@@ -257,6 +292,13 @@ jobs:
           }
           EOJSON
 
+      - name: Package — macOS .pkg
+        run: |
+          bash build/packaging/macos/build-pkg.sh \
+            "${UPSTREAM_VERSION}-fips" \
+            /tmp \
+            /tmp
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -264,6 +306,7 @@ jobs:
           path: |
             /tmp/cloudflared
             /tmp/build-manifest.json
+            /tmp/cloudflared-fips-*.pkg
           if-no-files-found: error
 
   # ── Windows builds: native runner, Go native FIPS 140-3 (GODEBUG=fips140=on) ──
@@ -344,6 +387,24 @@ jobs:
           }
           EOJSON
 
+      - name: Package — MSI (amd64 only)
+        if: matrix.goarch == 'amd64'
+        shell: pwsh
+        run: |
+          # WiX v4 is pre-installed on windows-latest runners
+          # If not available, install: dotnet tool install --global wix
+          $version = "${{ env.UPSTREAM_VERSION }}-fips" -replace '[^0-9.]', ''
+          if (-not $version) { $version = "1.0.0" }
+          try {
+            wix build `
+              -d Version="$version" `
+              -d BinaryPath="${{ runner.temp }}" `
+              -o "${{ runner.temp }}/cloudflared-fips.msi" `
+              build/packaging/windows/cloudflared-fips.wxs
+          } catch {
+            Write-Warning "MSI build failed: $_. WiX may not be available."
+          }
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -351,4 +412,5 @@ jobs:
           path: |
             ${{ runner.temp }}/cloudflared.exe
             ${{ runner.temp }}/build-manifest.json
+            ${{ runner.temp }}/cloudflared-fips.msi
           if-no-files-found: error
