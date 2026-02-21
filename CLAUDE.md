@@ -311,10 +311,10 @@ Each dashboard section should display a **verification method** indicator:
 
 ### SBOM Generation
 
-- [ ] Auto-generate SBOM at build time listing every dependency and version — **current CI generates skeleton JSON with correct schema headers but no actual dependency enumeration; needs `cyclonedx-gomod` or `spdx-sbom-generator`**
-- [ ] Flag whether each dependency performs cryptographic operations
-- [ ] For each crypto dependency: which validated module it delegates to
-- [ ] Output as CycloneDX and SPDX format (both accepted by government procurement) — **schema stubs exist, need real tooling**
+- [x] Auto-generate SBOM at build time listing every dependency and version — `scripts/generate-sbom.sh` enumerates via `go list -m -json all` or `cyclonedx-gomod`
+- [x] Flag whether each dependency performs cryptographic operations — `crypto-audit.json` classifies all `crypto/*` and `golang.org/x/crypto` imports with risk levels
+- [x] For each crypto dependency: which validated module it delegates to — `scripts/audit-crypto-deps.sh` maps packages to FIPS routing status (routed/partial/bypass)
+- [x] Output as CycloneDX and SPDX format (both accepted by government procurement) — CycloneDX 1.5 + SPDX 2.3 with real dependency data
 
 ---
 
