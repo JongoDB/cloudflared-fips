@@ -27,7 +27,7 @@ export default function Layout({ children }: LayoutProps) {
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                 BoringCrypto #4407
               </span>
-              <span className="text-sm text-gray-500">v2024.12.2-fips</span>
+              <span className="text-sm text-gray-500">v0.1.0-fips</span>
             </div>
           </div>
         </div>

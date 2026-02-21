@@ -499,9 +499,9 @@ export const mockSections: ChecklistSection[] = [
 ]
 
 export const mockManifest: BuildManifest = {
-  version: '1.0.0',
+  version: '0.1.0',
   commit: 'abc1234',
-  build_time: '2026-02-20T00:00:00Z',
+  build_time: '2026-02-21T00:00:00Z',
   cloudflared_upstream_version: '2025.2.0',
   cloudflared_upstream_commit: '059f4d9',
   crypto_engine: 'boringcrypto',
