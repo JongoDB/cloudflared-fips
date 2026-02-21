@@ -6,11 +6,15 @@ FIPS 140-2 compliant build of Cloudflare Tunnel (`cloudflared`) with integrated 
 
 This project provides:
 
-- **FIPS-validated build pipeline** using `GOEXPERIMENT=boringcrypto` (BoringCrypto cert #4407) on RHEL UBI 9
-- **Runtime self-test suite** verifying BoringCrypto linkage, OS FIPS mode, cipher suites, and Known Answer Tests
-- **Compliance dashboard** (React + TypeScript + Tailwind) displaying checklist status across all three network segments
-- **Build manifest generation** with full provenance, SBOM hashes, and FIPS certificate references
-- **CI/CD pipelines** for 10-platform matrix builds and compliance validation
+- **FIPS-validated build pipeline** using `GOEXPERIMENT=boringcrypto` (BoringCrypto cert #4407) on RHEL UBI 9, with Go native FIPS (`GODEBUG=fips140=on`) for macOS/Windows
+- **Modular crypto backend** supporting BoringCrypto, Go native FIPS 140-3, and Microsoft SystemCrypto with auto-detection
+- **Runtime self-test suite** verifying BoringCrypto linkage, OS FIPS mode, cipher suites, and Known Answer Tests (NIST CAVP vectors)
+- **Compliance dashboard** (React + TypeScript + Tailwind) with 39 checks across all three network segments, FIPS 140-2 sunset countdown, deployment tier display, verification method badges, and real-time SSE updates
+- **Live compliance checks** querying local system state, Cloudflare API (edge settings, tunnel health), and TLS ClientHello inspection for client FIPS detection
+- **Three deployment tiers** from standard Cloudflare Tunnel (Tier 1) to self-hosted FIPS proxy in GovCloud (Tier 3)
+- **Build manifest and SBOM generation** with full cryptographic provenance, CycloneDX/SPDX output, and artifact signing (GPG + cosign)
+- **CI/CD pipelines** for cross-platform builds (Linux/macOS/Windows, amd64/arm64) with real packaging (RPM, DEB, MSI, .pkg, OCI)
+- **AO documentation toolkit** with SSP template, crypto module usage doc, NIST 800-53 control mapping, and client hardening guides
 
 ## Directory Structure
 
@@ -70,12 +74,12 @@ make docker-build
 ## Dashboard Screenshots
 
 ### Dashboard Overview
-Summary bar showing 39 total checks, pass/warn/fail counts, overall compliance percentage, and the Build Manifest toggle.
+FIPS 140-2 sunset countdown banner (212 days), deployment tier badge (Tier 1 — Standard Tunnel), 39 compliance checks with pass/warn/fail summary, verification method badges (Direct/API/Probe/Inherited/Reported), and live SSE toggle.
 
 ![Dashboard Overview](docs/screenshots/dashboard-overview.png)
 
 ### Full Dashboard
-All five compliance checklist sections: Client Posture, Cloudflare Edge, Tunnel, Local Service, and Build & Supply Chain.
+All five compliance checklist sections: Client Posture, Cloudflare Edge, Tunnel, Local Service, and Build & Supply Chain. Each item shows status, severity, and verification method.
 
 ![Full Dashboard](docs/screenshots/dashboard-full.png)
 
@@ -90,7 +94,7 @@ Build metadata, upstream cloudflared version, FIPS certificate details (BoringSS
 ![Build Manifest](docs/screenshots/build-manifest-expanded.png)
 
 ### Summary Bar Close-up
-Top-level compliance summary with export controls and BoringCrypto certificate badge.
+Sunset banner with progress bar, Tier 1 deployment badge, compliance summary (85%), and export controls.
 
 ![Summary Bar](docs/screenshots/summary-bar.png)
 
