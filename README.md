@@ -9,7 +9,7 @@ Cloudflare Tunnel (`cloudflared`) uses standard Go crypto by default — it is *
 Three core deliverables:
 
 1. **FIPS-compliant cloudflared binary** using validated cryptographic modules (BoringCrypto on Linux, Go native FIPS 140-3 on macOS/Windows)
-2. **Real-time compliance dashboard** — a 41-item checklist making every security property of the full connection chain transparently visible, with honest verification-method indicators
+2. **Real-time compliance dashboard** — a 41-item checklist making every security property of the full connection chain transparently visible, with honest verification-method indicators (web GUI + terminal TUI)
 3. **AO authorization documentation toolkit** — templates and auto-generated artifacts supporting an Authorizing Official authorization path
 
 ## Three-Segment Architecture
@@ -134,11 +134,17 @@ The product detects client FIPS capability through:
 ├── cmd/
 │   ├── selftest/                    # Standalone self-test CLI
 │   ├── dashboard/                   # Compliance dashboard server (localhost-only)
-│   └── fips-proxy/                  # Tier 3 FIPS reverse proxy
+│   ├── fips-proxy/                  # Tier 3 FIPS reverse proxy
+│   └── tui/                         # TUI: setup wizard + status monitor
 ├── internal/
 │   ├── selftest/                    # KATs, cipher validation, BoringCrypto detection
 │   ├── compliance/                  # Live compliance checker (system + config + binary)
-│   └── dashboard/                   # HTTP API handlers + SSE + WebSocket
+│   ├── dashboard/                   # HTTP API handlers + SSE + WebSocket
+│   └── tui/                         # Terminal UI (Bubbletea)
+│       ├── config/                  # Config struct, YAML write/read, validators
+│       ├── common/                  # Shared components: textinput, toggle, selector, ingress
+│       ├── wizard/                  # 5-page setup wizard
+│       └── status/                  # Live compliance status monitor
 ├── pkg/
 │   ├── buildinfo/                   # Linker-injected build metadata
 │   ├── manifest/                    # Build manifest types + read/write
@@ -178,7 +184,16 @@ The product detects client FIPS capability through:
 
 ## Quick Start
 
-### Run the compliance dashboard (development)
+### Configure with the setup wizard
+
+```bash
+go build -o cloudflared-fips-tui ./cmd/tui
+./cloudflared-fips-tui setup
+```
+
+Walks through 5 pages: tunnel config, dashboard wiring, deployment tier, FIPS options, review — then writes `configs/cloudflared-fips.yaml`.
+
+### Run the compliance dashboard (web)
 
 ```bash
 cd dashboard
@@ -186,10 +201,24 @@ npm install
 npm run dev
 ```
 
+### Monitor compliance from the terminal
+
+```bash
+./cloudflared-fips-tui status --api localhost:8080 --interval 5s
+```
+
+Polls the dashboard API and renders all 41 checklist items with pass/warn/fail in a scrollable terminal view. Useful for headless/SSH environments.
+
 ### Build the FIPS binary
 
 ```bash
 make build-fips
+```
+
+### Build the TUI
+
+```bash
+make tui
 ```
 
 ### Run self-tests
@@ -286,6 +315,58 @@ Sunset banner with progress bar, deployment tier badge, compliance summary (80%)
 | `GET /api/v1/mdm/devices` | MDM-enrolled device compliance list |
 | `GET /api/v1/mdm/summary` | MDM fleet compliance summary |
 | `GET /health` | Health check |
+
+## Terminal UI (TUI)
+
+A lightweight alternative to the web dashboard for headless and SSH environments, built with [Bubbletea](https://github.com/charmbracelet/bubbletea).
+
+### Setup Wizard
+
+```bash
+./cloudflared-fips-tui setup
+```
+
+Interactive 5-page wizard:
+
+| Page | Fields |
+|------|--------|
+| **1. Tunnel** | UUID, credentials file, protocol (QUIC/HTTP2), ingress rules (add/remove) |
+| **2. Dashboard Wiring** | CF API token, zone/account/tunnel IDs, metrics address, MDM provider (None/Intune/Jamf) |
+| **3. Deployment Tier** | Tier 1 (standard), Tier 2 (Keyless SSL + HSM), or Tier 3 (self-hosted proxy) with conditional fields |
+| **4. FIPS Options** | Self-test on start, fail-on-failure, binary signature verification, output path |
+| **5. Review & Write** | Scrollable summary (secrets masked), Enter writes `configs/cloudflared-fips.yaml` |
+
+Navigation: `Tab`/`Enter` = next, `Shift+Tab` = back, `Ctrl+C` = quit.
+
+### Status Monitor
+
+```bash
+./cloudflared-fips-tui status [--api localhost:8080] [--interval 5s]
+```
+
+Polls `GET /api/v1/compliance` and renders all 41 items grouped by section:
+
+```
+ cloudflared-fips v0.1.0 | Compliance Status | Updated 12:34:56
+
+ ┌──────────────────────────────────────────────────────────┐
+ │  38/41 PASS   2 WARN   1 FAIL              93% ██████░  │
+ └──────────────────────────────────────────────────────────┘
+
+ CLIENT POSTURE                                    7/8 pass
+   ● Client OS FIPS Mode                              PASS
+   ○ Browser TLS Capabilities                         WARN
+   ...
+
+ TUNNEL — CLOUDFLARED                            11/12 pass
+   ● BoringCrypto Active                              PASS
+   ✖ Binary Integrity                                 FAIL
+   ...
+
+ [q] Quit  [r] Refresh | Polling every 5s | Connected to localhost:8080
+```
+
+Keys: `q` = quit, `r` = force refresh, arrows/PgUp/PgDn = scroll.
 
 ## FIPS Build Pipeline
 
