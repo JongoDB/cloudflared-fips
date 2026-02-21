@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+@keyframes sseFlash {
+  0% { color: #2563eb; }
+  100% { color: inherit; }
+}
+
 body {
   margin: 0;
   font-family:

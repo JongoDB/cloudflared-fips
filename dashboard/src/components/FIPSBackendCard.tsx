@@ -24,25 +24,24 @@ const defaultBackend: FIPSBackendInfo = {
 }
 
 export default function FIPSBackendCard({ backendInfo }: FIPSBackendCardProps) {
-  const [info, setInfo] = useState<FIPSBackendInfo>(backendInfo ?? defaultBackend)
+  const [fetchedInfo, setFetchedInfo] = useState<FIPSBackendInfo | null>(null)
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
-    if (backendInfo) {
-      setInfo(backendInfo)
-      return
-    }
+    if (backendInfo) return
     // Try fetching from API; fall back to default mock data
     fetch('/api/v1/backend')
       .then((res) => {
         if (res.ok) return res.json()
         throw new Error('API unavailable')
       })
-      .then((data: FIPSBackendInfo) => setInfo(data))
+      .then((data: FIPSBackendInfo) => setFetchedInfo(data))
       .catch(() => {
         // Keep default mock data
       })
   }, [backendInfo])
+
+  const info = backendInfo ?? fetchedInfo ?? defaultBackend
 
   const standardBadge = getStandardBadge(info.fips_standard)
   const validationBadge = info.validated

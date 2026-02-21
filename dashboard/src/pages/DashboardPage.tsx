@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import Layout from '../components/Layout'
 import SummaryBar from '../components/SummaryBar'
 import BuildManifestPanel from '../components/BuildManifestPanel'
@@ -103,17 +103,9 @@ function SSEToggle({
   onToggle: () => void
   status: { connected: boolean; lastUpdate: Date | null; error: string | null }
 }) {
-  const [flash, setFlash] = useState(false)
-  const prevUpdate = usePrevious(status.lastUpdate)
-
-  // Flash briefly when data refreshes
-  useEffect(() => {
-    if (status.lastUpdate && prevUpdate && status.lastUpdate !== prevUpdate) {
-      setFlash(true)
-      const timer = setTimeout(() => setFlash(false), 800)
-      return () => clearTimeout(timer)
-    }
-  }, [status.lastUpdate, prevUpdate])
+  // Use key-based CSS animation for flash — avoids state/effects entirely.
+  // When lastUpdate changes, the key changes, remounting the span and replaying the animation.
+  const flashKey = status.lastUpdate?.getTime() ?? 0
 
   return (
     <div className="flex items-center gap-2">
@@ -135,8 +127,9 @@ function SSEToggle({
       <span className="text-xs text-gray-500">Live</span>
       {enabled && (
         <span
-          className={`inline-flex items-center gap-1 text-xs transition-colors duration-300 ${
-            flash ? 'text-blue-600' : status.connected ? 'text-green-600' : 'text-gray-400'
+          key={flashKey}
+          className={`inline-flex items-center gap-1 text-xs animate-[sseFlash_0.8s_ease-out] ${
+            status.connected ? 'text-green-600' : 'text-gray-400'
           }`}
           title={
             status.error ??
@@ -146,8 +139,8 @@ function SSEToggle({
           }
         >
           <span
-            className={`w-1.5 h-1.5 rounded-full transition-colors duration-300 ${
-              flash ? 'bg-blue-500' : status.connected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
+            className={`w-1.5 h-1.5 rounded-full ${
+              status.connected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
             }`}
           />
           {status.connected
@@ -163,11 +156,3 @@ function SSEToggle({
   )
 }
 
-/** Hook that returns the previous value of a variable */
-function usePrevious<T>(value: T): T | undefined {
-  const ref = useRef<T | undefined>(undefined)
-  useEffect(() => {
-    ref.current = value
-  })
-  return ref.current
-}

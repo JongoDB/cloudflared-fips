@@ -51,6 +51,7 @@ export function useComplianceWS({
 
   const defaultWsUrl = wsUrl ?? `ws://${window.location.host}/api/v1/ws`
   const sseUrl = `/api/v1/events`
+  const connectRef = useRef<() => void>(() => {})
 
   const connectSSE = useCallback(() => {
     if (sseRef.current) return
@@ -149,7 +150,7 @@ export function useComplianceWS({
               error: `Reconnecting (${attemptsRef.current}/${maxReconnectAttempts})`,
               reconnectAttempts: attemptsRef.current,
             }))
-            reconnectTimerRef.current = setTimeout(connect, reconnectDelay)
+            reconnectTimerRef.current = setTimeout(() => connectRef.current(), reconnectDelay)
           } else {
             // Max attempts reached — fall back to SSE
             connectSSE()
@@ -161,6 +162,10 @@ export function useComplianceWS({
       connectSSE()
     }
   }, [enabled, defaultWsUrl, connectSSE, reconnectDelay, maxReconnectAttempts])
+
+  useEffect(() => {
+    connectRef.current = connect
+  })
 
   useEffect(() => {
     if (enabled) {

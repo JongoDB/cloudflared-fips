@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import type { ChecklistSection, SSEStatus } from '../types/compliance'
 
 interface SSEMessage {
@@ -23,35 +23,48 @@ export function useComplianceSSE({
   enabled = false,
   fallbackSections,
 }: UseComplianceSSEOptions) {
-  const [sections, setSections] = useState<ChecklistSection[]>(fallbackSections)
+  const [liveSections, setLiveSections] = useState<ChecklistSection[] | null>(null)
   const [sseStatus, setSSEStatus] = useState<SSEStatus>({
     connected: false,
     lastUpdate: null,
     error: null,
   })
-  const eventSourceRef = useRef<EventSource | null>(null)
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const connect = useCallback(() => {
+  useEffect(() => {
     if (!enabled) return
 
-    try {
-      const es = new EventSource(url)
-      eventSourceRef.current = es
+    let es: EventSource | null = null
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null
+    let cancelled = false
+
+    function attemptConnect() {
+      if (cancelled) return
+
+      try {
+        es = new EventSource(url)
+      } catch {
+        // EventSource constructor failed — retry after delay
+        reconnectTimeout = setTimeout(attemptConnect, 5000)
+        return
+      }
 
       es.onopen = () => {
-        setSSEStatus({ connected: true, lastUpdate: new Date(), error: null })
+        if (!cancelled) {
+          setSSEStatus({ connected: true, lastUpdate: new Date(), error: null })
+        }
       }
 
       es.onmessage = (event) => {
+        if (cancelled) return
         try {
           const message: SSEMessage = JSON.parse(event.data)
 
           if (message.type === 'full' && message.sections) {
-            setSections(message.sections)
+            setLiveSections(message.sections)
           } else if (message.type === 'patch' && message.updates) {
-            setSections((prev) =>
-              prev.map((section) => ({
+            setLiveSections((prev) => {
+              if (!prev) return prev
+              return prev.map((section) => ({
                 ...section,
                 items: section.items.map((item) => {
                   const update = message.updates?.find(
@@ -60,7 +73,7 @@ export function useComplianceSSE({
                   return update ? { ...item, status: update.status } : item
                 }),
               }))
-            )
+            })
           }
 
           setSSEStatus((prev) => ({
@@ -74,47 +87,33 @@ export function useComplianceSSE({
       }
 
       es.onerror = () => {
-        es.close()
+        if (cancelled) return
+        es?.close()
         setSSEStatus((prev) => ({
           ...prev,
           connected: false,
           error: 'Connection lost. Retrying...',
         }))
-
-        // Reconnect after 5 seconds
-        reconnectTimeoutRef.current = setTimeout(() => {
-          connect()
-        }, 5000)
+        reconnectTimeout = setTimeout(attemptConnect, 5000)
       }
-    } catch (err) {
-      setSSEStatus({
-        connected: false,
-        lastUpdate: null,
-        error: err instanceof Error ? err.message : 'Failed to connect',
-      })
+    }
+
+    attemptConnect()
+
+    return () => {
+      cancelled = true
+      es?.close()
+      if (reconnectTimeout) clearTimeout(reconnectTimeout)
     }
   }, [url, enabled])
 
-  useEffect(() => {
-    connect()
+  // Derive sections: use live data when enabled and available, otherwise fallback
+  const sections = enabled && liveSections ? liveSections : fallbackSections
 
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close()
-      }
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current)
-      }
-    }
-  }, [connect])
+  // Derive status: reset when disabled (no effect needed)
+  const effectiveStatus = enabled
+    ? sseStatus
+    : { connected: false, lastUpdate: null, error: null }
 
-  // Reset to fallback when SSE is disabled
-  useEffect(() => {
-    if (!enabled) {
-      setSections(fallbackSections)
-      setSSEStatus({ connected: false, lastUpdate: null, error: null })
-    }
-  }, [enabled, fallbackSections])
-
-  return { sections, sseStatus }
+  return { sections, sseStatus: effectiveStatus }
 }
