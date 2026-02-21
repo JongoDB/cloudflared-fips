@@ -218,12 +218,12 @@ The compliance dashboard displays 41 checklist items across five sections:
 ### Screenshots
 
 #### Dashboard Overview
-FIPS 140-2 sunset countdown banner, Tier 1 deployment badge, 41 compliance checks with pass/warn/fail summary, verification method badges, and live SSE toggle.
+FIPS 140-2 sunset countdown banner, Tier 1 deployment badge, FIPS Cryptographic Module card (showing active backend, CMVP cert, 140-2/3 badge), 41 compliance checks with pass/warn/fail summary, verification method badges, and live SSE toggle.
 
 ![Dashboard Overview](docs/screenshots/dashboard-overview.png)
 
 #### Full Dashboard
-All five sections with status, severity, and verification method per item.
+All five sections with status, severity, and verification method per item. FIPS backend card and build manifest expandable above the checklist.
 
 ![Full Dashboard](docs/screenshots/dashboard-full.png)
 
@@ -249,6 +249,7 @@ Sunset banner with progress bar, deployment tier badge, compliance summary (80%)
 | `GET /api/v1/compliance` | Full compliance state (all sections) |
 | `GET /api/v1/manifest` | Build manifest |
 | `GET /api/v1/selftest` | On-demand FIPS self-test |
+| `GET /api/v1/backend` | Active FIPS crypto backend info |
 | `GET /api/v1/events` | SSE stream (real-time updates) |
 | `GET /api/v1/clients` | TLS ClientHello inspection results |
 | `GET /api/v1/posture` | Device posture reports |
