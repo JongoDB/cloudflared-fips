@@ -153,3 +153,49 @@ func (c *Client) GetTunnel(accountID, tunnelID string) (*TunnelInfo, error) {
 	}
 	return &tunnel, nil
 }
+
+// KeylessSSLConfig represents a Keyless SSL configuration.
+type KeylessSSLConfig struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	Status    string `json:"status"` // "active", "deleted"
+	Enabled   bool   `json:"enabled"`
+	CreatedOn string `json:"created_on"`
+}
+
+// GetKeylessSSLConfigs returns all Keyless SSL configurations for a zone.
+// Keyless SSL allows private keys to remain in customer infrastructure (HSM)
+// while Cloudflare handles TLS termination.
+func (c *Client) GetKeylessSSLConfigs(zoneID string) ([]KeylessSSLConfig, error) {
+	data, err := c.get(fmt.Sprintf("/zones/%s/keyless_certificates", zoneID))
+	if err != nil {
+		return nil, err
+	}
+	var configs []KeylessSSLConfig
+	if err := json.Unmarshal(data, &configs); err != nil {
+		return nil, fmt.Errorf("parse keyless_certificates: %w", err)
+	}
+	return configs, nil
+}
+
+// RegionalTieredCache represents regional services settings.
+type RegionalTieredCache struct {
+	ID    string `json:"id"`
+	Value string `json:"value"` // "on" or "off"
+}
+
+// GetRegionalTieredCache checks if Regional Tiered Cache (a proxy for Regional Services)
+// is enabled for a zone. Regional Services restrict data processing to specific regions.
+func (c *Client) GetRegionalTieredCache(zoneID string) (bool, error) {
+	data, err := c.get(fmt.Sprintf("/zones/%s/cache/regional_tiered_cache", zoneID))
+	if err != nil {
+		return false, err
+	}
+	var setting RegionalTieredCache
+	if err := json.Unmarshal(data, &setting); err != nil {
+		return false, fmt.Errorf("parse regional_tiered_cache: %w", err)
+	}
+	return setting.Value == "on", nil
+}

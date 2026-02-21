@@ -6,13 +6,13 @@
 
 ---
 
-## Progress Summary (last updated: 2026-02-21, post-P3)
+## Progress Summary (last updated: 2026-02-21, post-P3 + CF ref arch alignment)
 
 | Area | Status | Notes |
 |------|--------|-------|
 | **FIPS build system** | **Working** | Dockerfile.fips builds on RHEL UBI 9 with BoringCrypto verification + self-test gates. build.sh orchestrates full flow. |
 | **Self-test suite** | **Working** | Real NIST CAVP vectors. BoringCrypto detection, OS FIPS mode, cipher suite validation, KATs. |
-| **Compliance dashboard** | **Working (mock data)** | All 39 items with verification badges (Direct/API/Probe/Inherited/Reported). SSE hook + Live toggle. JSON export. |
+| **Compliance dashboard** | **Working (mock data)** | All 41 items with verification badges (Direct/API/Probe/Inherited/Reported). SSE hook + Live toggle. JSON export. |
 | **AO documentation** | **Complete (templates)** | 8 docs: SSP, crypto usage, justification letter, hardening guide, monitoring plan, IR addendum, control mapping, architecture. |
 | **CI — compliance** | **Working** | Go lint/test, dashboard lint/build, docs check, manifest validation, shell syntax. |
 | **CI — build matrix** | **Working** | Per-OS jobs: Linux/RHEL with boringcrypto, macOS with Go native FIPS, Windows with Go native FIPS. `if-no-files-found: error`. |
@@ -20,7 +20,7 @@
 | **SBOM** | **Implemented** | `scripts/generate-sbom.sh` produces CycloneDX 1.5 + SPDX 2.3 from `go mod`. Crypto audit JSON. CI wired. |
 | **Artifact signing** | **Implemented** | `pkg/signing/` (GPG + cosign), `scripts/sign-artifacts.sh`, CI `sign-artifacts` job runs on tags. |
 | **SSE real-time** | **Frontend + backend** | Go SSE handler works. React `useComplianceSSE` hook with auto-reconnect, Live toggle, connection status. |
-| **Live compliance checks** | **Implemented** | Local: `LiveChecker` (BoringCrypto, OS FIPS, KATs, ciphers, binary integrity, tunnel metrics, TLS probing). Edge: `cfapi.ComplianceChecker` (9 checks). Client: `clientdetect.ComplianceChecker` (8 checks). |
+| **Live compliance checks** | **Implemented** | Local: `LiveChecker` (BoringCrypto, OS FIPS, KATs, ciphers, binary integrity, tunnel metrics, TLS probing). Edge: `cfapi.ComplianceChecker` (11 checks including Keyless SSL + Regional Services). Client: `clientdetect.ComplianceChecker` (8 checks). |
 | **PDF export** | **Not implemented** | Intentional stub returning install instructions for pandoc. |
 | **quic-go audit** | **Not started** | Need to verify quic-go TLS routes through BoringCrypto, not its own crypto. |
 | **OS support matrix** | **Needs update** | Product supports any FIPS-mode Linux (RHEL, Ubuntu Pro, Amazon Linux, SLES, Oracle, Alma), not just RHEL. Docs/dashboard should reflect this. |
@@ -28,9 +28,10 @@
 | **Edge FIPS honesty** | **Implemented** | Cloudflare Edge items show "Inherited" or "API" verification badges. Tooltip explains FedRAMP reliance. |
 | **macOS/Windows targets** | **CI implemented** | Per-OS CI jobs use `GODEBUG=fips140=on` (Go native FIPS 140-3, CAVP A6650, CMVP pending). |
 | **Modular crypto backend** | **Implemented** | `pkg/fipsbackend/` with Backend interface. BoringCrypto, GoNative, SystemCrypto backends. `Detect()` auto-selects. Live checker uses it. Dashboard display TODO. |
-| **Deployment tiers** | **Implemented** | `pkg/deployment/tier.go`, `cmd/fips-proxy/main.go` (Tier 3 proxy), `build/Dockerfile.fips-proxy`, config `deployment_tier` field, dashboard badge. API: `/api/v1/deployment`. |
+| **Deployment tiers** | **Implemented** | `pkg/deployment/tier.go`, `cmd/fips-proxy/main.go` (Tier 3 proxy), `build/Dockerfile.fips-proxy`. Tier 2 reframed as Cloudflare's official FIPS 140 L3 ref arch (Keyless SSL + HSM + PKCS#11). `docs/deployment-tier-guide.md` with HSM setup for all 8 vendors. |
+| **Post-quantum crypto** | **Documented** | PQC readiness section in README. BoringSSL has ML-KEM; Go 1.24 has `crypto/mlkem`; CF edge uses PQC for origin. Not yet in FIPS 140-3 scope (FIPS 203/204/205 pending). |
 | **Client FIPS detection** | **Implemented** | `pkg/clientdetect/` with TLS Inspector (ClientHello analysis, JA4 fingerprinting), PostureCollector (device agent API), ComplianceChecker (8-item Client Posture section). |
-| **Dashboard honesty indicators** | **Implemented** | VerificationBadge component. All 39 items tagged: direct/api/probe/inherited/reported. Color-coded with tooltips. |
+| **Dashboard honesty indicators** | **Implemented** | VerificationBadge component. All 41 items tagged: direct/api/probe/inherited/reported. Color-coded with tooltips. |
 
 ---
 
@@ -653,12 +654,13 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 - [x] Config option: `deployment_tier: standard`
 - [x] Dashboard shows Tier 1 honesty indicators (edge items marked "inherited")
 
-#### Tier 2: Regional Services + Keyless SSL
+#### Tier 2: Cloudflare's FIPS 140 Level 3 Architecture (Keyless SSL + HSM)
 - [x] Config option: `deployment_tier: regional_keyless`
-- [ ] Cloudflare API checks verify Regional Services is active for the zone
-- [ ] Cloudflare API checks verify Keyless SSL is configured
-- [x] Dashboard shows HSM status and key location (via DeploymentTierBadge)
-- [ ] Documentation: setup guide for Keyless SSL + Cloudflare Tunnel integration
+- [x] Cloudflare API checks verify Regional Services is active for the zone — `checkRegionalServices()` in `cfapi/checker.go` (ce-11)
+- [x] Cloudflare API checks verify Keyless SSL is configured — `checkKeylessSSL()` in `cfapi/checker.go` (ce-10)
+- [x] Dashboard shows HSM status and key location (via DeploymentTierBadge, updated for "FIPS 140 L3")
+- [x] Documentation: `docs/deployment-tier-guide.md` — HSM setup for all 8 vendors, PKCS#11 reference, key operation flow, security considerations
+- [x] Architecture diagrams: Keyless SSL key operation sequence diagram, Tier 2 flow showing tunnel as key operation conduit
 
 #### Tier 3: Self-Hosted FIPS Edge Proxy
 - [x] `cmd/fips-proxy/main.go` — lightweight Go reverse proxy built with BoringCrypto

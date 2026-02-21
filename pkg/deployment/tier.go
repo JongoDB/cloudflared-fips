@@ -62,10 +62,10 @@ func GetTierInfo(tier Tier) TierInfo {
 	case TierRegionalKeyless:
 		return TierInfo{
 			Tier:              tier,
-			Name:              "Regional Services + Keyless SSL",
-			Description:       "Tunnel with Regional Services restricting TLS termination to FedRAMP US data centers. Private keys held in customer-managed FIPS 140-2 Level 3 HSMs.",
+			Name:              "Cloudflare FIPS 140 Level 3 (Keyless SSL + HSM)",
+			Description:       "Cloudflare's official FIPS 140 Level 3 reference architecture. Tunnel carries both application traffic and Keyless SSL key operations. Private keys remain in customer's FIPS 140-2 Level 3 HSM via PKCS#11. Regional Services restricts processing to FedRAMP US data centers.",
 			EdgeVerification:  "api + inherited",
-			KeyManagement:     "Customer HSM (FIPS 140-2 L3) via Keyless SSL",
+			KeyManagement:     "Customer HSM (FIPS 140-2 L3) via Keyless SSL + PKCS#11",
 			ClientInspection:  "Limited (Cloudflare logs, no ClientHello access)",
 			FedRAMPDependency: true,
 		}
@@ -102,6 +102,15 @@ type Config struct {
 	ProxyCertFile   string `json:"proxy_cert_file" yaml:"proxy_cert_file"`
 	ProxyKeyFile    string `json:"proxy_key_file" yaml:"proxy_key_file"`
 	ProxyUpstream   string `json:"proxy_upstream" yaml:"proxy_upstream"`
+}
+
+// GetTier parses a tier string and returns its info. Defaults to standard on parse error.
+func GetTier(s string) TierInfo {
+	tier, err := ParseTier(s)
+	if err != nil {
+		tier = TierStandard
+	}
+	return GetTierInfo(tier)
 }
 
 // DefaultConfig returns a config for the standard deployment tier.

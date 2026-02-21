@@ -44,6 +44,8 @@ func (cc *ComplianceChecker) RunEdgeChecks() compliance.Section {
 	section.Items = append(section.Items, cc.checkEdgeCertificate())
 	section.Items = append(section.Items, cc.checkHSTS())
 	section.Items = append(section.Items, cc.checkTunnelHealth())
+	section.Items = append(section.Items, cc.checkKeylessSSL())
+	section.Items = append(section.Items, cc.checkRegionalServices())
 
 	return section
 }
@@ -337,6 +339,74 @@ func (cc *ComplianceChecker) checkTunnelHealth() compliance.ChecklistItem {
 	default:
 		item.Status = compliance.StatusFail
 		item.What = fmt.Sprintf("Tunnel status: %s", tunnel.Status)
+	}
+	return item
+}
+
+func (cc *ComplianceChecker) checkKeylessSSL() compliance.ChecklistItem {
+	item := compliance.ChecklistItem{
+		ID:                 "ce-10",
+		Name:               "Keyless SSL (HSM Key Protection)",
+		Severity:           "high",
+		VerificationMethod: compliance.VerifyAPI,
+		What:               "Checks whether Keyless SSL is configured, keeping private keys in customer-controlled HSMs",
+		Why:                "Keyless SSL is the core of Cloudflare's FIPS 140 Level 3 reference architecture. Private keys never leave the customer's FIPS 140-2 Level 3 HSM. Key operations flow through the cloudflared tunnel via PKCS#11. Without Keyless SSL, Cloudflare holds the private keys on their edge infrastructure.",
+		Remediation:        "Configure Keyless SSL: upload only the public certificate to Cloudflare, deploy the Keyless SSL module alongside cloudflared, connect to your HSM (AWS CloudHSM, Azure Dedicated HSM, Entrust nShield, Fortanix, Google Cloud HSM, IBM Cloud HSM) via PKCS#11.",
+		NISTRef:            "SC-12, SC-13, SC-12(1)",
+	}
+
+	configs, err := cc.client.GetKeylessSSLConfigs(cc.zoneID)
+	if err != nil {
+		item.Status = compliance.StatusUnknown
+		item.What = fmt.Sprintf("Cannot query Keyless SSL config: %s", err)
+		return item
+	}
+
+	activeCount := 0
+	for _, cfg := range configs {
+		if cfg.Status == "active" && cfg.Enabled {
+			activeCount++
+		}
+	}
+
+	if activeCount > 0 {
+		item.Status = compliance.StatusPass
+		item.What = fmt.Sprintf("Keyless SSL active: %d configuration(s). Private keys remain in customer HSM.", activeCount)
+	} else if len(configs) > 0 {
+		item.Status = compliance.StatusWarning
+		item.What = "Keyless SSL configurations exist but none are active/enabled"
+	} else {
+		item.Status = compliance.StatusWarning
+		item.What = "Keyless SSL not configured. Private keys are managed by Cloudflare (Tier 1 architecture). For FIPS 140 Level 3, deploy Keyless SSL with an HSM."
+	}
+	return item
+}
+
+func (cc *ComplianceChecker) checkRegionalServices() compliance.ChecklistItem {
+	item := compliance.ChecklistItem{
+		ID:                 "ce-11",
+		Name:               "Regional Services (Data Locality)",
+		Severity:           "medium",
+		VerificationMethod: compliance.VerifyAPI,
+		What:               "Checks whether Regional Services restricts TLS termination to specific geographic regions",
+		Why:                "Regional Services ensures traffic is only processed in compliant data centers (e.g., US-only for FedRAMP). Combined with Keyless SSL, this provides Cloudflare's FIPS 140 Level 3 architecture.",
+		Remediation:        "Enable Regional Services (Data Localization Suite) in the Cloudflare dashboard to restrict processing to US FedRAMP-authorized data centers.",
+		NISTRef:            "SC-8, PE-18",
+	}
+
+	enabled, err := cc.client.GetRegionalTieredCache(cc.zoneID)
+	if err != nil {
+		item.Status = compliance.StatusUnknown
+		item.What = fmt.Sprintf("Cannot query Regional Services status: %s", err)
+		return item
+	}
+
+	if enabled {
+		item.Status = compliance.StatusPass
+		item.What = "Regional Services enabled — TLS processing restricted to compliant data centers"
+	} else {
+		item.Status = compliance.StatusWarning
+		item.What = "Regional Services not enabled. Traffic may be processed at any Cloudflare data center worldwide."
 	}
 	return item
 }

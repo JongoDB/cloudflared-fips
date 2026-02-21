@@ -9,7 +9,7 @@ Cloudflare Tunnel (`cloudflared`) uses standard Go crypto by default — it is *
 Three core deliverables:
 
 1. **FIPS-compliant cloudflared binary** using validated cryptographic modules (BoringCrypto on Linux, Go native FIPS 140-3 on macOS/Windows)
-2. **Real-time compliance dashboard** — a 39-item checklist making every security property of the full connection chain transparently visible, with honest verification-method indicators
+2. **Real-time compliance dashboard** — a 41-item checklist making every security property of the full connection chain transparently visible, with honest verification-method indicators
 3. **AO authorization documentation toolkit** — templates and auto-generated artifacts supporting an Authorizing Official authorization path
 
 ## Three-Segment Architecture
@@ -58,13 +58,23 @@ Client → Cloudflare Edge → cloudflared-fips → Origin
 
 Default. Edge crypto inherited from Cloudflare's FedRAMP Moderate authorization. Gap: edge crypto module not independently FIPS-validated.
 
-### Tier 2: Regional Services + Keyless SSL
+### Tier 2: Cloudflare's FIPS 140 Level 3 Architecture (Keyless SSL + HSM)
+
+This is [Cloudflare's official reference architecture for FIPS 140 Level 3 compliance](https://developers.cloudflare.com/reference-architecture/diagrams/security/fips-140-3/).
 
 ```
-Client → Cloudflare FedRAMP DC → Keyless SSL (customer HSM) → cloudflared-fips → Origin
+Client → Cloudflare Edge (Regional Services, US FedRAMP DCs)
+              ↓ key operation request
+         cloudflared-fips tunnel (BoringCrypto — carries app traffic + key ops)
+              ↓
+         Keyless SSL Module (software proxy)
+              ↓ PKCS#11
+         Customer HSM (FIPS 140-2 Level 3)
 ```
 
-Traffic restricted to US FedRAMP-compliant data centers. Private keys stay in customer's FIPS 140-2 Level 3 HSMs (CloudHSM, Azure Dedicated HSM). Remaining gap: bulk encryption still via Cloudflare's edge.
+**The tunnel is doubly critical in Tier 2:** it carries both application data AND Keyless SSL cryptographic key operations. Every TLS handshake at the Cloudflare edge triggers a key operation that flows through this tunnel to the customer's HSM. The private key never leaves the HSM — only the signed result returns.
+
+Traffic restricted to US FedRAMP-compliant data centers via Regional Services. Supported HSMs: AWS CloudHSM, Azure Dedicated/Managed HSM, Entrust nShield Connect, Fortanix, Google Cloud HSM, IBM Cloud HSM. Remaining gap: bulk encryption (AES-GCM) still via Cloudflare's edge BoringSSL.
 
 ### Tier 3: Self-Hosted FIPS Proxy
 
@@ -90,6 +100,19 @@ The crypto backend is modular (`pkg/fipsbackend/`). Users select their FIPS modu
 ### FIPS 140-2 Sunset: September 21, 2026
 
 All FIPS 140-2 certificates move to the CMVP Historical List on this date. The dashboard displays a countdown banner with migration urgency. Migration path: BoringCrypto 140-3 (#4735) or Go native FIPS 140-3 (once CMVP validates).
+
+### Post-Quantum Cryptography (PQC) Readiness
+
+Cloudflare's edge already uses post-quantum key exchange (ML-KEM/Kyber) for connections to origin servers. Our crypto stack has PQC support at multiple levels:
+
+| Component | PQC Status | Details |
+|-----------|-----------|---------|
+| **BoringSSL** | ML-KEM (Kyber) supported | BoringCrypto includes post-quantum key exchange; used in Cloudflare's edge |
+| **Go 1.24+** | `crypto/mlkem` package | Native ML-KEM support via `crypto/mlkem`; available with `GODEBUG=fips140=on` |
+| **Cloudflare edge → origin** | Active | Cloudflare uses PQC for edge-to-origin connections when supported |
+| **Client → edge** | Browser-dependent | Chrome/Firefox support ML-KEM hybrid key exchange (X25519Kyber768) |
+
+PQC is not yet part of FIPS 140-3 validation (NIST is developing FIPS 203/204/205 for ML-KEM/ML-DSA/SLH-DSA). When FIPS PQC standards are finalized, the modular backend can add PQC-specific validation checks.
 
 ## Client-Side FIPS Detection
 
@@ -184,10 +207,10 @@ make docker-build
 
 ## Dashboard
 
-The compliance dashboard displays 39 checklist items across five sections:
+The compliance dashboard displays 41 checklist items across five sections:
 
 - **Client Posture** (8 items) — OS FIPS mode, TLS capabilities, device posture, MDM
-- **Cloudflare Edge** (9 items) — Access policy, cipher restriction, TLS version, HSTS, certificates
+- **Cloudflare Edge** (11 items) — Access policy, cipher restriction, TLS version, HSTS, certificates, Keyless SSL, Regional Services
 - **Tunnel** (12 items) — BoringCrypto active, self-test KATs, cipher suites, binary integrity, tunnel health
 - **Local Service** (4 items) — TLS enabled, cipher negotiation, cert validity, reachability
 - **Build & Supply Chain** (6 items) — SBOM, manifest, reproducibility, signatures, FIPS certs
@@ -195,7 +218,7 @@ The compliance dashboard displays 39 checklist items across five sections:
 ### Screenshots
 
 #### Dashboard Overview
-FIPS 140-2 sunset countdown banner, Tier 1 deployment badge, 39 compliance checks with pass/warn/fail summary, verification method badges, and live SSE toggle.
+FIPS 140-2 sunset countdown banner, Tier 1 deployment badge, 41 compliance checks with pass/warn/fail summary, verification method badges, and live SSE toggle.
 
 ![Dashboard Overview](docs/screenshots/dashboard-overview.png)
 
@@ -215,7 +238,7 @@ Build metadata, upstream cloudflared version, FIPS certificate details, and inte
 ![Build Manifest](docs/screenshots/build-manifest-expanded.png)
 
 #### Summary Bar
-Sunset banner with progress bar, deployment tier badge, compliance summary (85%), and export controls.
+Sunset banner with progress bar, deployment tier badge, compliance summary (80%), and export controls.
 
 ![Summary Bar](docs/screenshots/summary-bar.png)
 

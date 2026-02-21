@@ -9,8 +9,8 @@ const tierInfo: Record<string, { label: string; description: string; color: stri
     color: 'bg-blue-100 text-blue-800 border-blue-200',
   },
   regional_keyless: {
-    label: 'Tier 2 — Regional + Keyless SSL',
-    description: 'Key material in customer HSM, traffic restricted to FedRAMP DCs',
+    label: 'Tier 2 — FIPS 140 L3 (Keyless SSL + HSM)',
+    description: "Cloudflare's official FIPS 140 Level 3 architecture. Key ops flow through tunnel to customer HSM via PKCS#11.",
     color: 'bg-purple-100 text-purple-800 border-purple-200',
   },
   self_hosted: {
