@@ -12,10 +12,10 @@
 |------|--------|-------|
 | **FIPS build system** | **Working** | Dockerfile.fips builds on RHEL UBI 9 with BoringCrypto verification + self-test gates. build.sh orchestrates full flow. |
 | **Self-test suite** | **Working** | Real NIST CAVP vectors. BoringCrypto detection, OS FIPS mode, cipher suite validation, KATs. |
-| **Compliance dashboard** | **Working (mock data)** | All 41 items with verification badges (Direct/API/Probe/Inherited/Reported). SSE hook + Live toggle. JSON export. |
+| **Compliance dashboard** | **Working** | 41 items with verification badges. SSE hook + Live toggle. Sunset banner + tier badge. JSON export. Live data wiring for all 5 sections. |
 | **AO documentation** | **Complete (templates)** | 8 docs: SSP, crypto usage, justification letter, hardening guide, monitoring plan, IR addendum, control mapping, architecture. |
 | **CI — compliance** | **Working** | Go lint/test, dashboard lint/build, docs check, manifest validation, shell syntax. |
-| **CI — build matrix** | **Working** | Per-OS jobs: Linux/RHEL with boringcrypto, macOS with Go native FIPS, Windows with Go native FIPS. `if-no-files-found: error`. |
+| **CI — build matrix** | **Working** | Per-OS native runners: Linux/RHEL with BoringCrypto, macOS with Go native FIPS, Windows with Go native FIPS. Real packaging + signing on tags. `if-no-files-found: error`. |
 | **Packaging** | **Implemented** | RPM (.spec + rpmbuild), DEB (dpkg-deb + build script), macOS .pkg (pkgbuild + productbuild), Windows MSI (WiX v4). All include self-test post-install. |
 | **SBOM** | **Implemented** | `scripts/generate-sbom.sh` produces CycloneDX 1.5 + SPDX 2.3 from `go mod`. Crypto audit JSON. CI wired. |
 | **Artifact signing** | **Implemented** | `pkg/signing/` (GPG + cosign), `scripts/sign-artifacts.sh`, CI `sign-artifacts` job runs on tags. |
@@ -298,7 +298,7 @@ Each dashboard section should display a **verification method** indicator:
 - [ ] Specifically audit quic-go for crypto compliance — verify TLS operations route through BoringCrypto
 - [x] Produce reproducible build scripts and Dockerfiles
 - [x] Tag every build with metadata: validated modules, algorithm list, build timestamp, git commit hash, target platform
-- [ ] Cross-compile build step must fail (not silently succeed) when compilation errors occur — currently `|| echo` swallows failures in CI
+- [x] Cross-compile build step must fail (not silently succeed) — fixed in P0: `|| echo` removed, per-OS jobs with `if-no-files-found: error`
 
 ### Startup Self-Test
 
@@ -380,7 +380,7 @@ Web-based GUI showing real-time compliance checklist. Every item is green/yellow
 - [x] Configuration drift: none / [changes listed]
 - [x] Last compliance scan: [timestamp]
 
-> **Status:** All 39 checklist items scaffolded with mock data. Items marked [x] have mock data in dashboard; real data wiring is Phase 2 implementation work.
+> **Status:** All 41 checklist items (39 original + Keyless SSL + Regional Services) implemented with mock data. Live data wiring complete for tunnel, local service, build (LiveChecker), Cloudflare edge (cfapi), and client posture (clientdetect).
 
 ### Dashboard Implementation
 
@@ -390,11 +390,11 @@ Web-based GUI showing real-time compliance checklist. Every item is green/yellow
 - [x] PDF export stub (requires pandoc backend) — intentional stub with install instructions
 - [x] Dashboard localhost-only by default — Go server binds `127.0.0.1:8080`
 - [x] Air-gap friendly: all assets bundled, no CDN dependencies at runtime
-- [ ] Backend: Go sidecar service querying local system state, cloudflared /metrics, Cloudflare API — **handler scaffolded but serves static checker data, not live system queries**
-- [ ] Active TLS probing (connect to tunnel hostname, inspect negotiated cipher/TLS version)
-- [ ] Cloudflare API integration (Access policy status, tunnel health, cipher config)
+- [x] Backend: Go sidecar service querying local system state, cloudflared /metrics, Cloudflare API — `LiveChecker` (P1), `cfapi.ComplianceChecker` (P2), `clientdetect.ComplianceChecker` (P2)
+- [x] Active TLS probing for local services — `checkLocalTLSEnabled()`, `checkLocalCipherSuite()` in `internal/compliance/live.go`
+- [x] Cloudflare API integration — `pkg/cfapi/` with 11 checks (Access, ciphers, TLS version, HSTS, certs, tunnel health, Keyless SSL, Regional Services)
 - [ ] MDM API integration (Intune/Jamf) for client posture data
-- [ ] Real-time updates via SSE — **Go backend SSE handler implemented (`/api/v1/events`, 30s ticker), but React frontend has NO EventSource consumer wired up**
+- [x] Real-time updates via SSE — Go backend `SSEHandler` + React `useComplianceSSE` hook with auto-reconnect + Live toggle
 - [ ] WebSocket alternative for real-time updates
 
 ---
@@ -454,31 +454,31 @@ Web-based GUI showing real-time compliance checklist. Every item is green/yellow
 
 | Platform | Arch | Output | CI Matrix | Compile | Package |
 |----------|------|--------|-----------|---------|---------|
-| Linux (RPM) | amd64 | .rpm (RHEL 8/9) | [x] | [x] native | [ ] rpmbuild stub |
-| Linux (RPM) | arm64 | .rpm (RHEL 8/9 ARM) | [x] | [~] cross-compile, needs toolchain | [ ] rpmbuild stub |
-| Linux (DEB) | amd64 | .deb (Ubuntu/Debian) | [x] | [x] native | [ ] dpkg-deb stub |
-| Linux (DEB) | arm64 | .deb (Ubuntu/Debian ARM) | [x] | [~] cross-compile, needs toolchain | [ ] dpkg-deb stub |
-| macOS | arm64 (Apple Silicon) | .pkg / binary | [x] | [ ] CGO cross-compile fails silently | [ ] no .pkg step |
-| macOS | amd64 (Intel) | .pkg / binary | [x] | [ ] CGO cross-compile fails silently | [ ] no .pkg step |
-| Windows | amd64 | .msi / .exe | [x] | [ ] CGO cross-compile fails silently | [ ] WiX stub |
-| Windows | arm64 | .msi / .exe | [x] | [ ] CGO cross-compile fails silently | [ ] no MSI step |
-| Container | amd64 | OCI image (RHEL UBI 9 base) | [x] | [x] via Dockerfile.fips | [ ] buildah stub |
-| Container | arm64 | OCI image (RHEL UBI 9 base) | [x] | [~] Dockerfile.fips needs multi-arch | [ ] buildah stub |
+| Linux (RPM) | amd64 | .rpm (RHEL 8/9) | [x] | [x] native | [x] rpmbuild via .spec |
+| Linux (RPM) | arm64 | .rpm (RHEL 8/9 ARM) | [x] | [x] cross-compile w/ gcc-aarch64 | [x] rpmbuild via .spec |
+| Linux (DEB) | amd64 | .deb (Ubuntu/Debian) | [x] | [x] native | [x] dpkg-deb via build-deb.sh |
+| Linux (DEB) | arm64 | .deb (Ubuntu/Debian ARM) | [x] | [x] cross-compile w/ gcc-aarch64 | [x] dpkg-deb via build-deb.sh |
+| macOS | arm64 (Apple Silicon) | .pkg / binary | [x] | [x] native runner (macos-14) | [x] pkgbuild+productbuild |
+| macOS | amd64 (Intel) | .pkg / binary | [x] | [x] native runner (macos-13) | [x] pkgbuild+productbuild |
+| Windows | amd64 | .msi / .exe | [x] | [x] native runner (windows-latest) | [x] WiX v4 |
+| Windows | arm64 | .msi / .exe | [x] | [x] native runner (windows-latest) | [x] WiX v4 |
+| Container | amd64 | OCI image (RHEL UBI 9 base) | [x] | [x] via Dockerfile.fips | [x] podman build |
+| Container | arm64 | OCI image (RHEL UBI 9 base) | [x] | [~] Dockerfile.fips needs multi-arch | [~] podman build (needs qemu) |
 
-> **Key issue:** `GOEXPERIMENT=boringcrypto` requires `CGO_ENABLED=1`, which means cross-compiling to macOS/Windows from a Linux runner needs a C cross-compiler for each target OS. The current CI swallows these failures with `|| echo`. Options: (a) use native macOS/Windows runners, (b) use CGO_ENABLED=0 and accept no BoringCrypto for those platforms, or (c) use a cross-compilation toolchain like zig cc.
+> **Resolved (P0):** CI now uses per-OS native runners. Linux builds use `GOEXPERIMENT=boringcrypto` + `CGO_ENABLED=1` on RHEL UBI 9. macOS/Windows use native runners with `GODEBUG=fips140=on` (Go native FIPS 140-3, no CGO).
 
 ### Build Strategy
 
 - [x] Primary FIPS build: RHEL UBI 9 container with `GOEXPERIMENT=boringcrypto` — Dockerfile.fips is complete with BoringCrypto verification and self-test gates
-- [x] Cross-compilation: Go native cross-compile (GOOS/GOARCH) — CI matrix covers all 6 entries / 10 targets, **but non-linux CGO cross-compile will fail silently (swallowed by `|| echo`); needs native toolchains or separate runners**
+- [x] Cross-compilation: per-OS native runners (Linux RHEL UBI 9 + BoringCrypto, macOS native + Go FIPS, Windows native + Go FIPS)
 - [x] BoringCrypto on all platforms (document platform-specific caveats)
-- [ ] Windows builds: cross-compile + MSI packaging via WiX toolset — **CI step is echo stub only**
-- [ ] macOS builds: cross-compile + .pkg creation (document Apple code signing requirement) — **CI step outputs binary only, no .pkg packaging**
-- [ ] RPM packaging: rpmbuild in RHEL UBI 9 container — **CI step is echo stub; no .spec file exists**
-- [ ] DEB packaging: dpkg-deb in Debian container — **CI step is echo stub; no DEBIAN/control file exists**
-- [ ] OCI container packaging: buildah/docker build — **CI step is echo stub; Dockerfile.fips exists but is not invoked by the CI packaging step**
+- [x] Windows builds: native runner + MSI packaging via WiX v4 (`build/packaging/windows/cloudflared-fips.wxs`)
+- [x] macOS builds: native runner + .pkg via pkgbuild/productbuild (`build/packaging/macos/build-pkg.sh`) with optional codesigning
+- [x] RPM packaging: `build/packaging/rpm/cloudflared-fips.spec` with systemd unit, CI runs rpmbuild
+- [x] DEB packaging: `build/packaging/deb/` with DEBIAN/control, postinst, prerm; `build-deb.sh` runs dpkg-deb
+- [x] OCI container packaging: CI invokes `podman build -f build/Dockerfile.fips`
 - [ ] Reproducible builds: SOURCE_DATE_EPOCH, strip debug info, verify byte-identical output
-- [ ] Artifact signing: cosign for containers, GPG for binaries — **CI step is echo stub with documentation only**
+- [x] Artifact signing: `pkg/signing/` (GPG + cosign), `scripts/sign-artifacts.sh`, CI `sign-artifacts` job on tags
 
 ### Build Metadata Artifact (`build-manifest.json`)
 
@@ -517,7 +517,7 @@ Schema (implemented):
 - [x] Single YAML config file (`configs/cloudflared-fips.yaml`)
 - [ ] IPC interface: local Unix socket or gRPC for CloudSH queries
 - [x] Structured JSON API for compliance data (not just rendered UI) — `/api/v1/compliance`, `/api/v1/manifest`, `/api/v1/selftest`, `/api/v1/health`, `/api/v1/compliance/export`
-- [ ] RPM/DEB/container artifacts self-contained and importable as CloudSH plugin — **packaging not yet implemented**
+- [x] RPM/DEB/container artifacts self-contained — all packages include binary, self-test, config, manifest
 - [x] All API paths prefixed with `cloudflared-fips/` namespacing (`/api/v1/`)
 
 ---
@@ -597,7 +597,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
   - `"inherited"` — relies on provider's FedRAMP authorization
   - `"reported"` — client-reported via WARP/device posture
 - [x] Display `VerificationBadge` component next to severity badge in `ChecklistItem`
-- [x] Update mock data with correct verification methods for all 39 items
+- [x] Update mock data with correct verification methods for all 41 items
 - [x] Tooltip on badge explains what each method means (via `title` attribute)
 
 ### 6.7 Live Compliance Checks — Local System
@@ -727,21 +727,21 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 | Component | Technology | Status | Roadmap |
 |-----------|-----------|--------|---------|
 | cloudflared build | Go 1.24 + `GOEXPERIMENT=boringcrypto`, RHEL UBI 9 | [x] Dockerfile.fips works e2e; build.sh orchestrates | — |
-| Modular crypto backend | BoringCrypto / Go native / systemcrypto / RHEL OpenSSL | [ ] Not started | 6.1 |
-| Dashboard backend | Go (sidecar binary) | [x] HTTP handlers, SSE endpoint, JSON export — static data | 6.7, 6.8 |
-| Dashboard frontend | React + TypeScript + Tailwind | [x] Built, all 39 items, expandable, screenshots | 6.5, 6.6 |
+| Modular crypto backend | BoringCrypto / Go native / systemcrypto / RHEL OpenSSL | [x] `pkg/fipsbackend/` with Backend interface, auto-detection | 6.1 |
+| Dashboard backend | Go (sidecar binary) | [x] HTTP handlers, SSE, live checks, CF API, client detection, 13 API endpoints | 6.7, 6.8 |
+| Dashboard frontend | React + TypeScript + Tailwind | [x] Built, 41 items, verification badges, sunset banner, tier badge, SSE | 6.5, 6.6 |
 | Self-test suite | Go (KATs, cipher validation, BoringCrypto detection) | [x] Real NIST vectors, real runtime checks | 6.1 |
-| Local compliance checks | syscalls, cloudflared metrics, binary hash | [ ] Not started | 6.7 |
-| Cloudflare API integration | Access, cipher config, tunnel health, certificates | [ ] Not started | 6.8 |
-| Client FIPS detection | ClientHello inspection, JA4 fingerprint, WARP posture | [ ] Not started | 6.9 |
+| Local compliance checks | syscalls, cloudflared metrics, binary hash | [x] `LiveChecker` — 22 checks across tunnel/local/build sections | 6.7 |
+| Cloudflare API integration | Access, cipher config, tunnel health, certificates | [x] `pkg/cfapi/` — 11 checks including Keyless SSL + Regional Services | 6.8 |
+| Client FIPS detection | ClientHello inspection, JA4 fingerprint, WARP posture | [x] `pkg/clientdetect/` — Inspector, PostureCollector, 8 checks | 6.9 |
 | FIPS edge proxy | Go reverse proxy with BoringCrypto for Tier 3 | [x] `cmd/fips-proxy/`, `build/Dockerfile.fips-proxy` | 6.10 |
 | CI — compliance | GitHub Actions: lint, test, docs check, manifest | [x] Fully implemented | — |
-| CI — build | GitHub Actions: 6-entry matrix, RHEL UBI 9 | [x] Partial — linux works; macOS/Windows broken | 6.2 |
-| Packaging | rpmbuild / dpkg-deb / WiX / OCI / .pkg | [ ] All echo stubs | 6.3 |
-| SBOM | CycloneDX + SPDX via real tooling | [ ] Schema stubs only | 6.4 |
+| CI — build | GitHub Actions: per-OS native runners | [x] Linux (RHEL+BoringCrypto), macOS (Go FIPS), Windows (Go FIPS) | 6.2 |
+| Packaging | rpmbuild / dpkg-deb / WiX / OCI / .pkg | [x] All formats implemented with post-install self-test | 6.3 |
+| SBOM | CycloneDX + SPDX via real tooling | [x] `generate-sbom.sh` with cyclonedx-gomod fallback | 6.4 |
 | Artifact signing | cosign / GPG | [x] `pkg/signing/`, CI job, `sign-artifacts.sh` | 6.12 |
-| SSE real-time | Go backend → React EventSource | [ ] Backend done; frontend not wired | 6.5 |
-| Honesty indicators | Verification method badges on dashboard items | [ ] Not started | 6.6 |
+| SSE real-time | Go backend → React EventSource | [x] `useComplianceSSE` hook + Live toggle + auto-reconnect | 6.5 |
+| Honesty indicators | Verification method badges on dashboard items | [x] `VerificationBadge` component, 41 items tagged | 6.6 |
 | FIPS 140-3 migration | Module migration before Sept 2026 sunset | [x] `migration.go`, sunset banner, API endpoints | 6.11 |
 | Doc generation | Go templates → Markdown → PDF via pandoc | [ ] Not started | — |
 
