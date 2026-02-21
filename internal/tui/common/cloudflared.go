@@ -23,6 +23,17 @@ func DetectCloudflared() (string, error) {
 	return exec.LookPath("cloudflared")
 }
 
+// ErrNotLoggedIn is returned when cloudflared has no origin certificate.
+// The user must run "cloudflared login" first.
+var ErrNotLoggedIn = fmt.Errorf("not logged in — run \"cloudflared login\" first")
+
+// isNotLoggedIn checks whether cloudflared output indicates a missing cert.pem.
+func isNotLoggedIn(output string) bool {
+	return strings.Contains(output, "origincert") ||
+		strings.Contains(output, "origin cert") ||
+		strings.Contains(output, "cert.pem")
+}
+
 // ListTunnelsCLI runs cloudflared tunnel list and parses the JSON output.
 func ListTunnelsCLI() ([]CLITunnel, error) {
 	path, err := DetectCloudflared()
@@ -30,8 +41,11 @@ func ListTunnelsCLI() ([]CLITunnel, error) {
 		return nil, fmt.Errorf("cloudflared not found: %w", err)
 	}
 
-	out, err := exec.Command(path, "tunnel", "list", "--output", "json").Output()
+	out, err := exec.Command(path, "tunnel", "list", "--output", "json").CombinedOutput()
 	if err != nil {
+		if isNotLoggedIn(string(out)) {
+			return nil, ErrNotLoggedIn
+		}
 		return nil, fmt.Errorf("cloudflared tunnel list failed: %w", err)
 	}
 
@@ -53,17 +67,31 @@ func CreateTunnel(name string) (uuid, credsPath string, err error) {
 
 	out, err := exec.Command(path, "tunnel", "create", name).CombinedOutput()
 	if err != nil {
-		return "", "", fmt.Errorf("cloudflared tunnel create failed: %s", strings.TrimSpace(string(out)))
+		if isNotLoggedIn(string(out)) {
+			return "", "", ErrNotLoggedIn
+		}
+		return "", "", fmt.Errorf("tunnel create failed: %s", firstLine(string(out)))
 	}
 
 	// Parse UUID from output (e.g. "Created tunnel <name> with id <uuid>")
 	match := uuidFromOutput.FindString(string(out))
 	if match == "" {
-		return "", "", fmt.Errorf("could not parse tunnel UUID from output: %s", string(out))
+		return "", "", fmt.Errorf("could not parse tunnel UUID from output: %s", firstLine(string(out)))
 	}
 
 	credsPath = FindCredentialsFile(match)
 	return match, credsPath, nil
+}
+
+// firstLine returns the first non-empty line of s, trimmed.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return strings.TrimSpace(s)
 }
 
 // FindCredentialsFile returns the default credentials file path for a tunnel

@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -52,6 +53,8 @@ type TunnelPage struct {
 
 	// Whether cloudflared is on PATH
 	hasCLI bool
+	// Whether the error is due to missing cert.pem (needs cloudflared login)
+	needsLogin bool
 
 	focus  int // active field index (depends on source mode)
 	width  int
@@ -206,6 +209,7 @@ func (p *TunnelPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	case tunnelsListedMsg:
 		p.tunnelsLoaded = true
 		if msg.err != nil {
+			p.needsLogin = errors.Is(msg.err, common.ErrNotLoggedIn)
 			p.tunnelErr = msg.err.Error()
 			return p, nil
 		}
@@ -227,6 +231,7 @@ func (p *TunnelPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	case tunnelCreatedMsg:
 		p.creating = false
 		if msg.err != nil {
+			p.needsLogin = errors.Is(msg.err, common.ErrNotLoggedIn)
 			p.createErr = msg.err.Error()
 			return p, nil
 		}
@@ -472,6 +477,10 @@ func (p *TunnelPage) viewSelect() string {
 	} else if p.tunnelErr != "" {
 		b.WriteString(common.ErrorStyle.Render("  ! "+p.tunnelErr))
 		b.WriteString("\n")
+		if p.needsLogin {
+			b.WriteString(common.HintStyle.Render("  Run: cloudflared login"))
+			b.WriteString("\n")
+		}
 	} else if len(p.tunnelPicker.Options) == 0 {
 		b.WriteString(common.MutedStyle.Render("  No tunnels found. Create one or enter manually."))
 		b.WriteString("\n")
@@ -493,6 +502,10 @@ func (p *TunnelPage) viewCreate() string {
 	if p.createErr != "" {
 		b.WriteString(common.ErrorStyle.Render("  ! "+p.createErr))
 		b.WriteString("\n")
+		if p.needsLogin {
+			b.WriteString(common.HintStyle.Render("  Run: cloudflared login"))
+			b.WriteString("\n")
+		}
 	}
 	if p.tunnelID.Value() != "" {
 		b.WriteString(common.SuccessStyle.Render(fmt.Sprintf("  Created: %s", p.tunnelID.Value())))
