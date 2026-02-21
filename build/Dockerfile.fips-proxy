@@ -1,0 +1,65 @@
+# Dockerfile for FIPS Proxy — Tier 3 Self-Hosted Edge
+# Deploys in GovCloud environments (AWS GovCloud, Azure Government, GCP).
+#
+# Build:
+#   docker build -f build/Dockerfile.fips-proxy -t fips-proxy:latest .
+#
+# Run:
+#   docker run -p 443:443 -p 8081:8081 \
+#     -v /path/to/cert.pem:/etc/ssl/proxy.crt:ro \
+#     -v /path/to/key.pem:/etc/ssl/proxy.key:ro \
+#     fips-proxy:latest \
+#     --upstream http://backend:8080
+
+FROM registry.access.redhat.com/ubi9/ubi:latest AS builder
+
+# Install build dependencies
+RUN dnf install -y gcc gcc-c++ make git openssl-devel && dnf clean all
+
+# Install Go
+ARG GO_VERSION=1.24.0
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+    | tar -C /usr/local -xzf -
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# Build arguments
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+
+WORKDIR /build
+COPY go.mod ./
+COPY cmd/ cmd/
+COPY internal/ internal/
+COPY pkg/ pkg/
+
+# Build with FIPS crypto
+ENV GOEXPERIMENT=boringcrypto
+ENV CGO_ENABLED=1
+RUN go build -v \
+    -ldflags "-X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.Version=${VERSION} \
+              -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.GitCommit=${GIT_COMMIT} \
+              -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.FIPSBuild=true" \
+    -o /fips-proxy ./cmd/fips-proxy
+
+# Run self-test during build to verify crypto
+RUN go build -o /selftest ./cmd/selftest && /selftest
+
+# --- Runtime image ---
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+RUN microdnf install -y openssl-libs && microdnf clean all
+
+COPY --from=builder /fips-proxy /usr/local/bin/fips-proxy
+COPY --from=builder /selftest /usr/local/bin/selftest
+
+# Non-root user
+RUN useradd -r -s /sbin/nologin fips-proxy
+USER fips-proxy
+
+EXPOSE 443 8081
+
+HEALTHCHECK --interval=30s --timeout=5s \
+    CMD curl -sf http://localhost:8081/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/fips-proxy"]
+CMD ["--listen", ":443", "--dashboard-addr", "0.0.0.0:8081"]

@@ -19,6 +19,9 @@ import (
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/cfapi"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/clientdetect"
+	"github.com/cloudflared-fips/cloudflared-fips/pkg/deployment"
+	"github.com/cloudflared-fips/cloudflared-fips/pkg/fipsbackend"
+	"github.com/cloudflared-fips/cloudflared-fips/pkg/signing"
 )
 
 func main() {
@@ -28,6 +31,9 @@ func main() {
 	configPath := flag.String("config", "", "path to cloudflared config file (for drift detection)")
 	metricsAddr := flag.String("metrics-addr", "localhost:2000", "cloudflared metrics endpoint")
 	ingressTargets := flag.String("ingress-targets", "", "comma-separated local service endpoints to probe (host:port)")
+
+	// Deployment tier
+	deployTier := flag.String("deployment-tier", "standard", "deployment tier: standard, regional_keyless, self_hosted")
 
 	// Cloudflare API settings (optional — enables live edge checks)
 	cfToken := flag.String("cf-api-token", "", "Cloudflare API token (or set CF_API_TOKEN env)")
@@ -98,10 +104,53 @@ func main() {
 	mux.HandleFunc("POST /api/v1/posture", postureCollector.HandlePostureReport)
 	mux.HandleFunc("GET /api/v1/posture", postureCollector.HandlePostureList)
 
+	// Deployment tier info
+	mux.HandleFunc("GET /api/v1/deployment", func(w http.ResponseWriter, r *http.Request) {
+		tier := deployment.GetTier(*deployTier)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(tier)
+	})
+
+	// FIPS 140-3 migration status
+	mux.HandleFunc("GET /api/v1/migration", func(w http.ResponseWriter, r *http.Request) {
+		status := fipsbackend.GetMigrationStatus()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(status)
+	})
+
+	// All backend migration info
+	mux.HandleFunc("GET /api/v1/migration/backends", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(fipsbackend.AllBackendMigrationInfo())
+	})
+
+	// Signature manifest (if available)
+	mux.HandleFunc("GET /api/v1/signatures", func(w http.ResponseWriter, r *http.Request) {
+		sigPath := *manifestPath
+		// Look for signatures.json next to build-manifest.json
+		if idx := strings.LastIndex(sigPath, "/"); idx >= 0 {
+			sigPath = sigPath[:idx] + "/signatures.json"
+		} else {
+			sigPath = "signatures.json"
+		}
+		manifest, err := signing.ReadSignatureManifest(sigPath)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{
+				"status": "no signatures found",
+				"error":  err.Error(),
+			})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(manifest)
+	})
+
 	// Serve the React frontend (all assets bundled, air-gap friendly)
 	fs := http.FileServer(http.Dir(*staticDir))
 	mux.Handle("/", fs)
 
+	fmt.Fprintf(os.Stderr, "Deployment tier: %s\n", *deployTier)
 	fmt.Fprintf(os.Stderr, "Client detection: TLS inspector active, posture API at /api/v1/posture\n")
 
 	if err := http.ListenAndServe(*addr, mux); err != nil {

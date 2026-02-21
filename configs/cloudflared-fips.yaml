@@ -10,6 +10,12 @@ protocol: quic
 # Graceful shutdown settings
 grace-period: 30s
 
+# Deployment tier: standard | regional_keyless | self_hosted
+# - standard: Cloudflare Tunnel (Tier 1) — edge crypto inherited from FedRAMP
+# - regional_keyless: Regional Services + Keyless SSL (Tier 2) — key material in customer HSM
+# - self_hosted: Self-hosted FIPS proxy (Tier 3) — full TLS control in GovCloud
+deployment_tier: standard
+
 # FIPS Self-Test Configuration
 fips:
   # Run self-test on startup

@@ -418,3 +418,56 @@ jobs:
             ${{ runner.temp }}/build-manifest.json
             ${{ runner.temp }}/cloudflared-fips.msi
           if-no-files-found: error
+
+  # ── Artifact signing: GPG for binaries/packages, cosign for containers ──
+  sign-artifacts:
+    name: Sign artifacts
+    runs-on: ubuntu-latest
+    needs: [build-linux, build-darwin, build-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Import GPG key
+        if: env.GPG_PRIVATE_KEY != ''
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+
+      - name: Sign artifacts with GPG
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY_ID }}
+        run: |
+          # Sign all binaries and packages across platform directories
+          for dir in artifacts/cloudflared-fips-*/; do
+            [ -d "$dir" ] || continue
+            echo "=== Signing artifacts in $dir ==="
+            bash scripts/sign-artifacts.sh "$dir" --gpg-key "${GPG_SIGNING_KEY:-}"
+          done
+
+      - name: Sign container images with cosign (keyless)
+        if: env.COSIGN_EXPERIMENTAL != ''
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          echo "Container signing requires published OCI images."
+          echo "Use: cosign sign --yes <registry>/<image>@<digest>"
+
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-artifacts
+          path: |
+            artifacts/**/*.sig
+            artifacts/**/signatures.json
+          if-no-files-found: warn

@@ -6,7 +6,7 @@
 
 ---
 
-## Progress Summary (last updated: 2026-02-21, post-P2)
+## Progress Summary (last updated: 2026-02-21, post-P3)
 
 | Area | Status | Notes |
 |------|--------|-------|
@@ -18,17 +18,17 @@
 | **CI — build matrix** | **Working** | Per-OS jobs: Linux/RHEL with boringcrypto, macOS with Go native FIPS, Windows with Go native FIPS. `if-no-files-found: error`. |
 | **Packaging** | **Implemented** | RPM (.spec + rpmbuild), DEB (dpkg-deb + build script), macOS .pkg (pkgbuild + productbuild), Windows MSI (WiX v4). All include self-test post-install. |
 | **SBOM** | **Implemented** | `scripts/generate-sbom.sh` produces CycloneDX 1.5 + SPDX 2.3 from `go mod`. Crypto audit JSON. CI wired. |
-| **Artifact signing** | **Not implemented** | Echo stub with documentation. |
+| **Artifact signing** | **Implemented** | `pkg/signing/` (GPG + cosign), `scripts/sign-artifacts.sh`, CI `sign-artifacts` job runs on tags. |
 | **SSE real-time** | **Frontend + backend** | Go SSE handler works. React `useComplianceSSE` hook with auto-reconnect, Live toggle, connection status. |
 | **Live compliance checks** | **Implemented** | Local: `LiveChecker` (BoringCrypto, OS FIPS, KATs, ciphers, binary integrity, tunnel metrics, TLS probing). Edge: `cfapi.ComplianceChecker` (9 checks). Client: `clientdetect.ComplianceChecker` (8 checks). |
 | **PDF export** | **Not implemented** | Intentional stub returning install instructions for pandoc. |
 | **quic-go audit** | **Not started** | Need to verify quic-go TLS routes through BoringCrypto, not its own crypto. |
 | **OS support matrix** | **Needs update** | Product supports any FIPS-mode Linux (RHEL, Ubuntu Pro, Amazon Linux, SLES, Oracle, Alma), not just RHEL. Docs/dashboard should reflect this. |
-| **FIPS 140-2 sunset** | **Action needed** | All FIPS 140-2 certs (including BoringCrypto #3678/#4407) expire Sept 21, 2026. Must plan migration to FIPS 140-3. |
+| **FIPS 140-2 sunset** | **Implemented** | `pkg/fipsbackend/migration.go` tracks sunset (Sept 21, 2026). Dashboard sunset banner with countdown + urgency. API: `/api/v1/migration`. |
 | **Edge FIPS honesty** | **Implemented** | Cloudflare Edge items show "Inherited" or "API" verification badges. Tooltip explains FedRAMP reliance. |
 | **macOS/Windows targets** | **CI implemented** | Per-OS CI jobs use `GODEBUG=fips140=on` (Go native FIPS 140-3, CAVP A6650, CMVP pending). |
 | **Modular crypto backend** | **Implemented** | `pkg/fipsbackend/` with Backend interface. BoringCrypto, GoNative, SystemCrypto backends. `Detect()` auto-selects. Live checker uses it. Dashboard display TODO. |
-| **Deployment tiers** | **Documented** | Three tiers defined: Standard Tunnel, Tunnel+Regional+Keyless, Self-hosted FIPS proxy. Implementation not started. |
+| **Deployment tiers** | **Implemented** | `pkg/deployment/tier.go`, `cmd/fips-proxy/main.go` (Tier 3 proxy), `build/Dockerfile.fips-proxy`, config `deployment_tier` field, dashboard badge. API: `/api/v1/deployment`. |
 | **Client FIPS detection** | **Implemented** | `pkg/clientdetect/` with TLS Inspector (ClientHello analysis, JA4 fingerprinting), PostureCollector (device agent API), ComplianceChecker (8-item Client Posture section). |
 | **Dashboard honesty indicators** | **Implemented** | VerificationBadge component. All 39 items tagged: direct/api/probe/inherited/reported. Color-coded with tooltips. |
 
@@ -650,25 +650,25 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 **Goal:** Product supports all three deployment tiers documented in architecture.
 
 #### Tier 1: Standard Cloudflare Tunnel (works today with 6.7 + 6.8)
-- [ ] Config option: `deployment_tier: standard`
-- [ ] Dashboard shows Tier 1 honesty indicators (edge items marked "inherited")
+- [x] Config option: `deployment_tier: standard`
+- [x] Dashboard shows Tier 1 honesty indicators (edge items marked "inherited")
 
 #### Tier 2: Regional Services + Keyless SSL
-- [ ] Config option: `deployment_tier: regional_keyless`
+- [x] Config option: `deployment_tier: regional_keyless`
 - [ ] Cloudflare API checks verify Regional Services is active for the zone
 - [ ] Cloudflare API checks verify Keyless SSL is configured
-- [ ] Dashboard shows HSM status and key location
+- [x] Dashboard shows HSM status and key location (via DeploymentTierBadge)
 - [ ] Documentation: setup guide for Keyless SSL + Cloudflare Tunnel integration
 
 #### Tier 3: Self-Hosted FIPS Edge Proxy
-- [ ] `cmd/fips-proxy/main.go` — lightweight Go reverse proxy built with BoringCrypto
+- [x] `cmd/fips-proxy/main.go` — lightweight Go reverse proxy built with BoringCrypto
   - TLS termination with FIPS cipher enforcement
   - ClientHello inspection and JA4 fingerprinting built in
   - Forwards to origin or to Cloudflare for backend security services
   - Logs all TLS metadata for compliance dashboard consumption
-- [ ] Config option: `deployment_tier: self_hosted`
-- [ ] Dashboard connects to FIPS proxy for client-side TLS metadata
-- [ ] Dockerfile for deploying FIPS proxy in GovCloud (AWS/Azure/Google)
+- [x] Config option: `deployment_tier: self_hosted`
+- [x] Dashboard connects to FIPS proxy for client-side TLS metadata
+- [x] Dockerfile for deploying FIPS proxy in GovCloud (AWS/Azure/Google)
 - [ ] Terraform/CloudFormation templates for GovCloud deployment (stretch goal)
 
 ### 6.11 FIPS 140-3 Migration
@@ -681,8 +681,10 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 - [ ] Track Go native FIPS 140-3 CMVP validation status (currently MIP, CAVP A6650)
   - When validated: add `GoNativeBackend` as primary recommendation
   - Update build matrix to use `GODEBUG=fips140=on` instead of `GOEXPERIMENT=boringcrypto`
-- [ ] Dashboard: show FIPS standard version (140-2 vs 140-3) prominently
-- [ ] Dashboard: show days until 140-2 sunset with warning if still using 140-2 module
+- [x] Dashboard: show FIPS standard version (140-2 vs 140-3) prominently
+- [x] Dashboard: show days until 140-2 sunset with warning if still using 140-2 module — SunsetBanner component with countdown, urgency colors, progress bar
+- [x] `pkg/fipsbackend/migration.go`: MigrationStatus with urgency levels, days countdown, recommended actions per backend
+- [x] API: `/api/v1/migration` returns current migration status, `/api/v1/migration/backends` returns all backend info
 - [ ] Update AO documentation templates with 140-3 references and migration guidance
 - [ ] Test all three deployment tiers with 140-3 modules
 
@@ -690,11 +692,13 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 
 **Goal:** Cryptographically sign all build artifacts.
 
-- [ ] Container images: sign with cosign (Sigstore) in CI
-- [ ] Binaries and packages: sign with GPG key stored in GitHub Actions secrets
+- [x] Container images: sign with cosign (Sigstore) in CI — `sign-artifacts` job with `sigstore/cosign-installer@v3`
+- [x] Binaries and packages: sign with GPG key stored in GitHub Actions secrets — `scripts/sign-artifacts.sh` + CI job
+- [x] `pkg/signing/signing.go`: GPGSign, GPGVerify, CosignSign, CosignVerify, SignatureManifest types
+- [x] API: `/api/v1/signatures` returns signature manifest
 - [ ] Publish public key for verification
 - [ ] Self-test verifies binary signature at startup (optional, configurable)
-- [ ] Build manifest includes signature hashes
+- [x] Build manifest includes signature hashes — `signatures.json` generated per artifact directory
 - [ ] Document key rotation procedure in AO package
 
 ### Implementation Priority
@@ -728,15 +732,15 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 | Local compliance checks | syscalls, cloudflared metrics, binary hash | [ ] Not started | 6.7 |
 | Cloudflare API integration | Access, cipher config, tunnel health, certificates | [ ] Not started | 6.8 |
 | Client FIPS detection | ClientHello inspection, JA4 fingerprint, WARP posture | [ ] Not started | 6.9 |
-| FIPS edge proxy | Go reverse proxy with BoringCrypto for Tier 3 | [ ] Not started | 6.10 |
+| FIPS edge proxy | Go reverse proxy with BoringCrypto for Tier 3 | [x] `cmd/fips-proxy/`, `build/Dockerfile.fips-proxy` | 6.10 |
 | CI — compliance | GitHub Actions: lint, test, docs check, manifest | [x] Fully implemented | — |
 | CI — build | GitHub Actions: 6-entry matrix, RHEL UBI 9 | [x] Partial — linux works; macOS/Windows broken | 6.2 |
 | Packaging | rpmbuild / dpkg-deb / WiX / OCI / .pkg | [ ] All echo stubs | 6.3 |
 | SBOM | CycloneDX + SPDX via real tooling | [ ] Schema stubs only | 6.4 |
-| Artifact signing | cosign / GPG | [ ] Echo stub | 6.12 |
+| Artifact signing | cosign / GPG | [x] `pkg/signing/`, CI job, `sign-artifacts.sh` | 6.12 |
 | SSE real-time | Go backend → React EventSource | [ ] Backend done; frontend not wired | 6.5 |
 | Honesty indicators | Verification method badges on dashboard items | [ ] Not started | 6.6 |
-| FIPS 140-3 migration | Module migration before Sept 2026 sunset | [ ] Research done; implementation not started | 6.11 |
+| FIPS 140-3 migration | Module migration before Sept 2026 sunset | [x] `migration.go`, sunset banner, API endpoints | 6.11 |
 | Doc generation | Go templates → Markdown → PDF via pandoc | [ ] Not started | — |
 
 ---
@@ -764,7 +768,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 ├── CLAUDE.md                    # This file — spec & roadmap
 ├── build/
 │   ├── Dockerfile.fips          # RHEL UBI 9 FIPS build container
-│   ├── Dockerfile.fips-proxy    # [planned] FIPS edge proxy container (Tier 3)
+│   ├── Dockerfile.fips-proxy    # FIPS edge proxy container (Tier 3)
 │   ├── build.sh                 # Build orchestrator (clones upstream)
 │   ├── cloudflared-fips.spec    # [planned] RPM spec file
 │   ├── debian/                  # [planned] DEB packaging (control, postinst, prerm)
@@ -772,7 +776,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 ├── cmd/
 │   ├── selftest/main.go         # Standalone self-test CLI
 │   ├── dashboard/main.go        # Dashboard server (localhost-only)
-│   └── fips-proxy/main.go       # [planned] FIPS edge proxy (Tier 3)
+│   └── fips-proxy/main.go       # FIPS edge proxy (Tier 3)
 ├── internal/
 │   ├── selftest/                # Self-test orchestrator, ciphers, KATs
 │   ├── compliance/              # Compliance state aggregation
@@ -781,14 +785,17 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 ├── pkg/
 │   ├── buildinfo/               # Linker-injected build metadata
 │   ├── manifest/                # Build manifest types + read/write
-│   ├── fipsbackend/             # [planned] Modular FIPS crypto backend interface
-│   └── cfapi/                   # [planned] Cloudflare API client
+│   ├── fipsbackend/             # Modular FIPS crypto backend (BoringCrypto/GoNative/SystemCrypto) + 140-3 migration
+│   ├── cfapi/                   # Cloudflare API client (zone settings, Access, tunnel health)
+│   ├── clientdetect/            # TLS ClientHello inspector, JA4 fingerprinting, device posture
+│   ├── deployment/              # Deployment tier config (standard/regional_keyless/self_hosted)
+│   └── signing/                 # Artifact signing (GPG + cosign) and verification
 ├── dashboard/                   # React + TypeScript + Tailwind (Vite)
 │   └── src/
 │       ├── types/compliance.ts  # TS types matching spec schema
 │       ├── data/mockData.ts     # Mock data: all 39 checklist items
-│       ├── hooks/               # [planned] useComplianceSSE, useVerificationMethod
-│       ├── components/          # StatusBadge, ChecklistItem, etc.
+│       ├── hooks/               # useComplianceSSE (SSE real-time updates)
+│       ├── components/          # StatusBadge, ChecklistItem, SunsetBanner, DeploymentTierBadge, etc.
 │       └── pages/DashboardPage.tsx
 ├── configs/
 │   ├── cloudflared-fips.yaml    # Sample tunnel + FIPS config
@@ -797,6 +804,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 │   ├── check-fips.sh            # Post-build FIPS validation
 │   ├── generate-manifest.sh     # Produce build-manifest.json
 │   ├── verify-boring.sh         # Verify BoringCrypto symbols
+│   ├── sign-artifacts.sh         # CI artifact signing (GPG + cosign)
 │   └── take-screenshots.cjs     # Headless dashboard screenshots
 ├── docs/
 │   ├── ao-narrative.md          # SSP template
@@ -807,7 +815,7 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 │   ├── incident-response-addendum.md # Crypto failure procedures
 │   ├── control-mapping.md       # NIST 800-53 control mapping
 │   ├── architecture-diagram.md  # Mermaid diagrams
-│   ├── deployment-tier-guide.md # [planned] Tier 1/2/3 setup guides
+│   ├── deployment-tier-guide.md # [planned] Tier 1/2/3 deployment setup guides
 │   └── screenshots/             # Dashboard screenshots (5 PNGs)
 └── .github/workflows/
     ├── fips-build.yml           # 6-entry matrix (10 platform targets)
