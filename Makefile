@@ -11,34 +11,43 @@ LDFLAGS := -s -w -buildid= \
            -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.BuildDate=$(BUILD_DATE) \
            -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.FIPSBuild=true
 
-GOEXPERIMENT ?= boringcrypto
-CGO_ENABLED ?= 1
+# Platform-specific FIPS crypto backend selection
+# Linux:         BoringCrypto via GOEXPERIMENT=boringcrypto (CMVP #4735, FIPS 140-3)
+# macOS/Windows: Go native FIPS module via GODEBUG=fips140=on (CAVP A6650, CMVP pending)
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+  GOEXPERIMENT ?= boringcrypto
+  CGO_ENABLED ?= 1
+  FIPS_ENV = GOEXPERIMENT=$(GOEXPERIMENT) CGO_ENABLED=$(CGO_ENABLED)
+else
+  CGO_ENABLED ?= 0
+  GODEBUG ?= fips140=on
+  FIPS_ENV = CGO_ENABLED=$(CGO_ENABLED) GODEBUG=$(GODEBUG)
+endif
 
 # Build cloudflared with FIPS-validated cryptography
 build-fips:
 	@mkdir -p $(OUTPUT_DIR)
-	GOEXPERIMENT=$(GOEXPERIMENT) CGO_ENABLED=$(CGO_ENABLED) \
-		go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips ./cmd/selftest
+	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips ./cmd/selftest
 
 # Build and run the standalone self-test binary
 selftest:
 	@mkdir -p $(OUTPUT_DIR)
-	GOEXPERIMENT=$(GOEXPERIMENT) CGO_ENABLED=$(CGO_ENABLED) \
-		go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/selftest ./cmd/selftest
+	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/selftest ./cmd/selftest
 	$(OUTPUT_DIR)/selftest
 
-# Run the setup wizard (no build step required)
+# Run the setup wizard
 setup:
-	@go run ./cmd/tui setup
+	@$(FIPS_ENV) go run -ldflags "$(LDFLAGS)" ./cmd/tui setup
 
-# Run the live compliance status monitor (no build step required)
+# Run the live compliance status monitor
 status:
-	@go run ./cmd/tui status
+	@$(FIPS_ENV) go run -ldflags "$(LDFLAGS)" ./cmd/tui status
 
 # Build the TUI binary (optional — for distribution)
 tui:
 	@mkdir -p $(OUTPUT_DIR)
-	go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips-tui ./cmd/tui
+	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips-tui ./cmd/tui
 
 # Start the React dashboard in development mode
 dashboard-dev:
@@ -54,8 +63,7 @@ lint:
 
 # Run Go tests
 test:
-	GOEXPERIMENT=$(GOEXPERIMENT) CGO_ENABLED=$(CGO_ENABLED) \
-		go test -v ./...
+	$(FIPS_ENV) go test -v ./...
 
 # Generate build manifest
 manifest:
