@@ -2,6 +2,8 @@ package wizard
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -18,6 +20,15 @@ type configWrittenMsg struct {
 	err  error
 }
 
+// execDoneMsg is sent when a subprocess launched via tea.ExecProcess finishes.
+type execDoneMsg struct{ err error }
+
+// dashStartedMsg is sent after the background dashboard process starts.
+type dashStartedMsg struct {
+	cmd *exec.Cmd
+	err error
+}
+
 // ReviewPage is page 5: read-only summary, write config on Enter.
 type ReviewPage struct {
 	cfg      *config.Config
@@ -28,6 +39,14 @@ type ReviewPage struct {
 	written  bool
 	writePath string
 	writeErr  error
+
+	// Post-write interactive next steps
+	nextSteps    common.Selector
+	running      string    // action currently exec'd: "selftest" or "dashboard"
+	selftestDone bool      // self-test returned successfully
+	dashRunning  bool      // dashboard background process is alive
+	dashCmd      *exec.Cmd // background dashboard process handle
+	execErr      error     // last error from an exec'd action
 }
 
 // NewReviewPage creates page 5.
@@ -72,12 +91,53 @@ func (p *ReviewPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		} else {
 			p.written = true
 			p.writePath = msg.path
+			p.nextSteps = common.NewSelector("What's next?", []common.SelectorOption{
+				{Value: "selftest", Label: "Run self-test", Description: "Verify FIPS compliance of this build"},
+				{Value: "dashboard", Label: "Launch dashboard & status monitor", Description: "Start dashboard server and open the live monitor"},
+				{Value: "exit", Label: "Exit", Description: "Return to the terminal"},
+			})
+			p.nextSteps.Focus()
 		}
 		return p, nil
+
+	case dashStartedMsg:
+		if msg.err != nil {
+			p.execErr = msg.err
+			p.running = ""
+			return p, nil
+		}
+		p.dashRunning = true
+		p.dashCmd = msg.cmd
+		return p, tea.ExecProcess(statusMonitorCmd(), func(err error) tea.Msg {
+			return execDoneMsg{err: err}
+		})
+
+	case execDoneMsg:
+		if p.running == "selftest" && msg.err == nil {
+			p.selftestDone = true
+		}
+		if msg.err != nil {
+			p.execErr = msg.err
+		} else {
+			p.execErr = nil
+		}
+		p.running = ""
+		p.nextSteps.Focus()
+		return p, nil
+
 	case tea.KeyMsg:
+		if p.written {
+			switch msg.String() {
+			case "enter":
+				return p.dispatchAction()
+			default:
+				p.nextSteps.Update(msg)
+				return p, nil
+			}
+		}
 		switch msg.String() {
 		case "enter":
-			if !p.writing && !p.written {
+			if !p.writing {
 				p.writing = true
 				cfg := p.cfg
 				return p, func() tea.Msg {
@@ -89,9 +149,33 @@ func (p *ReviewPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		}
 	}
 
-	var cmd tea.Cmd
-	p.viewport, cmd = p.viewport.Update(msg)
-	return p, cmd
+	if !p.written {
+		var cmd tea.Cmd
+		p.viewport, cmd = p.viewport.Update(msg)
+		return p, cmd
+	}
+	return p, nil
+}
+
+func (p *ReviewPage) dispatchAction() (Page, tea.Cmd) {
+	p.execErr = nil
+	switch p.nextSteps.Selected() {
+	case "selftest":
+		p.running = "selftest"
+		return p, tea.ExecProcess(selftestCmd(), func(err error) tea.Msg {
+			return execDoneMsg{err: err}
+		})
+	case "dashboard":
+		p.running = "dashboard"
+		configPath := p.writePath
+		return p, func() tea.Msg {
+			cmd, err := startDashboard(configPath)
+			return dashStartedMsg{cmd: cmd, err: err}
+		}
+	case "exit":
+		return p, tea.Quit
+	}
+	return p, nil
 }
 
 func (p *ReviewPage) Validate() bool { return true }
@@ -118,19 +202,63 @@ func (p *ReviewPage) View() string {
 func (p *ReviewPage) renderSuccess() string {
 	var b strings.Builder
 	b.WriteString(common.SuccessStyle.Render("Configuration written successfully!"))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 	b.WriteString(common.LabelStyle.Render("File: "))
 	b.WriteString(p.writePath)
 	b.WriteString("\n\n")
-	b.WriteString(common.LabelStyle.Render("Next steps:"))
-	b.WriteString("\n")
-	b.WriteString("  1. Review the generated config file\n")
-	b.WriteString("  2. Start the dashboard:  go run ./cmd/dashboard\n")
-	b.WriteString("  3. Run the self-test:    go run ./cmd/selftest\n")
-	b.WriteString("  4. Monitor compliance:   go run ./cmd/tui status\n")
-	b.WriteString("\n")
-	b.WriteString(common.HintStyle.Render("Press Ctrl+C to exit"))
+
+	b.WriteString(p.nextSteps.View())
+
+	if p.selftestDone {
+		b.WriteString("\n")
+		b.WriteString(common.SuccessStyle.Render("  Self-test completed successfully"))
+	}
+	if p.dashRunning {
+		b.WriteString("\n")
+		b.WriteString(common.SuccessStyle.Render("  Dashboard running on localhost:8080"))
+	}
+	if p.execErr != nil {
+		b.WriteString("\n")
+		b.WriteString(common.ErrorStyle.Render(fmt.Sprintf("  Error: %v", p.execErr)))
+	}
 	return b.String()
+}
+
+// selftestCmd returns an exec.Cmd for the self-test binary.
+// Prefers a compiled binary on PATH, falls back to go run.
+func selftestCmd() *exec.Cmd {
+	if path, err := exec.LookPath("cloudflared-fips-selftest"); err == nil {
+		return exec.Command(path)
+	}
+	return exec.Command("go", "run", "./cmd/selftest")
+}
+
+// statusMonitorCmd returns an exec.Cmd for the TUI status monitor.
+// Uses the same binary (os.Args[0]) with the "status" subcommand.
+func statusMonitorCmd() *exec.Cmd {
+	return exec.Command(os.Args[0], "status")
+}
+
+// startDashboard launches the dashboard server as a background process.
+// Output is suppressed to avoid interfering with the TUI.
+func startDashboard(configPath string) (*exec.Cmd, error) {
+	var cmd *exec.Cmd
+	if path, err := exec.LookPath("cloudflared-fips-dashboard"); err == nil {
+		cmd = exec.Command(path, "--config", configPath)
+	} else {
+		cmd = exec.Command("go", "run", "./cmd/dashboard", "--config", configPath)
+	}
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", os.DevNull, err)
+	}
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+	if err := cmd.Start(); err != nil {
+		devNull.Close()
+		return nil, err
+	}
+	return cmd, nil
 }
 
 func (p *ReviewPage) renderSummary() string {
