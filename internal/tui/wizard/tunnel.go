@@ -298,11 +298,16 @@ func (p *TunnelPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 				return p, p.triggerLogin()
 			}
 
-			// For create mode on the name field: trigger creation
+			// For create mode on the name field: trigger creation,
+			// but skip if tunnel was already created successfully.
 			if p.currentSource() == tunnelSourceCreate && p.focus == 1 {
-				if msg.String() == "enter" || msg.String() == "tab" {
-					return p, p.triggerCreate()
+				if p.tunnelID.Value() != "" {
+					p.createErr = ""
+					p.focus++
+					p.updateFocus()
+					return p, fieldNav
 				}
+				return p, p.triggerCreate()
 			}
 
 			// Ingress in add mode: don't advance
