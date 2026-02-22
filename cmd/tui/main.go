@@ -68,7 +68,7 @@ func runSetup() {
 
 func runStatus(args []string) {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
-	apiAddr := fs.String("api", "localhost:8080", "Dashboard API address (host:port)")
+	apiAddr := fs.String("api", "127.0.0.1:8080", "Dashboard API address (host:port)")
 	interval := fs.Duration("interval", 5*time.Second, "Poll interval")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(1)
