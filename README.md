@@ -9,7 +9,7 @@ Cloudflare Tunnel (`cloudflared`) uses standard Go crypto by default — it is *
 Three core deliverables:
 
 1. **FIPS-compliant cloudflared binary** using validated cryptographic modules (BoringCrypto on Linux, Go native FIPS 140-3 on macOS/Windows)
-2. **Real-time compliance dashboard** — a 41-item checklist making every security property of the full connection chain transparently visible, with honest verification-method indicators (web GUI + terminal TUI)
+2. **Real-time compliance dashboard** — a 42-item checklist making every security property of the full connection chain transparently visible, with honest verification-method indicators (web GUI + terminal TUI)
 3. **AO authorization documentation toolkit** — templates and auto-generated artifacts supporting an Authorizing Official authorization path
 
 ## Three-Segment Architecture
@@ -127,7 +127,7 @@ The product detects client FIPS capability through:
 
 ```
 ├── build/
-│   ├── Dockerfile.fips              # RHEL UBI 9 FIPS build (BoringCrypto)
+│   ├── Dockerfile.fips              # RHEL UBI 9 CI build container (binary is distro-agnostic)
 │   ├── Dockerfile.fips-proxy        # Tier 3 FIPS proxy container
 │   ├── build.sh                     # Build orchestrator
 │   └── packaging/                   # RPM, DEB, macOS .pkg, Windows MSI (WiX)
@@ -164,6 +164,8 @@ The product detects client FIPS capability through:
 │   ├── generate-sbom.sh             # CycloneDX + SPDX SBOM generation
 │   ├── generate-docs.sh             # AO doc package (PDF/HTML via pandoc)
 │   ├── audit-crypto-deps.sh         # Full dependency tree crypto audit
+│   ├── verify-boring-version.sh     # BoringCrypto 140-2 vs 140-3 detection
+│   ├── verify-tier-fips140-3.sh     # Deployment tier 140-3 readiness test
 │   └── sign-artifacts.sh            # GPG signing + signature manifest
 ├── deploy/
 │   ├── terraform/                   # AWS GovCloud Terraform (ECS Fargate)
@@ -310,13 +312,13 @@ CF_API_TOKEN=your-token \
 
 ## Dashboard
 
-The compliance dashboard displays 41 checklist items across five sections:
+The compliance dashboard displays 42 checklist items across five sections:
 
 - **Client Posture** (8 items) — OS FIPS mode, TLS capabilities, device posture, MDM
 - **Cloudflare Edge** (11 items) — Access policy, cipher restriction, TLS version, HSTS, certificates, Keyless SSL, Regional Services
 - **Tunnel** (12 items) — BoringCrypto active, self-test KATs, cipher suites, binary integrity, tunnel health
 - **Local Service** (4 items) — TLS enabled, cipher negotiation, cert validity, reachability
-- **Build & Supply Chain** (6 items) — SBOM, manifest, reproducibility, signatures, FIPS certs
+- **Build & Supply Chain** (7 items) — SBOM, manifest, reproducibility, signatures, FIPS certs, module sunset status
 
 ### Screenshots
 
@@ -401,7 +403,7 @@ Or with custom options:
 go run ./cmd/tui status --api localhost:8080 --interval 5s
 ```
 
-Polls `GET /api/v1/compliance` and renders all 41 items grouped by section:
+Polls `GET /api/v1/compliance` and renders all 42 items grouped by section:
 
 ```
  cloudflared-fips v0.1.0 | Compliance Status | Updated 12:34:56
@@ -449,10 +451,11 @@ The binary uses FIPS-validated crypto on any Linux (amd64/arm64). For full-stack
 
 | Distro | FIPS 140-3 | FIPS Mode |
 |--------|-----------|-----------|
-| RHEL 9 | Validated | `fips-mode-setup --enable` |
+| RHEL 9 | Validated (#4746, #4857) | `fips-mode-setup --enable` |
 | Ubuntu Pro 22.04 | Validated | `ua enable fips` |
 | Amazon Linux 2023 | Validated | `fips-mode-setup --enable` |
 | SUSE SLES 15 SP6+ | Validated | `fips=1` boot param |
+| Oracle Linux 9 | Validated | `fips-mode-setup --enable` |
 | AlmaLinux 9.2+ | Validated | `fips-mode-setup --enable` |
 
 ## AO Documentation Package
