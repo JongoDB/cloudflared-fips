@@ -14,6 +14,13 @@ import (
 // loginCompleteMsg is sent when the interactive cloudflared login finishes.
 type loginCompleteMsg struct{ err error }
 
+// fieldNavMsg is a no-op message returned when the page handles Tab/Enter
+// internally (field-to-field navigation). The wizard uses non-nil cmd to
+// distinguish "page handled it" from "page is done, advance wizard".
+type fieldNavMsg struct{}
+
+func fieldNav() tea.Msg { return fieldNavMsg{} }
+
 // Async messages for tunnel CLI operations.
 type tunnelsListedMsg struct {
 	tunnels []common.CLITunnel
@@ -280,7 +287,10 @@ func (p *TunnelPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 				cmd := p.onSourceSelected()
 				p.focus = 1
 				p.updateFocus()
-				return p, cmd
+				if cmd != nil {
+					return p, cmd
+				}
+				return p, fieldNav
 			}
 
 			// If login is needed, Enter triggers interactive cloudflared login
@@ -298,17 +308,18 @@ func (p *TunnelPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 			// Ingress in add mode: don't advance
 			lastField := p.fieldCount() - 1
 			if p.focus == lastField && p.ingress.Adding {
-				break
+				return p, fieldNav
 			}
-			// Selectors: enter selects, don't advance
-			if p.isCurrentFieldSelector() {
-				break
+			// Selectors: enter selects within the component, don't advance;
+			// tab advances to the next field.
+			if msg.String() == "enter" && p.isCurrentFieldSelector() {
+				return p, fieldNav
 			}
 
 			if p.focus < lastField {
 				p.focus++
 				p.updateFocus()
-				return p, nil
+				return p, fieldNav
 			}
 			// At last field: wizard will handle page advance
 			return p, nil
@@ -317,7 +328,7 @@ func (p *TunnelPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 			if p.focus > 0 {
 				p.focus--
 				p.updateFocus()
-				return p, nil
+				return p, fieldNav
 			}
 			return p, nil
 		}

@@ -139,20 +139,21 @@ func (p *DeploymentTierPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	if msg, ok := msg.(tea.KeyMsg); ok {
 		switch msg.String() {
 		case "tab", "enter":
-			if p.focus == 0 {
-				// On selector, only tab advances to conditional fields
+			// Tier selector: enter selects within, tab advances
+			if p.focus == 0 && msg.String() == "enter" {
+				return p, fieldNav
 			}
 			if p.focus < p.fieldCount()-1 {
 				p.focus++
 				p.updateFocus()
-				return p, nil
+				return p, fieldNav
 			}
 			return p, nil
 		case "shift+tab":
 			if p.focus > 0 {
 				p.focus--
 				p.updateFocus()
-				return p, nil
+				return p, fieldNav
 			}
 			return p, nil
 		}

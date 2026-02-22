@@ -75,14 +75,14 @@ func (p *FIPSOptionsPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 			if p.focus < fipsFieldCount-1 {
 				p.focus++
 				p.updateFocus()
-				return p, nil
+				return p, fieldNav
 			}
 			return p, nil
 		case "shift+tab":
 			if p.focus > 0 {
 				p.focus--
 				p.updateFocus()
-				return p, nil
+				return p, fieldNav
 			}
 			return p, nil
 		}
