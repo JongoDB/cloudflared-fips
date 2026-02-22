@@ -36,7 +36,7 @@ var katVectors = []KATVector{
 		Input:     "10aa0a348aeb884c3e1588e6c71bab0a",
 		IV:        "113b9785971864c83b01c787",
 		AAD:       "",
-		Expected:  "dd1e72dc4a5e25e8e1af2e8e72e3b0bba44289d3a45e0e",
+		Expected:  "d0313c831f850fda25b5454998058e59cf0ab9169136a778734c33c8718541e6",
 	},
 	// AES-256-GCM — NIST GCM test vector
 	{
@@ -45,7 +45,7 @@ var katVectors = []KATVector{
 		Input:     "000000000000000000000000",
 		IV:        "000000000000000000000000",
 		AAD:       "",
-		Expected:  "84e5aa29df2e50cbeaa39cc6bf2b8cee3f1c52e1f1f305e",
+		Expected:  "89a607e42e930df963b6e3269289dc904021d1cf4445abcc406e8b22",
 	},
 	// SHA-256 — NIST CAVP short message vector
 	{
