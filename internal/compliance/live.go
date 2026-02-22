@@ -128,6 +128,7 @@ func (lc *LiveChecker) RunBuildSupplyChainChecks() Section {
 	section.Items = append(section.Items, lc.checkSignatureValid())
 	section.Items = append(section.Items, lc.checkFIPSCertsListed())
 	section.Items = append(section.Items, lc.checkUpstreamVersion())
+	section.Items = append(section.Items, lc.checkFIPSModuleSunset())
 
 	return section
 }
@@ -763,5 +764,42 @@ func (lc *LiveChecker) checkUpstreamVersion() ChecklistItem {
 	} else {
 		item.Status = StatusWarning
 	}
+	return item
+}
+
+func (lc *LiveChecker) checkFIPSModuleSunset() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "b-7",
+		Name:               "FIPS Module Sunset Status",
+		Severity:           "critical",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks the active FIPS module against the FIPS 140-2 sunset deadline (September 21, 2026)",
+		Why:                "All FIPS 140-2 certificates move to the CMVP Historical List on September 21, 2026. After that, only FIPS 140-3 modules are valid for new federal acquisitions.",
+		Remediation:        "Upgrade to a FIPS 140-3 module: BoringCrypto #4735 (build with Go 1.24+) or Go native FIPS (GODEBUG=fips140=on, CMVP pending).",
+		NISTRef:            "SC-13, SA-11",
+	}
+
+	ms := fipsbackend.GetMigrationStatus()
+
+	switch ms.MigrationUrgency {
+	case "none":
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("Using FIPS %s. No migration required.", ms.CurrentStandard)
+	case "low":
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("Using FIPS %s. Sunset in %d days. %s", ms.CurrentStandard, ms.DaysUntilSunset, ms.RecommendedAction)
+	case "medium":
+		item.Status = StatusWarning
+		item.What = fmt.Sprintf("Using FIPS %s. Sunset in %d days. %s", ms.CurrentStandard, ms.DaysUntilSunset, ms.RecommendedAction)
+	case "high":
+		item.Status = StatusWarning
+		item.What = fmt.Sprintf("Using FIPS %s. Sunset in %d days! %s", ms.CurrentStandard, ms.DaysUntilSunset, ms.RecommendedAction)
+	case "critical":
+		item.Status = StatusFail
+		item.What = ms.RecommendedAction
+	default:
+		item.Status = StatusUnknown
+	}
+
 	return item
 }

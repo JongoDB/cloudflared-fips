@@ -38,6 +38,7 @@ dashboard/dist/
 
 # Build output
 build-output/
+selftest
 tui
 docs/generated/
 

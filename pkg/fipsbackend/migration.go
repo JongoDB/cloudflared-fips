@@ -45,7 +45,11 @@ func GetMigrationStatus() MigrationStatus {
 	switch backend.FIPSStandard() {
 	case "140-2":
 		status.MigrationRequired = true
-		status.AlternativeBackend = "go-native (FIPS 140-3, once CMVP validated)"
+		if GoNativeCMVPValidated {
+			status.AlternativeBackend = "go-native (FIPS 140-3, CMVP validated, cross-platform)"
+		} else {
+			status.AlternativeBackend = "boringcrypto with Go 1.24+ (FIPS 140-3 #4735) or go-native (once CMVP validated)"
+		}
 
 		switch {
 		case daysUntil <= 0:
@@ -105,11 +109,11 @@ func AllBackendMigrationInfo() []BackendMigrationInfo {
 			Name:           "go-native",
 			DisplayName:    "Go Cryptographic Module",
 			FIPS1402Cert:   "n/a",
-			FIPS1403Cert:   "CAVP A6650 (CMVP pending)",
+			FIPS1403Cert:   GoNativeCMVPCert,
 			Platform:       "All (Linux, macOS, Windows)",
 			Status1402:     "n/a",
-			Status1403:     "CAVP validated, CMVP in process",
-			MigrationNotes: "Pure Go, no CGO. Cross-platform. Use GODEBUG=fips140=on. Wait for CMVP validation.",
+			Status1403:     goNativeCMVPStatus(),
+			MigrationNotes: goNativeMigrationNotes(),
 		},
 		{
 			Name:           "systemcrypto",
@@ -134,4 +138,18 @@ type BackendMigrationInfo struct {
 	Status1402     string `json:"status_140_2"`
 	Status1403     string `json:"status_140_3"`
 	MigrationNotes string `json:"migration_notes"`
+}
+
+func goNativeCMVPStatus() string {
+	if GoNativeCMVPValidated {
+		return "CMVP validated"
+	}
+	return "CAVP validated, CMVP in process"
+}
+
+func goNativeMigrationNotes() string {
+	if GoNativeCMVPValidated {
+		return "Recommended: Pure Go, no CGO, cross-platform. Use GODEBUG=fips140=on. CMVP validated — primary choice for new deployments."
+	}
+	return "Pure Go, no CGO. Cross-platform. Use GODEBUG=fips140=on. CMVP pending — monitor https://csrc.nist.gov/projects/cryptographic-module-validation-program/modules-in-process/modules-in-process-list"
 }

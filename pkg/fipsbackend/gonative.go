@@ -5,14 +5,33 @@ import "os"
 // GoNative implements Backend for Go 1.24+ native FIPS 140-3 module.
 // Activated via GODEBUG=fips140=on (or =only for strict mode).
 // Platform: all OS/arch combinations supported by Go.
-// FIPS 140-3: CAVP A6650 — CMVP validation pending as of 2025.
+// FIPS 140-3: CAVP A6650 — CMVP validation pending as of Feb 2026.
+//
+// CMVP tracking: https://csrc.nist.gov/projects/cryptographic-module-validation-program/modules-in-process/modules-in-process-list
+// When the Go Cryptographic Module appears on the validated list, update
+// CMVPCertificate and Validated accordingly.
 type GoNative struct{}
 
-func (g *GoNative) Name() string            { return "go-native" }
-func (g *GoNative) DisplayName() string      { return "Go Cryptographic Module (native)" }
-func (g *GoNative) CMVPCertificate() string  { return "CAVP A6650 (CMVP pending)" }
-func (g *GoNative) FIPSStandard() string     { return "140-3 (pending)" }
-func (g *GoNative) Validated() bool          { return false }
+// GoNativeCMVPValidated controls whether the Go native FIPS module has received
+// CMVP validation. Set to true and update GoNativeCMVPCert when NIST issues the
+// certificate. This is the single place to flip when validation completes.
+var GoNativeCMVPValidated = false
+
+// GoNativeCMVPCert is the CMVP certificate number once validated.
+// Update this when NIST issues the certificate for Go Cryptographic Module.
+var GoNativeCMVPCert = "CAVP A6650 (CMVP pending)"
+
+func (g *GoNative) Name() string           { return "go-native" }
+func (g *GoNative) DisplayName() string     { return "Go Cryptographic Module (native)" }
+func (g *GoNative) CMVPCertificate() string { return GoNativeCMVPCert }
+func (g *GoNative) Validated() bool         { return GoNativeCMVPValidated }
+
+func (g *GoNative) FIPSStandard() string {
+	if GoNativeCMVPValidated {
+		return "140-3"
+	}
+	return "140-3 (pending)"
+}
 
 // Active checks if GODEBUG=fips140 is set to "on" or "only".
 func (g *GoNative) Active() bool {

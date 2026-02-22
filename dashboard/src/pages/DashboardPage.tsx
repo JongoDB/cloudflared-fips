@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import Layout from '../components/Layout'
 import SummaryBar from '../components/SummaryBar'
 import BuildManifestPanel from '../components/BuildManifestPanel'
@@ -9,22 +9,22 @@ import DeploymentTierBadge from '../components/DeploymentTierBadge'
 import FIPSBackendCard from '../components/FIPSBackendCard'
 import { mockSections, mockManifest } from '../data/mockData'
 import { useComplianceSSE } from '../hooks/useComplianceSSE'
+import { useComplianceMigration } from '../hooks/useComplianceMigration'
 import type { ComplianceSummary } from '../types/compliance'
-
-// Migration status — in production, fetched from /api/v1/migration
-const migrationStatus = {
-  sunsetDate: '2026-09-21',
-  currentStandard: '140-2',
-  migrationUrgency: 'medium',
-  recommendedAction:
-    'FIPS 140-2 sunset approaching. Test FIPS 140-3 modules (BoringCrypto #4735 or Go native) in staging.',
-}
-
-// Deployment tier — in production, fetched from /api/v1/deployment
-const deploymentTier = 'standard'
 
 export default function DashboardPage() {
   const [sseEnabled, setSSEEnabled] = useState(false)
+  const [deploymentTier, setDeploymentTier] = useState('standard')
+
+  const migration = useComplianceMigration()
+
+  // Fetch deployment tier from API, fall back to 'standard'
+  useEffect(() => {
+    fetch('/api/v1/deployment')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (data?.tier) setDeploymentTier(data.tier) })
+      .catch(() => {})
+  }, [])
 
   const { sections, sseStatus } = useComplianceSSE({
     enabled: sseEnabled,
@@ -58,10 +58,10 @@ export default function DashboardPage() {
   return (
     <Layout>
       <SunsetBanner
-        sunsetDate={migrationStatus.sunsetDate}
-        currentStandard={migrationStatus.currentStandard}
-        migrationUrgency={migrationStatus.migrationUrgency}
-        recommendedAction={migrationStatus.recommendedAction}
+        sunsetDate={migration.sunset_date}
+        currentStandard={migration.current_standard}
+        migrationUrgency={migration.migration_urgency}
+        recommendedAction={migration.recommended_action}
       />
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">

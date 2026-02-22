@@ -23,7 +23,7 @@
 | **Live compliance checks** | **Implemented** | Local: `LiveChecker` (BoringCrypto, OS FIPS, KATs, ciphers, binary integrity, tunnel metrics, TLS probing). Edge: `cfapi.ComplianceChecker` (11 checks including Keyless SSL + Regional Services). Client: `clientdetect.ComplianceChecker` (8 checks). |
 | **PDF export** | **Implemented** | `scripts/generate-docs.sh` generates PDF via pandoc, falls back to HTML or combined Markdown. |
 | **quic-go audit** | **Complete** | `docs/quic-go-crypto-audit.md`. TLS handshake + AES-GCM via BoringCrypto. ChaCha20 bypass mitigated by cipher restriction. HKDF partial (hash primitives BoringCrypto-backed). Retry fixed nonce = protocol-level FIPS deviation (documented). |
-| **OS support matrix** | **Needs update** | Product supports any FIPS-mode Linux (RHEL, Ubuntu Pro, Amazon Linux, SLES, Oracle, Alma), not just RHEL. Docs/dashboard should reflect this. |
+| **OS support matrix** | **Updated** | Dashboard mock data and docs updated to list all FIPS-mode Linux distros (RHEL, Ubuntu Pro, Amazon Linux, SLES, Oracle, Alma). |
 | **FIPS 140-2 sunset** | **Implemented** | `pkg/fipsbackend/migration.go` tracks sunset (Sept 21, 2026). Dashboard sunset banner with countdown + urgency. API: `/api/v1/migration`. |
 | **Edge FIPS honesty** | **Implemented** | Cloudflare Edge items show "Inherited" or "API" verification badges. Tooltip explains FedRAMP reliance. |
 | **macOS/Windows targets** | **CI implemented** | Per-OS CI jobs use `GODEBUG=fips140=on` (Go native FIPS 140-3, CAVP A6650, CMVP pending). |
@@ -680,15 +680,15 @@ This phase turns the architecture research (Findings 1-7, Deployment Tiers, Cryp
 - [x] Verify BoringCrypto FIPS 140-3 (#4735) works with current `GOEXPERIMENT=boringcrypto` integration — `scripts/verify-boring-version.sh` inspects .syso hashes + binary strings; `checkBoringCryptoVersion()` in selftest detects 140-2 vs 140-3 by Go version (Go 1.24+ = 140-3)
   - Go 1.24+ ships BoringSSL fips-20230428 .syso (CMVP #4735, 140-3)
   - Go 1.22/1.23 ships older .syso (CMVP #4407, 140-2)
-- [ ] Track Go native FIPS 140-3 CMVP validation status (currently MIP, CAVP A6650)
-  - When validated: add `GoNativeBackend` as primary recommendation
+- [x] Track Go native FIPS 140-3 CMVP validation status (currently MIP, CAVP A6650) — `GoNativeCMVPValidated` / `GoNativeCMVPCert` variables in `gonative.go`; single-flip update when NIST issues cert; migration.go dynamically recommends GoNative as primary when validated
+  - When validated: flip `GoNativeCMVPValidated = true` and update `GoNativeCMVPCert`
   - Update build matrix to use `GODEBUG=fips140=on` instead of `GOEXPERIMENT=boringcrypto`
 - [x] Dashboard: show FIPS standard version (140-2 vs 140-3) prominently
 - [x] Dashboard: show days until 140-2 sunset with warning if still using 140-2 module — SunsetBanner component with countdown, urgency colors, progress bar
 - [x] `pkg/fipsbackend/migration.go`: MigrationStatus with urgency levels, days countdown, recommended actions per backend
 - [x] API: `/api/v1/migration` returns current migration status, `/api/v1/migration/backends` returns all backend info
 - [x] Update AO documentation templates with 140-3 references and migration guidance — ao-narrative.md and crypto-module-usage.md updated with 140-3 certs, quic-go audit findings, migration table, key rotation reference
-- [ ] Test all three deployment tiers with 140-3 modules
+- [x] Test all three deployment tiers with 140-3 modules — `scripts/verify-tier-fips140-3.sh` verifies binary FIPS version, CF API config, and proxy binary across all 3 tiers
 
 ### 6.12 Artifact Signing
 
