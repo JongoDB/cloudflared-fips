@@ -43,10 +43,11 @@ type ReviewPage struct {
 	// Post-write interactive next steps
 	nextSteps    common.Selector
 	running      string    // action currently exec'd: "selftest" or "dashboard"
-	selftestDone bool      // self-test returned successfully
+	selftestDone bool      // self-test has been run (pass or fail)
+	selftestErr  error     // nil = all passed, non-nil = failures reported
 	dashRunning  bool      // dashboard background process is alive
 	dashCmd      *exec.Cmd // background dashboard process handle
-	execErr      error     // last error from an exec'd action
+	execErr      error     // last error from a non-selftest exec'd action
 }
 
 // NewReviewPage creates page 5.
@@ -113,10 +114,10 @@ func (p *ReviewPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		})
 
 	case execDoneMsg:
-		if p.running == "selftest" && msg.err == nil {
+		if p.running == "selftest" {
 			p.selftestDone = true
-		}
-		if msg.err != nil {
+			p.selftestErr = msg.err // nil means all tests passed
+		} else if msg.err != nil {
 			p.execErr = msg.err
 		} else {
 			p.execErr = nil
@@ -211,7 +212,11 @@ func (p *ReviewPage) renderSuccess() string {
 
 	if p.selftestDone {
 		b.WriteString("\n")
-		b.WriteString(common.SuccessStyle.Render("  Self-test completed successfully"))
+		if p.selftestErr != nil {
+			b.WriteString(common.WarningStyle.Render("  Self-test completed with failures (expected in dev without BoringCrypto)"))
+		} else {
+			b.WriteString(common.SuccessStyle.Render("  Self-test passed"))
+		}
 	}
 	if p.dashRunning {
 		b.WriteString("\n")
@@ -225,12 +230,17 @@ func (p *ReviewPage) renderSuccess() string {
 }
 
 // selftestCmd returns an exec.Cmd for the self-test binary.
-// Prefers a compiled binary on PATH, falls back to go run.
+// Wraps in a shell that pauses after output so the user can read
+// the results before the TUI alt-screen resumes.
 func selftestCmd() *exec.Cmd {
+	var inner string
 	if path, err := exec.LookPath("cloudflared-fips-selftest"); err == nil {
-		return exec.Command(path)
+		inner = path
+	} else {
+		inner = "go run ./cmd/selftest"
 	}
-	return exec.Command("go", "run", "./cmd/selftest")
+	script := inner + `; rc=$?; echo ""; echo "Press Enter to return to wizard..."; read _; exit $rc`
+	return exec.Command("sh", "-c", script)
 }
 
 // statusMonitorCmd returns an exec.Cmd for the TUI status monitor.
