@@ -355,13 +355,25 @@ func checkCipherSuites() CheckResult {
 	if len(banned) == 0 {
 		result.Status = StatusPass
 		result.Message = fmt.Sprintf("All %d available cipher suites are FIPS-approved", len(suites))
-	} else {
-		result.Status = StatusFail
-		result.Message = fmt.Sprintf("%d non-FIPS cipher suites detected", len(banned))
-		result.Details = strings.Join(banned, ", ")
-		result.Remediation = "Rebuild with GOEXPERIMENT=boringcrypto to restrict cipher suites"
+		return result
 	}
 
+	// With Go native FIPS (GODEBUG=fips140=on), tls.CipherSuites() still
+	// returns the full static list, but non-approved ciphers are rejected at
+	// runtime by the FIPS module. The list is not authoritative.
+	backend := fipsbackend.Detect()
+	if backend != nil && backend.Name() == "go-native" {
+		approved := len(suites) - len(banned)
+		result.Status = StatusPass
+		result.Message = fmt.Sprintf("%d FIPS-approved cipher suites available; %d non-approved listed but blocked at runtime by Go FIPS module", approved, len(banned))
+		result.Details = "Go native FIPS restricts cipher negotiation at runtime. tls.CipherSuites() returns the static list, not the effective set."
+		return result
+	}
+
+	result.Status = StatusFail
+	result.Message = fmt.Sprintf("%d non-FIPS cipher suites detected", len(banned))
+	result.Details = strings.Join(banned, ", ")
+	result.Remediation = "Rebuild with GOEXPERIMENT=boringcrypto to restrict cipher suites"
 	return result
 }
 
