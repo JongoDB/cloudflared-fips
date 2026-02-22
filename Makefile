@@ -12,14 +12,41 @@ LDFLAGS := -s -w -buildid= \
            -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.FIPSBuild=true
 
 # Platform-specific FIPS crypto backend selection
-# Linux:         BoringCrypto via GOEXPERIMENT=boringcrypto (CMVP #4735, FIPS 140-3)
-# macOS/Windows: Go native FIPS module via GODEBUG=fips140=on (CAVP A6650, CMVP pending)
+# BoringCrypto (CMVP #4735, FIPS 140-3): Linux only, requires CGO and a C compiler
+#   matching the Go target architecture.
+# Go native FIPS (CAVP A6650, CMVP pending): all platforms, no CGO required.
+#
+# We use BoringCrypto on Linux when the host machine architecture matches GOARCH
+# (so the native C compiler can produce the right object code). Otherwise we fall
+# back to Go native FIPS, which works everywhere without CGO.
 UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Linux)
-  GOEXPERIMENT ?= boringcrypto
-  CGO_ENABLED ?= 1
-  FIPS_ENV = GOEXPERIMENT=$(GOEXPERIMENT) CGO_ENABLED=$(CGO_ENABLED)
+UNAME_M := $(shell uname -m)
+GOARCH  := $(shell go env GOARCH 2>/dev/null)
+
+# Map uname -m to Go arch names
+ifeq ($(UNAME_M),x86_64)
+  HOST_GOARCH := amd64
+else ifeq ($(UNAME_M),aarch64)
+  HOST_GOARCH := arm64
 else
+  HOST_GOARCH := $(UNAME_M)
+endif
+
+# Select FIPS backend
+ifeq ($(UNAME_S),Linux)
+  ifeq ($(HOST_GOARCH),$(GOARCH))
+    # Native Linux — host arch matches Go target, CGO works
+    GOEXPERIMENT ?= boringcrypto
+    CGO_ENABLED ?= 1
+    FIPS_ENV = GOEXPERIMENT=$(GOEXPERIMENT) CGO_ENABLED=$(CGO_ENABLED)
+  else
+    # Cross-arch Linux (e.g. arm64 host with amd64 Go) — CGO won't work
+    CGO_ENABLED ?= 0
+    GODEBUG ?= fips140=on
+    FIPS_ENV = CGO_ENABLED=$(CGO_ENABLED) GODEBUG=$(GODEBUG)
+  endif
+else
+  # macOS / Windows — BoringCrypto not available, use Go native FIPS
   CGO_ENABLED ?= 0
   GODEBUG ?= fips140=on
   FIPS_ENV = CGO_ENABLED=$(CGO_ENABLED) GODEBUG=$(GODEBUG)
@@ -34,7 +61,7 @@ build-fips:
 selftest:
 	@mkdir -p $(OUTPUT_DIR)
 	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/selftest ./cmd/selftest
-	$(OUTPUT_DIR)/selftest
+	$(FIPS_ENV) $(OUTPUT_DIR)/selftest
 
 # Run the setup wizard
 setup:
