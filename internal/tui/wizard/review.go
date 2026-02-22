@@ -250,7 +250,9 @@ func statusMonitorCmd() *exec.Cmd {
 }
 
 // startDashboard launches the dashboard server as a background process.
-// Output is suppressed to avoid interfering with the TUI.
+// Output is suppressed to avoid interfering with the TUI. FIPS env vars
+// from the parent process are explicitly propagated so the dashboard's
+// LiveChecker detects the active FIPS backend.
 func startDashboard(configPath string) (*exec.Cmd, error) {
 	var cmd *exec.Cmd
 	if path, err := exec.LookPath("cloudflared-fips-dashboard"); err == nil {
@@ -258,6 +260,23 @@ func startDashboard(configPath string) (*exec.Cmd, error) {
 	} else {
 		cmd = exec.Command("go", "run", "./cmd/dashboard", "--config", configPath)
 	}
+	// Ensure FIPS env vars are propagated. When cmd.Env is nil Go inherits
+	// the parent env, but set it explicitly so GODEBUG/GOEXPERIMENT are
+	// guaranteed present even if the OS trims env on fork.
+	env := os.Environ()
+	hasFIPS := false
+	for _, e := range env {
+		if strings.HasPrefix(e, "GODEBUG=") || strings.HasPrefix(e, "GOEXPERIMENT=") {
+			hasFIPS = true
+			break
+		}
+	}
+	if !hasFIPS {
+		// Fallback: parent wasn't started with FIPS flags — use Go native FIPS.
+		env = append(env, "GODEBUG=fips140=on")
+	}
+	cmd.Env = env
+
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", os.DevNull, err)

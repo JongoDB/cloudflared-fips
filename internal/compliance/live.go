@@ -138,20 +138,19 @@ func (lc *LiveChecker) checkBoringCryptoActive() ChecklistItem {
 	backend := fipsbackend.Detect()
 	item := ChecklistItem{
 		ID:                 "t-1",
-		Name:               "BoringCrypto Active",
+		Name:               "FIPS Crypto Backend Active",
 		Severity:           "critical",
 		VerificationMethod: VerifyDirect,
-		What:               "Confirms BoringCrypto is the active crypto provider in the cloudflared binary, not standard Go crypto",
-		Why:                "BoringCrypto (FIPS 140-2 validated) must replace Go's standard crypto library. Without it, no cryptographic operations are FIPS-validated.",
-		Remediation:        "Rebuild with GOEXPERIMENT=boringcrypto CGO_ENABLED=1. Run verify-boring.sh to confirm symbols.",
+		What:               "Confirms a FIPS-validated crypto provider is active (BoringCrypto on Linux, Go native FIPS on macOS/Windows)",
+		Why:                "A FIPS-validated crypto module must replace Go's standard crypto library. Without it, no cryptographic operations are FIPS-validated.",
+		Remediation:        "Build with GOEXPERIMENT=boringcrypto (Linux) or GODEBUG=fips140=on (cross-platform).",
 		NISTRef:            "SC-13, IA-7",
 	}
 
-	if backend != nil && backend.Name() == "boringcrypto" {
+	if backend != nil && backend.Active() {
 		item.Status = StatusPass
-	} else if backend != nil {
-		item.Status = StatusWarning
-		item.What = fmt.Sprintf("Active FIPS backend: %s (not BoringCrypto)", backend.DisplayName())
+		item.What = fmt.Sprintf("Active FIPS backend: %s (CMVP: %s, Standard: %s)",
+			backend.DisplayName(), backend.CMVPCertificate(), backend.FIPSStandard())
 	} else {
 		item.Status = StatusFail
 	}
@@ -272,18 +271,36 @@ func (lc *LiveChecker) checkCipherSuites() ChecklistItem {
 		VerificationMethod: VerifyDirect,
 		What:               "Verifies only FIPS-approved cipher suites are available in the Go TLS stack",
 		Why:                "Non-FIPS ciphers (RC4, DES, 3DES) must be absent. NIST SP 800-52 Rev 2 defines the approved set.",
-		Remediation:        "Rebuild with GOEXPERIMENT=boringcrypto to restrict cipher suites automatically.",
+		Remediation:        "Build with GOEXPERIMENT=boringcrypto (Linux) or GODEBUG=fips140=on (cross-platform).",
 		NISTRef:            "SC-13, SC-8",
 	}
 
 	suites := tls.CipherSuites()
+	var banned int
 	for _, s := range suites {
 		if !selftest.IsFIPSApproved(s.ID) {
-			item.Status = StatusFail
-			return item
+			banned++
 		}
 	}
-	item.Status = StatusPass
+
+	if banned == 0 {
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("All %d cipher suites are FIPS-approved", len(suites))
+		return item
+	}
+
+	// With Go native FIPS, the static list still includes non-FIPS ciphers
+	// but they are blocked at runtime by the FIPS module.
+	backend := fipsbackend.Detect()
+	if backend != nil && backend.Name() == "go-native" {
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("%d FIPS-approved suites available; %d non-approved blocked at runtime by Go FIPS module",
+			len(suites)-banned, banned)
+		return item
+	}
+
+	item.Status = StatusFail
+	item.What = fmt.Sprintf("%d non-FIPS cipher suites detected", banned)
 	return item
 }
 

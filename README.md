@@ -193,77 +193,89 @@ The product detects client FIPS capability through:
 
 ## Quick Start
 
-### Configure with the setup wizard
+### 1. Configure with the setup wizard
 
 ```bash
 make setup
 ```
 
-Walks through 5 pages: tunnel config, dashboard wiring, deployment tier, FIPS options, review — then writes `configs/cloudflared-fips.yaml`.
+Walks through 5 pages: tunnel config, dashboard wiring, deployment tier, FIPS options, review — then writes `configs/cloudflared-fips.yaml`. After writing, an interactive menu lets you run the self-test, launch the dashboard, or exit.
 
-### Run the compliance dashboard (web)
+The Makefile auto-selects the right FIPS backend per platform:
+- **Linux:** `GOEXPERIMENT=boringcrypto` (BoringCrypto, CMVP #4735)
+- **macOS/Windows:** `GODEBUG=fips140=on` (Go native FIPS 140-3, CAVP A6650)
 
-```bash
-cd dashboard
-npm install
-npm run dev
-```
-
-### Monitor compliance from the terminal
-
-```bash
-make status
-```
-
-Polls the dashboard API and renders all 41 checklist items with pass/warn/fail in a scrollable terminal view. Useful for headless/SSH environments.
-
-### Build the FIPS binary
-
-```bash
-make build-fips
-```
-
-### Build the TUI
-
-```bash
-make tui
-```
-
-### Run self-tests
+### 2. Run the self-test
 
 ```bash
 make selftest
 ```
 
-### Generate build manifest
+Verifies the FIPS crypto backend is active, runs KATs against NIST CAVP vectors (AES-GCM, SHA-256/384, HMAC, ECDSA, RSA), and validates cipher suites. All checks should pass on any platform when run via `make`.
+
+### 3. Start the dashboard API server
 
 ```bash
+make dashboard
+```
+
+Starts the compliance API at `http://127.0.0.1:8080`. This must be running for the status monitor to work. The dashboard runs with FIPS flags so its LiveChecker detects the active crypto backend.
+
+Useful flags (append after `--`):
+```bash
+make dashboard -- --config configs/cloudflared-fips.yaml \
+  --metrics-addr localhost:2000 \
+  --ingress-targets localhost:443
+```
+
+### 4. Monitor compliance from the terminal
+
+In a second terminal:
+
+```bash
+make status
+```
+
+Polls the dashboard API and renders all checklist items with pass/warn/fail. Keys: `q` quit, `r` refresh, arrows scroll.
+
+### What to expect in dev (no real tunnel)
+
+| Section | Likely result | Why |
+|---------|--------------|-----|
+| **Tunnel** | ~8/12 pass | FIPS backend, cipher suites, self-test, TLS version, key exchange, cert, config drift pass. Tunnel protocol/redundancy need a running cloudflared with `--metrics`. Binary integrity needs a build manifest with `binary_sha256`. |
+| **Local Service** | 0/4 unknown | Need `--ingress-targets` pointing at a real local service with TLS |
+| **Build & Supply Chain** | 3-5/6 pass | Run `make manifest` and `make sbom` to pick up more. Artifact signing needs `make build-fips` + GPG key. |
+| **Client Posture** | 1/8 pass | TLS version check passes. Rest need real clients connecting via WARP/MDM agents. |
+
+### Getting more checks to pass
+
+```bash
+# Generate build artifacts (picks up SBOM + manifest checks)
 make manifest
-```
-
-### Build Docker image
-
-```bash
-make docker-build
-```
-
-### Generate SBOMs
-
-```bash
 make sbom
+
+# Start with config + local service probing
+make dashboard -- --config configs/cloudflared-fips.yaml \
+  --ingress-targets localhost:8443
+
+# If you have a Cloudflare API token (enables all Edge section checks):
+CF_API_TOKEN=your-token CF_ZONE_ID=your-zone make dashboard
 ```
 
-### Run crypto dependency audit
+### Other commands
 
-```bash
-make crypto-audit
-```
-
-### Generate AO documentation package
-
-```bash
-make docs
-```
+| Command | Description |
+|---------|-------------|
+| `make build-fips` | Build the FIPS binary to `build-output/` |
+| `make tui` | Build the TUI binary for distribution |
+| `make dashboard-dev` | Start the React web dashboard (dev mode, needs `npm install` first) |
+| `make dashboard-build` | Build the React dashboard for production |
+| `make docker-build` | Build the FIPS Docker image (RHEL UBI 9) |
+| `make docs` | Generate AO documentation package (PDF/HTML) |
+| `make crypto-audit` | Run full crypto dependency audit |
+| `make test` | Run Go tests with FIPS flags |
+| `make lint` | Run Go linters |
+| `make clean` | Remove build artifacts |
 
 ## Dashboard
 
