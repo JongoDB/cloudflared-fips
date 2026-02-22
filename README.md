@@ -258,8 +258,39 @@ make sbom
 make dashboard -- --config configs/cloudflared-fips.yaml \
   --ingress-targets localhost:8443
 
-# If you have a Cloudflare API token (enables all Edge section checks):
-CF_API_TOKEN=your-token CF_ZONE_ID=your-zone make dashboard
+# With Cloudflare API token (enables all Edge section checks):
+CF_API_TOKEN=your-token CF_ZONE_ID=your-zone CF_ACCOUNT_ID=your-acct \
+  CF_TUNNEL_ID=your-tunnel make dashboard
+```
+
+### Enabling Cloudflare Edge checks
+
+The dashboard's Cloudflare Edge section (11 checks: Access policy, cipher restriction, min TLS version, HSTS, edge certificates, tunnel health, Keyless SSL, Regional Services) requires a Cloudflare API token.
+
+**Create an API token:**
+
+1. Go to [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens)
+2. Click **Create Token** → **Custom token**
+3. Add these permissions:
+   - **Zone > Zone Settings > Read** — cipher config, TLS version, HSTS
+   - **Zone > SSL and Certificates > Read** — edge certificate checks
+   - **Zone > Access: Apps and Policies > Read** — Access policy checks
+   - **Account > Cloudflare Tunnel > Read** — tunnel health
+4. Scope to your specific zone and account
+5. Click **Continue to summary** → **Create Token**
+
+**Find your Zone ID and Account ID:**
+
+Both are on the right sidebar of your zone's **Overview** page in the [Cloudflare dashboard](https://dash.cloudflare.com).
+
+**Start the dashboard with API integration:**
+
+```bash
+CF_API_TOKEN=your-token \
+  CF_ZONE_ID=your-zone-id \
+  CF_ACCOUNT_ID=your-account-id \
+  CF_TUNNEL_ID=your-tunnel-id \
+  make dashboard
 ```
 
 ### Other commands
