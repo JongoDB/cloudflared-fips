@@ -136,13 +136,26 @@ phase2_build() {
     export PATH="/usr/local/go/bin:$PATH"
     log "Go version: $(go version)"
 
-    # --- Node.js (for dashboard frontend build) ---
-    if command -v node &>/dev/null; then
+    # --- Node.js 20 LTS (Vite/Tailwind require Node 20+; RHEL ships v16) ---
+    NODE_VERSION="20.19.0"
+    if command -v node &>/dev/null && node --version 2>/dev/null | grep -qE '^v(2[0-9]|[3-9][0-9])\.'; then
         log "Node.js already installed: $(node --version)"
     else
-        log "Installing Node.js..."
-        dnf install -y nodejs npm
+        log "Installing Node.js ${NODE_VERSION} (${ARCH})..."
+        # Remove old RHEL node if present
+        dnf remove -y nodejs npm 2>/dev/null || true
+        curl -sLO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+        rm -rf /usr/local/node
+        mkdir -p /usr/local/node
+        tar -C /usr/local/node --strip-components=1 -xJf "node-v${NODE_VERSION}-linux-x64.tar.xz"
+        rm -f "node-v${NODE_VERSION}-linux-x64.tar.xz"
+        # Symlink so node/npm are on PATH
+        ln -sf /usr/local/node/bin/node /usr/local/bin/node
+        ln -sf /usr/local/node/bin/npm /usr/local/bin/npm
+        ln -sf /usr/local/node/bin/npx /usr/local/bin/npx
     fi
+    export PATH="/usr/local/node/bin:$PATH"
+    log "Node.js version: $(node --version)"
 
     # --- Clone or update repo ---
     if [[ -d "${INSTALL_DIR}/.git" ]]; then
