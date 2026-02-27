@@ -461,6 +461,9 @@ func TestDetectInfoReturnsNonePlaceholder(t *testing.T) {
 }
 
 func TestDetectReturnsGoNativeWhenGODEBUGSet(t *testing.T) {
+	if isBoringCryptoActive() {
+		t.Skip("BoringCrypto is active — it takes priority over GoNative")
+	}
 	t.Setenv("GODEBUG", "fips140=on")
 	b := Detect()
 	if b == nil {
@@ -472,6 +475,9 @@ func TestDetectReturnsGoNativeWhenGODEBUGSet(t *testing.T) {
 }
 
 func TestDetectInfoReturnsGoNativeWhenGODEBUGSet(t *testing.T) {
+	if isBoringCryptoActive() {
+		t.Skip("BoringCrypto is active — it takes priority over GoNative")
+	}
 	t.Setenv("GODEBUG", "fips140=on")
 	info := DetectInfo()
 	if info.Name != "go-native" {
@@ -534,6 +540,9 @@ func TestGetMigrationStatusNoBackend(t *testing.T) {
 }
 
 func TestGetMigrationStatusGoNativePending(t *testing.T) {
+	if isBoringCryptoActive() {
+		t.Skip("BoringCrypto is active — Detect() returns BoringCrypto, not GoNative")
+	}
 	origValidated := GoNativeCMVPValidated
 	t.Cleanup(func() { GoNativeCMVPValidated = origValidated })
 	GoNativeCMVPValidated = false

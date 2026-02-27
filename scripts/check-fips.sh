@@ -20,32 +20,39 @@ if [[ ! -x "${BINARY}" ]]; then
     chmod +x "${BINARY}"
 fi
 
-# Check 2: BoringCrypto symbols present
-echo "--- Checking BoringCrypto symbols ---"
+# Check 2: BoringCrypto present (build info or symbols)
+echo "--- Checking BoringCrypto ---"
+BORING_FOUND=false
+# Primary: go version -m reads embedded build info (works on stripped binaries)
 if command -v go &>/dev/null; then
-    if go tool nm "${BINARY}" 2>/dev/null | grep -q '_Cfunc__goboringcrypto_'; then
-        SYMBOL_COUNT=$(go tool nm "${BINARY}" 2>/dev/null | grep -c '_Cfunc__goboringcrypto_' || true)
-        echo "[PASS] Found ${SYMBOL_COUNT} BoringCrypto symbols"
-    else
-        echo "[FAIL] No BoringCrypto symbols found"
-        ERRORS=$((ERRORS + 1))
+    BUILD_INFO=$(go version -m "${BINARY}" 2>/dev/null || true)
+    if echo "${BUILD_INFO}" | grep -q 'GOEXPERIMENT=boringcrypto'; then
+        echo "[PASS] Binary built with GOEXPERIMENT=boringcrypto (via build info)"
+        BORING_FOUND=true
     fi
-elif command -v objdump &>/dev/null; then
-    if objdump -t "${BINARY}" 2>/dev/null | grep -q 'goboringcrypto'; then
+fi
+# Fallback: symbol table inspection (requires unstripped binary)
+if [[ "${BORING_FOUND}" == "false" ]]; then
+    if command -v go &>/dev/null; then
+        if go tool nm "${BINARY}" 2>/dev/null | grep -q '_Cfunc__goboringcrypto_'; then
+            SYMBOL_COUNT=$(go tool nm "${BINARY}" 2>/dev/null | grep -c '_Cfunc__goboringcrypto_' || true)
+            echo "[PASS] Found ${SYMBOL_COUNT} BoringCrypto symbols"
+            BORING_FOUND=true
+        fi
+    fi
+fi
+if [[ "${BORING_FOUND}" == "false" ]]; then
+    if command -v objdump &>/dev/null && objdump -t "${BINARY}" 2>/dev/null | grep -q 'goboringcrypto'; then
         echo "[PASS] BoringCrypto symbols found (via objdump)"
-    else
-        echo "[FAIL] No BoringCrypto symbols found"
-        ERRORS=$((ERRORS + 1))
-    fi
-elif command -v nm &>/dev/null; then
-    if nm "${BINARY}" 2>/dev/null | grep -q 'goboringcrypto'; then
+        BORING_FOUND=true
+    elif command -v nm &>/dev/null && nm "${BINARY}" 2>/dev/null | grep -q 'goboringcrypto'; then
         echo "[PASS] BoringCrypto symbols found (via nm)"
-    else
-        echo "[FAIL] No BoringCrypto symbols found"
-        ERRORS=$((ERRORS + 1))
+        BORING_FOUND=true
     fi
-else
-    echo "[SKIP] No symbol inspection tool available (go, objdump, nm)"
+fi
+if [[ "${BORING_FOUND}" == "false" ]]; then
+    echo "[FAIL] No BoringCrypto detected (checked build info and symbol tables)"
+    ERRORS=$((ERRORS + 1))
 fi
 
 # Check 3: No banned ciphers in strings

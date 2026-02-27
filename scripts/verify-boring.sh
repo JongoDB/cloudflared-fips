@@ -16,8 +16,25 @@ fi
 
 FOUND=false
 
-# Method 1: go tool nm
+# Method 0 (preferred): go version -m — reads embedded build info, works on stripped binaries
 if command -v go &>/dev/null; then
+    echo "--- Using go version -m (build info) ---"
+    BUILD_INFO=$(go version -m "${BINARY}" 2>/dev/null || true)
+    if echo "${BUILD_INFO}" | grep -q 'GOEXPERIMENT=boringcrypto'; then
+        echo "[PASS] Binary built with GOEXPERIMENT=boringcrypto (via build info)"
+        if echo "${BUILD_INFO}" | grep -q 'X:boringcrypto'; then
+            echo "[PASS] Go runtime confirms BoringCrypto active (X:boringcrypto)"
+        fi
+        CGO_LINE=$(echo "${BUILD_INFO}" | grep 'CGO_ENABLED' || true)
+        if [[ -n "${CGO_LINE}" ]]; then
+            echo "[INFO] ${CGO_LINE}"
+        fi
+        FOUND=true
+    fi
+fi
+
+# Method 1: go tool nm (requires unstripped binary)
+if [[ "${FOUND}" == "false" ]] && command -v go &>/dev/null; then
     echo "--- Using go tool nm ---"
     SYMBOLS=$(go tool nm "${BINARY}" 2>/dev/null | grep '_Cfunc__goboringcrypto_' || true)
     if [[ -n "${SYMBOLS}" ]]; then
@@ -28,7 +45,7 @@ if command -v go &>/dev/null; then
         echo "${SYMBOLS}" | head -20
         FOUND=true
     else
-        echo "[INFO] No symbols found via go tool nm"
+        echo "[INFO] No symbols found via go tool nm (binary may be stripped)"
     fi
 fi
 
@@ -41,7 +58,7 @@ if [[ "${FOUND}" == "false" ]] && command -v objdump &>/dev/null; then
         echo "[PASS] Found ${COUNT} BoringCrypto symbols via objdump"
         FOUND=true
     else
-        echo "[INFO] No symbols found via objdump"
+        echo "[INFO] No symbols found via objdump (binary may be stripped)"
     fi
 fi
 
@@ -54,7 +71,7 @@ if [[ "${FOUND}" == "false" ]] && command -v nm &>/dev/null; then
         echo "[PASS] Found ${COUNT} BoringCrypto symbols via nm"
         FOUND=true
     else
-        echo "[INFO] No symbols found via nm"
+        echo "[INFO] No symbols found via nm (binary may be stripped)"
     fi
 fi
 
