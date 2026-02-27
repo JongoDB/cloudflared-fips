@@ -42,7 +42,7 @@ func (h *Handler) HandleManifest(w http.ResponseWriter, r *http.Request) {
 	m, err := manifest.ReadManifest(h.ManifestPath)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": "failed to read manifest: " + err.Error(),
+			"error": "unable to load build manifest",
 		})
 		return
 	}
@@ -78,23 +78,21 @@ func (h *Handler) HandleExport(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", "attachment; filename=compliance-report.json")
 		writeJSON(w, http.StatusOK, report)
 	case "pdf":
-		// PDF generation requires pandoc on the host.
-		// In production, render Markdown from the report and pipe through pandoc.
 		writeJSON(w, http.StatusNotImplemented, map[string]string{
 			"error":   "PDF export requires pandoc on the host",
 			"install": "dnf install -y pandoc (RHEL) or brew install pandoc (macOS)",
 		})
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error":   "unsupported format: " + format,
+			"error":   "unsupported format",
 			"formats": "json, pdf",
 		})
 	}
 }
 
 // HandleSSE provides a Server-Sent Events stream for real-time compliance updates.
-// The dashboard frontend can connect to this endpoint to receive live updates
-// without polling.
+// The dashboard frontend connects to this endpoint to receive live updates
+// without polling. Properly handles client disconnects via request context.
 func (h *Handler) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -105,28 +103,53 @@ func (h *Handler) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering
 
 	// Send initial compliance state
-	report := h.Checker.GenerateReport()
-	data, _ := json.Marshal(report)
-	fmt.Fprintf(w, "event: compliance\ndata: %s\n\n", data)
-	flusher.Flush()
+	if err := writeSSEEvent(w, flusher, "compliance", h.Checker.GenerateReport()); err != nil {
+		return // Client disconnected
+	}
 
 	// Send periodic updates (every 30 seconds)
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
+	ctx := r.Context()
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			report := h.Checker.GenerateReport()
-			data, _ := json.Marshal(report)
-			fmt.Fprintf(w, "event: compliance\ndata: %s\n\n", data)
-			flusher.Flush()
+			if err := writeSSEEvent(w, flusher, "compliance", h.Checker.GenerateReport()); err != nil {
+				return // Client disconnected or write error
+			}
 		}
 	}
+}
+
+// writeSSEEvent marshals data and writes it as an SSE event. Returns an error
+// if the write fails (e.g., client disconnected).
+func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, event string, data interface{}) error {
+	buf, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, buf); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return nil
+}
+
+// SecurityHeaders wraps an http.Handler with standard security response headers.
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

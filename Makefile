@@ -1,4 +1,8 @@
-.PHONY: build-fips selftest setup status dashboard tui dashboard-dev dashboard-build lint test manifest docker-build docs sbom crypto-audit clean
+.PHONY: all build-all selftest-bin dashboard-bin tui-bin fips-proxy-bin \
+       selftest setup status dashboard tui fips-proxy \
+       dashboard-dev dashboard-build dashboard-embed \
+       lint test test-cover vet check \
+       manifest docker-build docs sbom crypto-audit clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -52,16 +56,44 @@ else
   FIPS_ENV = CGO_ENABLED=$(CGO_ENABLED) GODEBUG=$(GODEBUG)
 endif
 
-# Build cloudflared with FIPS-validated cryptography
-build-fips:
-	@mkdir -p $(OUTPUT_DIR)
-	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips ./cmd/selftest
+# ──────────────────────────────────────────────────────────────
+# Build targets — produce all project binaries with FIPS crypto
+# ──────────────────────────────────────────────────────────────
 
-# Build and run the standalone self-test binary
-selftest:
+# Build all project binaries
+all: build-all
+
+build-all: selftest-bin dashboard-bin tui-bin fips-proxy-bin
+	@echo "All binaries built in $(OUTPUT_DIR)/"
+	@ls -lh $(OUTPUT_DIR)/
+
+# Self-test CLI binary
+selftest-bin:
 	@mkdir -p $(OUTPUT_DIR)
-	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/selftest ./cmd/selftest
-	$(FIPS_ENV) $(OUTPUT_DIR)/selftest
+	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips-selftest ./cmd/selftest
+
+# Dashboard server binary (serves React frontend + compliance API)
+dashboard-bin:
+	@mkdir -p $(OUTPUT_DIR)
+	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips-dashboard ./cmd/dashboard
+
+# TUI binary (setup wizard + live status monitor)
+tui-bin:
+	@mkdir -p $(OUTPUT_DIR)
+	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips-tui ./cmd/tui
+
+# FIPS edge proxy binary (Tier 3 self-hosted)
+fips-proxy-bin:
+	@mkdir -p $(OUTPUT_DIR)
+	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips-proxy ./cmd/fips-proxy
+
+# ──────────────────────────────────────────────────────
+# Run targets — build and execute in one step
+# ──────────────────────────────────────────────────────
+
+# Build and run the self-test suite
+selftest: selftest-bin
+	$(OUTPUT_DIR)/cloudflared-fips-selftest
 
 # Run the setup wizard
 setup:
@@ -75,10 +107,15 @@ status:
 dashboard:
 	@$(FIPS_ENV) go run -ldflags "$(LDFLAGS)" ./cmd/dashboard
 
-# Build the TUI binary (optional — for distribution)
-tui:
-	@mkdir -p $(OUTPUT_DIR)
-	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips-tui ./cmd/tui
+# Build the TUI binary (alias for tui-bin)
+tui: tui-bin
+
+# Build the FIPS proxy binary (alias for fips-proxy-bin)
+fips-proxy: fips-proxy-bin
+
+# ──────────────────────────────────────────────────────
+# Frontend targets
+# ──────────────────────────────────────────────────────
 
 # Start the React dashboard in development mode
 dashboard-dev:
@@ -88,13 +125,50 @@ dashboard-dev:
 dashboard-build:
 	cd dashboard && npm run build
 
+# Build frontend, copy to embed dir, then rebuild dashboard binary
+dashboard-embed: dashboard-build
+	@rm -rf internal/dashboard/static
+	@cp -r dashboard/dist internal/dashboard/static
+	@echo "Copied dashboard/dist -> internal/dashboard/static for embedding"
+	@$(MAKE) dashboard-bin
+
+# ──────────────────────────────────────────────────────
+# Quality targets
+# ──────────────────────────────────────────────────────
+
 # Run Go linters
 lint:
 	golangci-lint run ./...
 
-# Run Go tests
+# Run Go vet
+vet:
+	$(FIPS_ENV) go vet ./...
+
+# Run all Go tests
 test:
+	$(FIPS_ENV) go test ./...
+
+# Run tests with verbose output
+test-verbose:
 	$(FIPS_ENV) go test -v ./...
+
+# Run tests with coverage report
+test-cover:
+	@mkdir -p $(OUTPUT_DIR)
+	$(FIPS_ENV) go test -coverprofile=$(OUTPUT_DIR)/coverage.out ./...
+	go tool cover -func=$(OUTPUT_DIR)/coverage.out
+	@echo "HTML report: go tool cover -html=$(OUTPUT_DIR)/coverage.out"
+
+# Run Puppeteer E2E tests for the dashboard
+test-e2e:
+	cd dashboard && npm run test:e2e
+
+# Run all quality checks (vet + test)
+check: vet test
+
+# ──────────────────────────────────────────────────────
+# Artifact generation
+# ──────────────────────────────────────────────────────
 
 # Generate build manifest
 manifest:
@@ -119,8 +193,11 @@ sbom:
 crypto-audit:
 	./scripts/audit-crypto-deps.sh upstream-cloudflared $(OUTPUT_DIR)/crypto-audit-full.json
 
+# ──────────────────────────────────────────────────────
+# Clean
+# ──────────────────────────────────────────────────────
+
 # Clean build artifacts
 clean:
 	rm -rf $(OUTPUT_DIR)
 	rm -rf dashboard/dist
-	rm -rf dashboard/node_modules

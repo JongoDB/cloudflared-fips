@@ -63,14 +63,14 @@ export default function DashboardPage() {
         migrationUrgency={migration.migration_urgency}
         recommendedAction={migration.recommended_action}
       />
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4 min-w-0">
           <DeploymentTierBadge tier={deploymentTier} />
-          <p className="text-sm text-gray-500">
+          <p className="text-xs sm:text-sm text-gray-500">
             Localhost-only &mdash; air-gap friendly
           </p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 sm:gap-4">
           <SSEToggle
             enabled={sseEnabled}
             onToggle={() => setSSEEnabled(!sseEnabled)}

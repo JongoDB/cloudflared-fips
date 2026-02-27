@@ -54,7 +54,7 @@ export default function FIPSBackendCard({ backendInfo }: FIPSBackendCardProps) {
         onClick={() => setExpanded(!expanded)}
         className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors"
       >
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 min-w-0">
           <div className="flex-shrink-0">
             <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -62,15 +62,15 @@ export default function FIPSBackendCard({ backendInfo }: FIPSBackendCardProps) {
               />
             </svg>
           </div>
-          <div>
-            <h3 className="text-base font-semibold text-gray-900">
+          <div className="min-w-0">
+            <h3 className="text-sm sm:text-base font-semibold text-gray-900">
               FIPS Cryptographic Module
             </h3>
-            <p className="text-sm text-gray-500">
+            <p className="text-xs sm:text-sm text-gray-500 truncate">
               {info.active ? info.display_name : 'No FIPS module detected'}
             </p>
           </div>
-          <div className="flex items-center gap-2 ml-4">
+          <div className="flex items-center gap-2">
             <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${standardBadge.color}`}>
               {standardBadge.text}
             </span>

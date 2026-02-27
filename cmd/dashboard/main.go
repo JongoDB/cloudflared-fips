@@ -1,5 +1,5 @@
 // Command dashboard starts the FIPS compliance dashboard HTTP server.
-// It serves the React frontend (embedded) and the compliance API.
+// It serves the React frontend and the compliance API.
 //
 // By default, the server binds to localhost only (127.0.0.1:8080) and is
 // not exposed to the network. All frontend assets are bundled — no CDN
@@ -10,10 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/cloudflared-fips/cloudflared-fips/internal/compliance"
 	"github.com/cloudflared-fips/cloudflared-fips/internal/dashboard"
@@ -25,6 +28,8 @@ import (
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/fipsbackend"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/signing"
 )
+
+const shutdownTimeout = 10 * time.Second
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8080", "listen address (localhost-only by default)")
@@ -56,9 +61,15 @@ func main() {
 
 	flag.Parse()
 
-	fmt.Fprintf(os.Stderr, "%s\n", buildinfo.String())
-	fmt.Fprintf(os.Stderr, "Starting dashboard server on %s\n", *addr)
-	fmt.Fprintf(os.Stderr, "Dashboard is localhost-only by default. Use --addr 0.0.0.0:8080 to expose.\n")
+	logger := log.New(os.Stderr, "", log.LstdFlags)
+
+	logger.Printf("%s", buildinfo.String())
+	logger.Printf("Starting dashboard server on %s", *addr)
+	logger.Printf("Dashboard is localhost-only by default. Use --addr 0.0.0.0:8080 to expose.")
+
+	// Top-level context cancelled on SIGINT/SIGTERM
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	// Configure live compliance checker with real system queries
 	var targets []string
@@ -86,12 +97,12 @@ func main() {
 	tunnelID := envOrFlag(*cfTunnelID, "CF_TUNNEL_ID")
 
 	if token != "" && zoneID != "" {
-		fmt.Fprintf(os.Stderr, "Cloudflare API integration enabled (zone: %s)\n", zoneID)
+		logger.Printf("Cloudflare API integration enabled (zone: %s)", zoneID)
 		cfClient := cfapi.NewClient(token)
 		cfChecker := cfapi.NewComplianceChecker(cfClient, zoneID, accountID, tunnelID)
 		checker.AddSection(cfChecker.RunEdgeChecks())
 	} else {
-		fmt.Fprintf(os.Stderr, "Cloudflare API integration disabled (set --cf-api-token and --cf-zone-id to enable)\n")
+		logger.Printf("Cloudflare API integration disabled (set --cf-api-token and --cf-zone-id to enable)")
 	}
 
 	// Client FIPS detection
@@ -158,7 +169,6 @@ func main() {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{
 				"status": "no signatures found",
-				"error":  err.Error(),
 			})
 			return
 		}
@@ -179,13 +189,14 @@ func main() {
 		}
 		mdmClient := clientdetect.NewMDMClient(mdmConfig)
 		if mdmClient.IsConfigured() {
-			fmt.Fprintf(os.Stderr, "MDM integration enabled: %s\n", mdmProviderStr)
+			logger.Printf("MDM integration enabled: %s", mdmProviderStr)
 			mux.HandleFunc("GET /api/v1/mdm/devices", func(w http.ResponseWriter, r *http.Request) {
 				devices, err := mdmClient.FetchDevices()
 				if err != nil {
+					logger.Printf("MDM device fetch error: %v", err)
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadGateway)
-					json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+					json.NewEncoder(w).Encode(map[string]string{"error": "unable to fetch MDM devices"})
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -197,34 +208,68 @@ func main() {
 				json.NewEncoder(w).Encode(summary)
 			})
 		} else {
-			fmt.Fprintf(os.Stderr, "MDM provider %s configured but missing credentials\n", mdmProviderStr)
+			logger.Printf("MDM provider %s configured but missing credentials", mdmProviderStr)
 		}
 	}
 
-	// Serve the React frontend (all assets bundled, air-gap friendly)
-	fs := http.FileServer(http.Dir(*staticDir))
-	mux.Handle("/", fs)
+	// Serve the React frontend — embedded by default (air-gap friendly),
+	// falls back to filesystem directory for development.
+	mux.Handle("/", dashboard.EmbeddedStaticHandler(*staticDir))
 
-	fmt.Fprintf(os.Stderr, "Deployment tier: %s\n", *deployTier)
-	fmt.Fprintf(os.Stderr, "Client detection: TLS inspector active, posture API at /api/v1/posture\n")
+	logger.Printf("Deployment tier: %s", *deployTier)
+	logger.Printf("Client detection: TLS inspector active, posture API at /api/v1/posture")
 
 	// Start IPC socket server for CloudSH integration (if configured)
 	if *ipcSocket != "" {
-		ipcCtx, ipcCancel := context.WithCancel(context.Background())
-		defer ipcCancel()
 		ipcServer := ipc.NewServer(*ipcSocket, checker, *manifestPath)
 		go func() {
-			fmt.Fprintf(os.Stderr, "CloudSH IPC socket: %s\n", ipcServer.SocketPath())
-			if err := ipcServer.Start(ipcCtx); err != nil {
-				fmt.Fprintf(os.Stderr, "IPC server error: %v\n", err)
+			logger.Printf("CloudSH IPC socket: %s", ipcServer.SocketPath())
+			if err := ipcServer.Start(ctx); err != nil {
+				logger.Printf("IPC server error: %v", err)
 			}
 		}()
 	}
 
-	if err := http.ListenAndServe(*addr, mux); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
+	// Configure HTTP server with timeouts
+	server := &http.Server{
+		Addr:              *addr,
+		Handler:           dashboard.SecurityHeaders(mux),
+		ReadTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      60 * time.Second, // SSE needs longer write timeout
+		IdleTimeout:       120 * time.Second,
+	}
+
+	// Start server in background
+	errCh := make(chan error, 1)
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	logger.Printf("Server ready on %s", *addr)
+
+	// Wait for shutdown signal or server error
+	select {
+	case <-ctx.Done():
+		logger.Printf("Shutdown signal received, draining connections...")
+	case err := <-errCh:
+		logger.Printf("Server error: %v", err)
 		os.Exit(1)
 	}
+
+	// Graceful shutdown with timeout
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Printf("Shutdown error: %v", err)
+		os.Exit(1)
+	}
+
+	logger.Printf("Server stopped gracefully")
 }
 
 // envOrFlag returns the flag value if non-empty, otherwise the environment variable.

@@ -16,21 +16,27 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/cloudflared-fips/cloudflared-fips/internal/selftest"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/clientdetect"
 )
+
+const shutdownTimeout = 10 * time.Second
 
 func main() {
 	listenAddr := flag.String("listen", ":443", "TLS listen address")
@@ -41,25 +47,31 @@ func main() {
 	runSelfTest := flag.Bool("selftest", true, "run FIPS self-test on startup")
 	flag.Parse()
 
-	fmt.Fprintf(os.Stderr, "%s\n", buildinfo.String())
-	fmt.Fprintf(os.Stderr, "FIPS Proxy — Tier 3 Self-Hosted Edge\n")
+	logger := log.New(os.Stderr, "[fips-proxy] ", log.LstdFlags)
+
+	logger.Printf("%s", buildinfo.String())
+	logger.Printf("FIPS Proxy — Tier 3 Self-Hosted Edge")
 
 	if *certFile == "" || *keyFile == "" {
-		fmt.Fprintf(os.Stderr, "Error: --cert and --key are required\n")
+		logger.Printf("Error: --cert and --key are required")
 		os.Exit(1)
 	}
 
 	// Run FIPS self-test
 	if *runSelfTest {
-		fmt.Fprintf(os.Stderr, "Running FIPS self-test...\n")
+		logger.Printf("Running FIPS self-test...")
 		_, err := selftest.RunAllChecks()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "FIPS self-test FAILED: %v\n", err)
-			fmt.Fprintf(os.Stderr, "Refusing to start proxy with failed crypto validation.\n")
+			logger.Printf("FIPS self-test FAILED: %v", err)
+			logger.Printf("Refusing to start proxy with failed crypto validation.")
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "FIPS self-test passed.\n")
+		logger.Printf("FIPS self-test passed.")
 	}
+
+	// Top-level context cancelled on SIGINT/SIGTERM
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	// Client TLS inspector
 	inspector := clientdetect.NewInspector(10000)
@@ -70,7 +82,7 @@ func main() {
 
 	cert, err := tls.LoadX509KeyPair(*certFile, *keyFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load certificate: %v\n", err)
+		logger.Printf("Failed to load certificate: %v", err)
 		os.Exit(1)
 	}
 	tlsCfg.Certificates = []tls.Certificate{cert}
@@ -78,7 +90,7 @@ func main() {
 	// Parse upstream
 	upstreamURL, err := url.Parse(*upstream)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Invalid upstream URL: %v\n", err)
+		logger.Printf("Invalid upstream URL: %v", err)
 		os.Exit(1)
 	}
 
@@ -91,36 +103,65 @@ func main() {
 	// TLS listener
 	listener, err := tls.Listen("tcp", *listenAddr, tlsCfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to listen on %s: %v\n", *listenAddr, err)
+		logger.Printf("Failed to listen on %s: %v", *listenAddr, err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "FIPS proxy listening on %s -> %s\n", *listenAddr, *upstream)
+	logger.Printf("FIPS proxy listening on %s -> %s", *listenAddr, *upstream)
 
 	// Dashboard/metrics server (plaintext, localhost only)
-	go startDashboard(*dashboardAddr, inspector)
+	dashServer := startDashboard(*dashboardAddr, inspector, logger)
 
-	// Serve
+	// Main FIPS proxy server
 	server := &http.Server{
-		Handler:      proxy,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Handler:           proxy,
+		ReadTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 		ConnState: func(conn net.Conn, state http.ConnState) {
-			// Connection state tracking for metrics
 			if state == http.StateNew {
 				// logged by inspector via GetConfigForClient
 			}
 		},
 	}
 
-	if err := server.Serve(listener); err != nil {
-		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+	// Start server in background
+	errCh := make(chan error, 1)
+	go func() {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	logger.Printf("Server ready")
+
+	// Wait for shutdown signal or server error
+	select {
+	case <-ctx.Done():
+		logger.Printf("Shutdown signal received, draining connections...")
+	case err := <-errCh:
+		logger.Printf("Server error: %v", err)
 		os.Exit(1)
 	}
+
+	// Graceful shutdown with timeout
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	// Shutdown both servers
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Printf("Proxy shutdown error: %v", err)
+	}
+	if err := dashServer.Shutdown(shutdownCtx); err != nil {
+		logger.Printf("Dashboard shutdown error: %v", err)
+	}
+
+	logger.Printf("Server stopped gracefully")
 }
 
-func startDashboard(addr string, inspector *clientdetect.Inspector) {
+func startDashboard(addr string, inspector *clientdetect.Inspector, logger *log.Logger) *http.Server {
 	mux := http.NewServeMux()
 
 	// Health check
@@ -164,8 +205,21 @@ func startDashboard(addr string, inspector *clientdetect.Inspector) {
 		json.NewEncoder(w).Encode(report)
 	})
 
-	fmt.Fprintf(os.Stderr, "Dashboard/metrics on %s\n", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		fmt.Fprintf(os.Stderr, "Dashboard error: %v\n", err)
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadTimeout:       10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
+
+	go func() {
+		logger.Printf("Dashboard/metrics on %s", addr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Printf("Dashboard error: %v", err)
+		}
+	}()
+
+	return server
 }

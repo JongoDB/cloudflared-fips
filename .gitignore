@@ -1,16 +1,24 @@
-# Binaries
+# Binaries — all built from source, never committed
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 cloudflared
+cloudflared-fips-selftest
+cloudflared-fips-dashboard
+cloudflared-fips-tui
+cloudflared-fips-proxy
+selftest
+tui
 
-# Test binary
+# Test binary and coverage
 *.test
+*.out
+coverage.out
+coverage.html
 
 # Output
-*.out
 bin/
 dist/
 
@@ -27,23 +35,28 @@ vendor/
 .DS_Store
 Thumbs.db
 
-# Environment
+# Environment — never commit secrets
 .env
 .env.*
+*.pem
+*.key
 
 # Node modules
 node_modules/
 dashboard/node_modules/
-dashboard/dist/
 
 # Build output
 build-output/
-selftest
-tui
 docs/generated/
+internal/dashboard/static/
 
 # Vite cache
 .vite/
 
 # Upstream cloudflared source (cloned at build time, not committed)
 upstream-cloudflared/
+
+# Puppeteer / E2E test artifacts
+e2e-results/
+test-results/
+screenshots-test/
