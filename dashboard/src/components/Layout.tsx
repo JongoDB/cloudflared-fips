@@ -19,13 +19,13 @@ export default function Layout({ children }: LayoutProps) {
                   cloudflared-fips
                 </h1>
                 <p className="text-xs sm:text-sm text-gray-500">
-                  FIPS 140-2 Compliance Dashboard
+                  FIPS 140-3 Compliance Dashboard
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-4">
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                BoringCrypto #4407
+                BoringCrypto #4735
               </span>
               <span className="text-xs sm:text-sm text-gray-500">v0.1.0-fips</span>
             </div>
