@@ -155,13 +155,15 @@ phase2_build() {
         cd "$INSTALL_DIR"
     fi
 
-    # --- Build all binaries ---
+    # --- Build dashboard frontend first (required for go:embed in dashboard binary) ---
+    log "Building dashboard frontend..."
+    cd dashboard && npm install && npm run build && cd ..
+    mkdir -p internal/dashboard/static
+    cp -r dashboard/dist/* internal/dashboard/static/
+
+    # --- Build all binaries (dashboard binary now has embedded frontend) ---
     log "Building all binaries (GOEXPERIMENT=boringcrypto CGO_ENABLED=1)..."
     make build-all
-
-    # --- Build and embed dashboard frontend ---
-    log "Building dashboard frontend..."
-    make dashboard-embed
 
     # --- Generate build manifest ---
     log "Generating build manifest..."
