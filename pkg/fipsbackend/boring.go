@@ -1,8 +1,8 @@
 package fipsbackend
 
 import (
-	"crypto/tls"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 )
@@ -46,18 +46,26 @@ func (b *BoringCrypto) SelfTest() (bool, error) {
 	return true, nil
 }
 
-// isBoringCryptoActive detects BoringCrypto by inspecting the available
-// TLS cipher suites. BoringCrypto restricts the set to FIPS-approved only.
+// isBoringCryptoActive detects BoringCrypto by inspecting the binary's build
+// settings. When built with GOEXPERIMENT=boringcrypto, runtime/debug reports
+// this in the build info. This is more reliable than cipher suite heuristics,
+// which changed in Go 1.24 (BoringCrypto now exposes 13 suites, not 8).
 func isBoringCryptoActive() bool {
-	suites := tls.CipherSuites()
-	for _, s := range suites {
-		if strings.Contains(s.Name, "RC4") {
-			return false
+	// Primary: check runtime version string — Go embeds "X:boringcrypto"
+	if strings.Contains(runtime.Version(), "X:boringcrypto") {
+		return true
+	}
+	// Fallback: check build settings from debug info
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return false
+	}
+	for _, s := range info.Settings {
+		if s.Key == "GOEXPERIMENT" && strings.Contains(s.Value, "boringcrypto") {
+			return true
 		}
 	}
-	// Additional heuristic: BoringCrypto builds have fewer suites
-	// A standard Go build has ~15 TLS 1.2 suites; BoringCrypto has ~8
-	return len(suites) > 0 && len(suites) <= 10
+	return false
 }
 
 // goVersionAtLeast returns true if the runtime Go version is >= major.minor.
