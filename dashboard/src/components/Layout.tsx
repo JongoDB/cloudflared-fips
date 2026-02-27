@@ -11,9 +11,7 @@ export default function Layout({ children }: LayoutProps) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center shrink-0">
-                <span className="text-white font-bold text-sm">CF</span>
-              </div>
+              <img src="/logo.svg" alt="cloudflared-fips" className="w-9 h-9 shrink-0" />
               <div className="min-w-0">
                 <h1 className="text-lg sm:text-xl font-semibold text-gray-900 truncate">
                   cloudflared-fips
