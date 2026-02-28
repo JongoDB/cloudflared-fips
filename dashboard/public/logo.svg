@@ -1,29 +1,51 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 52" width="96" height="52">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 62" width="120" height="62">
   <defs>
-    <linearGradient id="lk" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="lk" x1="0%" y1="0%" x2="0%" y2="100%">
       <stop offset="0%" stop-color="#0F172A"/>
       <stop offset="100%" stop-color="#1E293B"/>
     </linearGradient>
     <filter id="ds">
-      <feDropShadow dx="0" dy=".8" stdDeviation="1.2" flood-color="#000" flood-opacity=".2"/>
+      <feDropShadow dx="0" dy=".6" stdDeviation=".8" flood-color="#000" flood-opacity=".2"/>
     </filter>
   </defs>
 
-  <!-- Back cloud (lighter/yellower orange, peeks out right) -->
-  <path d="M80 40a10 10 0 0 0 10-10 10 10 0 0 0-10-10 10 10 0 0 0-2 .2A14 14 0 0 0 56 14a14 14 0 0 0-.5 3.5" fill="none"/>
-  <path d="M82 42H60c1-1.5 2.5-6 2-11a14 14 0 0 1 16.3-2.3A10 10 0 0 1 90 30a10 10 0 0 1-8 12z" fill="#FBAD41"/>
+  <!-- Back cloud (golden orange, peeks out right) -->
+  <ellipse cx="94" cy="34" rx="18" ry="18" fill="#FBAD41"/>
 
-  <!-- Front cloud (Cloudflare orange) — the main shape -->
-  <path d="M66 42H10a10 10 0 0 1-10-10 10 10 0 0 1 8-9.8A16 16 0 0 1 14 14 16 16 0 0 1 30 2c4.5 0 8.5 1.9 11.4 5A18 18 0 0 1 58 14a18 18 0 0 1 14.5 16.5A8 8 0 0 1 66 42z" fill="#F6821F"/>
+  <!-- Front cloud (Cloudflare orange) -->
+  <path d="
+    M8 50
+    C0 50 0 42 4 38
+    C2 30 8 24 16 24
+    C18 16 24 12 32 12
+    C36 12 40 14 42 18
+    C46 8 54 4 64 4
+    C78 4 86 14 88 26
+    C88 26 92 24 96 26
+    C96 26 88 50 80 50
+    Z
+  " fill="#F6821F"/>
 
-  <!-- Lock body — large, centered, breaks through cloud top -->
-  <rect x="34" y="20" width="18" height="16" rx="3.5" fill="url(#lk)" filter="url(#ds)"/>
+  <!-- White ray / starburst -->
+  <path d="
+    M10 42
+    L78 42
+    L84 38
+    L96 34
+    L84 30
+    L78 34
+    L10 38
+    Z
+  " fill="#fff"/>
 
-  <!-- Shackle — extends well above cloud -->
-  <path d="M38.5 20V11.5a4.5 4.5 0 0 1 9 0V20" fill="none" stroke="#0F172A" stroke-width="3.5" stroke-linecap="round"/>
-  <path d="M39.5 20V12a3.5 3.5 0 0 1 7 0v8" fill="none" stroke="#334155" stroke-width="1" stroke-linecap="round" opacity=".3"/>
+  <!-- Lock body -->
+  <rect x="40" y="26" width="20" height="17" rx="3.5" fill="url(#lk)" filter="url(#ds)"/>
+
+  <!-- Shackle -->
+  <path d="M45 26V17a5 5 0 0 1 10 0v9" fill="none" stroke="#0F172A" stroke-width="3.8" stroke-linecap="round"/>
+  <path d="M46 26V17.5a4 4 0 0 1 8 0V26" fill="none" stroke="#334155" stroke-width="1" stroke-linecap="round" opacity=".25"/>
 
   <!-- Keyhole -->
-  <circle cx="43" cy="27" r="2.5" fill="#F8FAFC"/>
-  <rect x="41.8" y="27.8" width="2.4" height="5" rx=".8" fill="#F8FAFC"/>
+  <circle cx="50" cy="33" r="2.8" fill="#F8FAFC"/>
+  <rect x="48.6" y="34" width="2.8" height="5.5" rx=".9" fill="#F8FAFC"/>
 </svg>
