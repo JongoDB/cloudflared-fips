@@ -1,29 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 52" width="96" height="52">
   <defs>
-    <linearGradient id="cg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FF8C21"/>
-      <stop offset="100%" stop-color="#F06812"/>
-    </linearGradient>
-    <linearGradient id="lg" x1="50%" y1="0%" x2="50%" y2="100%">
+    <linearGradient id="lk" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#0F172A"/>
       <stop offset="100%" stop-color="#1E293B"/>
     </linearGradient>
-    <filter id="ds" x="-4%" y="-4%" width="108%" height="112%">
-      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity=".15"/>
+    <filter id="ds">
+      <feDropShadow dx="0" dy=".8" stdDeviation="1.2" flood-color="#000" flood-opacity=".2"/>
     </filter>
   </defs>
-  <!-- Cloud body -->
-  <path d="M48 42H13.5a7.5 7.5 0 0 1-1.2-14.9A11.5 11.5 0 0 1 23 17a11.44 11.44 0 0 1 8.5 3.8A9.5 9.5 0 0 1 48 28.5c0 .3 0 .6-.05.9A6.5 6.5 0 0 1 48 42z" fill="url(#cg)"/>
-  <!-- Cloud bottom bar -->
-  <rect x="6" y="42" width="42" height="3.5" rx="1.75" fill="url(#cg)"/>
-  <!-- Lock body — large, overlapping cloud -->
-  <rect x="24.5" y="28" width="15" height="14" rx="3" fill="url(#lg)" filter="url(#ds)"/>
-  <!-- Shackle — extends above cloud -->
-  <path d="M28.5 28v-7a3.5 3.5 0 0 1 7 0v7" fill="none" stroke="url(#lg)" stroke-width="3" stroke-linecap="round"/>
-  <!-- Shackle highlight -->
-  <path d="M29.5 28v-6.5a2.5 2.5 0 0 1 5 0V28" fill="none" stroke="#334155" stroke-width="1" stroke-linecap="round" opacity=".3"/>
-  <!-- Keyhole circle -->
-  <circle cx="32" cy="33.5" r="2" fill="#F8FAFC"/>
-  <!-- Keyhole slot -->
-  <rect x="31.1" y="34" width="1.8" height="4" rx=".6" fill="#F8FAFC"/>
+
+  <!-- Back cloud (lighter/yellower orange, peeks out right) -->
+  <path d="M80 40a10 10 0 0 0 10-10 10 10 0 0 0-10-10 10 10 0 0 0-2 .2A14 14 0 0 0 56 14a14 14 0 0 0-.5 3.5" fill="none"/>
+  <path d="M82 42H60c1-1.5 2.5-6 2-11a14 14 0 0 1 16.3-2.3A10 10 0 0 1 90 30a10 10 0 0 1-8 12z" fill="#FBAD41"/>
+
+  <!-- Front cloud (Cloudflare orange) — the main shape -->
+  <path d="M66 42H10a10 10 0 0 1-10-10 10 10 0 0 1 8-9.8A16 16 0 0 1 14 14 16 16 0 0 1 30 2c4.5 0 8.5 1.9 11.4 5A18 18 0 0 1 58 14a18 18 0 0 1 14.5 16.5A8 8 0 0 1 66 42z" fill="#F6821F"/>
+
+  <!-- Lock body — large, centered, breaks through cloud top -->
+  <rect x="34" y="20" width="18" height="16" rx="3.5" fill="url(#lk)" filter="url(#ds)"/>
+
+  <!-- Shackle — extends well above cloud -->
+  <path d="M38.5 20V11.5a4.5 4.5 0 0 1 9 0V20" fill="none" stroke="#0F172A" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M39.5 20V12a3.5 3.5 0 0 1 7 0v8" fill="none" stroke="#334155" stroke-width="1" stroke-linecap="round" opacity=".3"/>
+
+  <!-- Keyhole -->
+  <circle cx="43" cy="27" r="2.5" fill="#F8FAFC"/>
+  <rect x="41.8" y="27.8" width="2.4" height="5" rx=".8" fill="#F8FAFC"/>
 </svg>
