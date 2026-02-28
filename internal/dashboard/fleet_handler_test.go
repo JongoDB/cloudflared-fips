@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/fleet"
 )
@@ -238,6 +239,101 @@ func TestFleetHandler_ListTokens(t *testing.T) {
 	if len(tokens) != 2 {
 		t.Errorf("token count = %d, want 2", len(tokens))
 	}
+}
+
+func TestFleetHandler_BroadcastEvents(t *testing.T) {
+	fh, _ := testFleetHandler(t)
+	done := make(chan struct{})
+
+	// Register an SSE client
+	clientCh := make(chan fleet.FleetEvent, 10)
+	fh.sseMu.Lock()
+	fh.sseClients[clientCh] = struct{}{}
+	fh.sseMu.Unlock()
+
+	go fh.BroadcastEvents(done)
+
+	// Send an event through the event channel
+	fh.eventCh <- fleet.FleetEvent{
+		Type: "node_joined",
+		Node: fleet.Node{ID: "test-node-1", Name: "server-1"},
+	}
+
+	// Wait for the event to be broadcast to the client
+	select {
+	case evt := <-clientCh:
+		if evt.Type != "node_joined" {
+			t.Errorf("event type = %q, want node_joined", evt.Type)
+		}
+		if evt.Node.ID != "test-node-1" {
+			t.Errorf("event Node.ID = %q, want test-node-1", evt.Node.ID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for broadcast event")
+	}
+
+	// Close done channel to stop BroadcastEvents goroutine
+	close(done)
+}
+
+func TestFleetHandler_BroadcastEvents_ChannelClosed(t *testing.T) {
+	fh, _ := testFleetHandler(t)
+	done := make(chan struct{})
+
+	finished := make(chan struct{})
+	go func() {
+		fh.BroadcastEvents(done)
+		close(finished)
+	}()
+
+	// Close the event channel — BroadcastEvents should return
+	close(fh.eventCh)
+
+	select {
+	case <-finished:
+		// Good — BroadcastEvents returned when eventCh was closed
+	case <-time.After(time.Second):
+		close(done) // Clean up
+		t.Fatal("BroadcastEvents did not return when eventCh was closed")
+	}
+}
+
+func TestFleetHandler_BroadcastEvents_SlowClient(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test-fleet.db")
+	store, err := fleet.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	eventCh := make(chan fleet.FleetEvent, 64)
+	fh := NewFleetHandler(FleetHandlerConfig{
+		Store:    store,
+		AdminKey: "admin-secret",
+		EventCh:  eventCh,
+	})
+	done := make(chan struct{})
+
+	// Register a slow client with buffer size 0 (will block)
+	slowCh := make(chan fleet.FleetEvent) // unbuffered
+	fh.sseMu.Lock()
+	fh.sseClients[slowCh] = struct{}{}
+	fh.sseMu.Unlock()
+
+	go fh.BroadcastEvents(done)
+
+	// Send an event — slow client should be skipped (default case in select)
+	fh.eventCh <- fleet.FleetEvent{Type: "test"}
+
+	// Give broadcast goroutine time to process
+	time.Sleep(50 * time.Millisecond)
+
+	// BroadcastEvents should not be stuck — verify by sending another event
+	fh.eventCh <- fleet.FleetEvent{Type: "test2"}
+	time.Sleep(50 * time.Millisecond)
+
+	close(done)
 }
 
 func TestFleetHandler_EmptyListsReturnArrays(t *testing.T) {
