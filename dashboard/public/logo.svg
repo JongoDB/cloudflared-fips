@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 62" width="120" height="62">
   <defs>
     <filter id="ds">
-      <feDropShadow dx="0" dy=".5" stdDeviation=".6" flood-color="#000" flood-opacity=".15"/>
+      <feDropShadow dx="0" dy=".5" stdDeviation=".8" flood-color="#000" flood-opacity=".18"/>
     </filter>
   </defs>
 
@@ -34,27 +34,19 @@
     Z
   " fill="#fff"/>
 
-  <!-- === FIPS 140-3 Lock + Key (dark, overlaid on cloud) === -->
+  <!-- Padlock (large, centered on cloud) -->
   <g filter="url(#ds)">
-    <!-- Padlock shackle (thick arch) -->
-    <path d="M43 24v-6a7 7 0 0 1 14 0v6" fill="none" stroke="#1a1a1a" stroke-width="4.5" stroke-linecap="round"/>
-    <!-- Inner shackle gap -->
-    <path d="M46.5 24v-5.5a3.5 3.5 0 0 1 7 0V24" fill="none" stroke="#F6821F" stroke-width="2" stroke-linecap="butt"/>
+    <!-- Shackle -->
+    <path d="M39 22v-8a11 11 0 0 1 22 0v8" fill="none" stroke="#1a1a1a" stroke-width="5.5" stroke-linecap="round"/>
+    <!-- Inner shackle cutout -->
+    <path d="M44 22v-7.5a6 6 0 0 1 12 0V22" fill="none" stroke="#F6821F" stroke-width="2.5" stroke-linecap="butt"/>
 
-    <!-- Padlock body -->
-    <rect x="38" y="24" width="24" height="18" rx="2.5" fill="#1a1a1a"/>
+    <!-- Body -->
+    <rect x="34" y="22" width="32" height="24" rx="3" fill="#1a1a1a"/>
 
-    <!-- Keyhole (classic shape: circle + slot) -->
-    <circle cx="50" cy="31" r="2.8" fill="#F6821F"/>
-    <path d="M48.5 32.5 L50 38 L51.5 32.5 Z" fill="#F6821F"/>
-
-    <!-- Key (below padlock, extending left) -->
-    <!-- Key bow (round handle with hole) -->
-    <circle cx="28" cy="45" r="5" fill="#1a1a1a"/>
-    <circle cx="28" cy="45" r="2" fill="#F6821F"/>
-    <!-- Key shaft -->
-    <rect x="33" y="43.5" width="22" height="3" rx="1" fill="#1a1a1a"/>
-    <!-- Key teeth (bottom of shaft) -->
-    <path d="M48 46.5v3h3v-3h2v2h3v-2h2v3h2v-3" fill="none" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="square"/>
+    <!-- Keyhole circle -->
+    <circle cx="50" cy="31.5" r="3.5" fill="#F6821F"/>
+    <!-- Keyhole slot -->
+    <path d="M47.5 33 L50 41 L52.5 33 Z" fill="#F6821F"/>
   </g>
 </svg>
