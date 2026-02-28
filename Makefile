@@ -1,5 +1,5 @@
-.PHONY: all build-all selftest-bin dashboard-bin tui-bin fips-proxy-bin \
-       selftest setup status dashboard tui fips-proxy \
+.PHONY: all build-all selftest-bin dashboard-bin tui-bin fips-proxy-bin agent-bin \
+       selftest setup status dashboard tui fips-proxy agent \
        dashboard-dev dashboard-build dashboard-embed \
        lint test test-cover vet check \
        manifest docker-build docs sbom crypto-audit clean
@@ -63,7 +63,7 @@ endif
 # Build all project binaries
 all: build-all
 
-build-all: selftest-bin dashboard-bin tui-bin fips-proxy-bin
+build-all: selftest-bin dashboard-bin tui-bin fips-proxy-bin agent-bin
 	@echo "All binaries built in $(OUTPUT_DIR)/"
 	@ls -lh $(OUTPUT_DIR)/
 
@@ -86,6 +86,11 @@ tui-bin:
 fips-proxy-bin:
 	@mkdir -p $(OUTPUT_DIR)
 	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips-proxy ./cmd/fips-proxy
+
+# Lightweight FIPS posture agent for endpoints
+agent-bin:
+	@mkdir -p $(OUTPUT_DIR)
+	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips-agent ./cmd/agent
 
 # ──────────────────────────────────────────────────────
 # Run targets — build and execute in one step
@@ -112,6 +117,10 @@ tui: tui-bin
 
 # Build the FIPS proxy binary (alias for fips-proxy-bin)
 fips-proxy: fips-proxy-bin
+
+# Build and run agent checks locally
+agent: agent-bin
+	$(OUTPUT_DIR)/cloudflared-fips-agent --check
 
 # ──────────────────────────────────────────────────────
 # Frontend targets

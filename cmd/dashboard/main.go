@@ -26,6 +26,7 @@ import (
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/clientdetect"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/deployment"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/fipsbackend"
+	"github.com/cloudflared-fips/cloudflared-fips/pkg/fleet"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/signing"
 )
 
@@ -58,6 +59,16 @@ func main() {
 
 	// IPC socket for CloudSH integration
 	ipcSocket := flag.String("ipc-socket", "", "Unix socket path for CloudSH IPC (e.g., /var/run/cloudflared-fips/compliance.sock)")
+
+	// Fleet mode flags
+	fleetMode := flag.Bool("fleet-mode", false, "enable fleet controller mode (registers nodes, stores reports)")
+	dbPath := flag.String("db-path", "/var/lib/cloudflared-fips/fleet.db", "path to fleet SQLite database")
+	adminAPIKey := flag.String("admin-api-key", "", "API key for fleet admin operations (or set FLEET_ADMIN_KEY env)")
+	controllerURL := flag.String("controller-url", "", "URL of fleet controller (enables reporter mode)")
+	nodeAPIKey := flag.String("node-api-key", "", "API key for this node's fleet authentication (or set NODE_API_KEY env)")
+	nodeName := flag.String("node-name", "", "name for this node in fleet (defaults to hostname)")
+	nodeRegion := flag.String("node-region", "", "region label for this node")
+	nodeID := flag.String("node-id", "", "node ID from enrollment (or set NODE_ID env)")
 
 	flag.Parse()
 
@@ -211,6 +222,67 @@ func main() {
 			logger.Printf("MDM provider %s configured but missing credentials", mdmProviderStr)
 		}
 	}
+
+	// Fleet mode: controller accepts node registrations and compliance reports
+	var fleetStore fleet.Store
+	if *fleetMode {
+		logger.Printf("Fleet mode enabled, database: %s", *dbPath)
+		store, err := fleet.NewSQLiteStore(*dbPath)
+		if err != nil {
+			logger.Fatalf("Failed to open fleet database: %v", err)
+		}
+		fleetStore = store
+		defer store.Close()
+
+		adminKey := envOrFlag(*adminAPIKey, "FLEET_ADMIN_KEY")
+		eventCh := make(chan fleet.FleetEvent, 256)
+
+		fleetHandler := dashboard.NewFleetHandler(dashboard.FleetHandlerConfig{
+			Store:    store,
+			AdminKey: adminKey,
+			Logger:   logger,
+			EventCh:  eventCh,
+		})
+		dashboard.RegisterFleetRoutes(mux, fleetHandler)
+
+		// Start fleet event broadcaster
+		go fleetHandler.BroadcastEvents(ctx.Done())
+
+		// Start stale-node monitor
+		monitor := fleet.NewMonitor(fleet.MonitorConfig{
+			Store:   store,
+			Logger:  logger,
+			EventCh: eventCh,
+		})
+		go monitor.Run(ctx)
+
+		logger.Printf("Fleet controller ready: %d API endpoints registered", 12)
+	}
+
+	// Fleet reporter mode: push compliance reports to a controller
+	ctrlURL := envOrFlag(*controllerURL, "CONTROLLER_URL")
+	if ctrlURL != "" {
+		nID := envOrFlag(*nodeID, "NODE_ID")
+		nKey := envOrFlag(*nodeAPIKey, "NODE_API_KEY")
+		if nID != "" && nKey != "" {
+			reporter := fleet.NewReporter(fleet.ReporterConfig{
+				ControllerURL: ctrlURL,
+				NodeID:        nID,
+				APIKey:        nKey,
+				Checker:       checker,
+				Logger:        logger,
+			})
+			go reporter.Run(ctx)
+			logger.Printf("Fleet reporter active → %s (node: %s)", ctrlURL, nID)
+		} else {
+			logger.Printf("Fleet reporter disabled: --node-id and --node-api-key required")
+		}
+	}
+
+	// Suppress unused variable warnings for fleet flags used via envOrFlag
+	_ = nodeName
+	_ = nodeRegion
+	_ = fleetStore
 
 	// Serve the React frontend — embedded by default (air-gap friendly),
 	// falls back to filesystem directory for development.
