@@ -127,3 +127,118 @@ func TestWriteAndReadConfig(t *testing.T) {
 		t.Errorf("protocol = %q, want %q", got.Protocol, "quic")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ValidateNonEmpty
+// ---------------------------------------------------------------------------
+
+func TestValidateNonEmpty(t *testing.T) {
+	tests := []struct {
+		input string
+		valid bool
+	}{
+		{"hello", true},
+		{"  spaced  ", true},
+		{"", false},
+		{"   ", false},
+		{"\t\n", false},
+	}
+	for _, tt := range tests {
+		err := ValidateNonEmpty(tt.input)
+		if tt.valid && err != nil {
+			t.Errorf("ValidateNonEmpty(%q) unexpected error: %v", tt.input, err)
+		}
+		if !tt.valid && err == nil {
+			t.Errorf("ValidateNonEmpty(%q) expected error, got nil", tt.input)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ValidateOptionalHexID
+// ---------------------------------------------------------------------------
+
+func TestValidateOptionalHexID(t *testing.T) {
+	// Empty is OK
+	if err := ValidateOptionalHexID(""); err != nil {
+		t.Errorf("empty should be valid: %v", err)
+	}
+	if err := ValidateOptionalHexID("  "); err != nil {
+		t.Errorf("whitespace should be valid: %v", err)
+	}
+	// Valid hex ID
+	if err := ValidateOptionalHexID("abcdef1234567890abcdef1234567890"); err != nil {
+		t.Errorf("valid hex ID should pass: %v", err)
+	}
+	// Invalid hex ID
+	if err := ValidateOptionalHexID("short"); err == nil {
+		t.Error("invalid hex ID should fail")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ValidateOptionalHostPort
+// ---------------------------------------------------------------------------
+
+func TestValidateOptionalHostPort(t *testing.T) {
+	if err := ValidateOptionalHostPort(""); err != nil {
+		t.Errorf("empty should be valid: %v", err)
+	}
+	if err := ValidateOptionalHostPort("localhost:8080"); err != nil {
+		t.Errorf("valid host:port should pass: %v", err)
+	}
+	if err := ValidateOptionalHostPort("invalid"); err == nil {
+		t.Error("invalid host:port should fail")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ValidateFileExists
+// ---------------------------------------------------------------------------
+
+func TestValidateFileExists(t *testing.T) {
+	// Empty path
+	if err := ValidateFileExists(""); err == nil {
+		t.Error("empty path should fail")
+	}
+
+	// Nonexistent path
+	if err := ValidateFileExists("/nonexistent/file.txt"); err == nil {
+		t.Error("nonexistent file should fail")
+	}
+
+	// Existing file
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.txt")
+	os.WriteFile(path, []byte("test"), 0644)
+	if err := ValidateFileExists(path); err != nil {
+		t.Errorf("existing file should pass: %v", err)
+	}
+
+	// Directory (not a file)
+	if err := ValidateFileExists(dir); err == nil {
+		t.Error("directory should fail (not a file)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ReadConfig — invalid YAML
+// ---------------------------------------------------------------------------
+
+func TestReadConfig_InvalidYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.yaml")
+	os.WriteFile(path, []byte("{{{{invalid yaml"), 0644)
+
+	_, err := ReadConfig(path)
+	if err == nil {
+		t.Error("expected error for invalid YAML")
+	}
+}
+
+func TestReadConfig_NonexistentFile(t *testing.T) {
+	_, err := ReadConfig("/nonexistent/config.yaml")
+	if err == nil {
+		t.Error("expected error for nonexistent file")
+	}
+}

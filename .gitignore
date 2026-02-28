@@ -9,8 +9,8 @@ cloudflared-fips-selftest
 cloudflared-fips-dashboard
 cloudflared-fips-tui
 cloudflared-fips-proxy
-selftest
-tui
+/selftest
+/tui
 
 # Test binary and coverage
 *.test
