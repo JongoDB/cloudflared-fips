@@ -225,6 +225,32 @@ phase3_install() {
     mkdir -p "$CONFIG_DIR"
     cp -n build-output/build-manifest.json "${CONFIG_DIR}/build-manifest.json" 2>/dev/null || true
     cp -n configs/cloudflared-fips.yaml "${CONFIG_DIR}/cloudflared-fips.yaml" 2>/dev/null || true
+
+    # --- Populate binary_sha256 in build manifest ---
+    DASHBOARD_HASH=$(sha256sum "${BIN_DIR}/cloudflared-fips-dashboard" | awk '{print $1}')
+    if command -v python3 &>/dev/null && [[ -f "${CONFIG_DIR}/build-manifest.json" ]]; then
+        python3 -c "
+import json, sys
+with open('${CONFIG_DIR}/build-manifest.json', 'r') as f:
+    m = json.load(f)
+m['binary_sha256'] = '${DASHBOARD_HASH}'
+with open('${CONFIG_DIR}/build-manifest.json', 'w') as f:
+    json.dump(m, f, indent=2)
+"
+        log "Binary SHA-256 written to manifest: ${DASHBOARD_HASH:0:16}..."
+    fi
+
+    # --- Generate SBOM ---
+    if [[ -f "${INSTALL_DIR}/scripts/generate-sbom.sh" ]]; then
+        log "Generating SBOM..."
+        cd "$INSTALL_DIR"
+        bash scripts/generate-sbom.sh 2>/dev/null || true
+        for f in sbom.cyclonedx.json sbom.spdx.json; do
+            [[ -f "$f" ]] && cp "$f" "${CONFIG_DIR}/"
+        done
+        cd - >/dev/null
+    fi
+
     chown -R "${SERVICE_USER}:" "$CONFIG_DIR"
 
     # --- Environment file for Cloudflare API (optional) ---
@@ -273,7 +299,8 @@ EnvironmentFile=-/etc/cloudflared-fips/env
 ExecStartPre=/usr/local/bin/cloudflared-fips-selftest
 ExecStart=/usr/local/bin/cloudflared-fips-dashboard \
   --addr 127.0.0.1:8080 \
-  --manifest /etc/cloudflared-fips/build-manifest.json
+  --manifest /etc/cloudflared-fips/build-manifest.json \
+  --config /etc/cloudflared-fips/cloudflared-fips.yaml
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

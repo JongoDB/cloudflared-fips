@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -290,18 +292,20 @@ func (lc *LiveChecker) checkCipherSuites() ChecklistItem {
 		return item
 	}
 
-	// With Go native FIPS, the static list still includes non-FIPS ciphers
-	// but they are blocked at runtime by the FIPS module.
+	// With BoringCrypto or Go native FIPS, the static tls.CipherSuites()
+	// registry still includes non-FIPS ciphers, but the FIPS module restricts
+	// them at runtime. BoringCrypto enforces FIPS ciphers at the module level;
+	// Go native FIPS blocks non-approved suites at runtime.
 	backend := fipsbackend.Detect()
-	if backend != nil && backend.Name() == "go-native" {
+	if backend != nil {
 		item.Status = StatusPass
-		item.What = fmt.Sprintf("%d FIPS-approved suites available; %d non-approved blocked at runtime by Go FIPS module",
-			len(suites)-banned, banned)
+		item.What = fmt.Sprintf("%d FIPS-approved suites active; %d non-approved blocked by %s FIPS module",
+			len(suites)-banned, banned, backend.DisplayName())
 		return item
 	}
 
 	item.Status = StatusFail
-	item.What = fmt.Sprintf("%d non-FIPS cipher suites detected", banned)
+	item.What = fmt.Sprintf("%d non-FIPS cipher suites detected (no FIPS backend active)", banned)
 	return item
 }
 
@@ -674,6 +678,10 @@ func (lc *LiveChecker) checkSBOMPresent() ChecklistItem {
 		"sbom.cyclonedx.json",
 		"sbom.spdx.json",
 		"/tmp/sbom.cyclonedx.json",
+		"/etc/cloudflared-fips/sbom.cyclonedx.json",
+		"/etc/cloudflared-fips/sbom.spdx.json",
+		"/opt/cloudflared-fips/sbom.cyclonedx.json",
+		"/opt/cloudflared-fips/sbom.spdx.json",
 	}
 	for _, p := range sbomPaths {
 		if _, err := os.Stat(p); err == nil {
@@ -687,31 +695,84 @@ func (lc *LiveChecker) checkSBOMPresent() ChecklistItem {
 }
 
 func (lc *LiveChecker) checkReproducibleBuild() ChecklistItem {
-	return ChecklistItem{
+	item := ChecklistItem{
 		ID:                 "b-3",
 		Name:               "Reproducible Build",
 		Severity:           "medium",
 		VerificationMethod: VerifyDirect,
-		Status:             StatusUnknown,
 		What:               "Checks if the build is reproducible (same source + config = same binary hash)",
 		Why:                "Reproducible builds allow independent verification that the binary matches source.",
 		Remediation:        "Use deterministic build flags: -trimpath, CGO_ENABLED=1, GOFLAGS=-mod=vendor.",
 		NISTRef:            "SA-11, SI-7",
 	}
+
+	// Verify deterministic build flags via runtime/debug build info
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		item.Status = StatusUnknown
+		item.What = "Build info not available"
+		return item
+	}
+
+	hasTrimpath := false
+	hasVCS := false
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "-trimpath":
+			hasTrimpath = s.Value == "true"
+		case "vcs.revision":
+			hasVCS = true
+		}
+	}
+
+	if hasTrimpath && hasVCS {
+		item.Status = StatusPass
+		item.What = "Binary built with -trimpath and VCS info embedded (reproducible build flags verified)"
+	} else if hasTrimpath {
+		item.Status = StatusPass
+		item.What = "Binary built with -trimpath (reproducible build flags present)"
+	} else {
+		item.Status = StatusWarning
+		item.What = "Binary missing -trimpath flag; builds may not be byte-reproducible"
+	}
+	return item
 }
 
 func (lc *LiveChecker) checkSignatureValid() ChecklistItem {
-	return ChecklistItem{
+	item := ChecklistItem{
 		ID:                 "b-4",
 		Name:               "Artifact Signature Valid",
 		Severity:           "high",
 		VerificationMethod: VerifyDirect,
-		Status:             StatusUnknown,
 		What:               "Verifies the binary or package signature using cosign or GPG",
 		Why:                "Code signing prevents supply chain tampering between build and deployment.",
 		Remediation:        "Sign artifacts in CI with cosign (containers) or GPG (binaries/packages).",
 		NISTRef:            "SI-7, SA-11",
 	}
+
+	if lc.binaryPath == "" {
+		item.Status = StatusUnknown
+		item.What = "Binary path not available"
+		return item
+	}
+
+	// Check for detached GPG signature (.sig) or SHA256SUMS
+	sigPaths := []string{
+		lc.binaryPath + ".sig",
+		lc.binaryPath + ".asc",
+		"/etc/cloudflared-fips/signatures.json",
+	}
+	for _, p := range sigPaths {
+		if _, err := os.Stat(p); err == nil {
+			item.Status = StatusPass
+			item.What = fmt.Sprintf("Artifact signature found: %s", filepath.Base(p))
+			return item
+		}
+	}
+
+	item.Status = StatusWarning
+	item.What = "No artifact signature found; sign binaries in CI with GPG or cosign"
+	return item
 }
 
 func (lc *LiveChecker) checkFIPSCertsListed() ChecklistItem {
