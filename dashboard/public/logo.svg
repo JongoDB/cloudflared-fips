@@ -1,11 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 62" width="120" height="62">
   <defs>
-    <linearGradient id="lk" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#0F172A"/>
-      <stop offset="100%" stop-color="#1E293B"/>
-    </linearGradient>
     <filter id="ds">
-      <feDropShadow dx="0" dy=".6" stdDeviation=".8" flood-color="#000" flood-opacity=".2"/>
+      <feDropShadow dx="0" dy=".5" stdDeviation=".6" flood-color="#000" flood-opacity=".15"/>
     </filter>
   </defs>
 
@@ -38,14 +34,27 @@
     Z
   " fill="#fff"/>
 
-  <!-- Lock body -->
-  <rect x="40" y="26" width="20" height="17" rx="3.5" fill="url(#lk)" filter="url(#ds)"/>
+  <!-- === FIPS 140-3 Lock + Key (dark, overlaid on cloud) === -->
+  <g filter="url(#ds)">
+    <!-- Padlock shackle (thick arch) -->
+    <path d="M43 24v-6a7 7 0 0 1 14 0v6" fill="none" stroke="#1a1a1a" stroke-width="4.5" stroke-linecap="round"/>
+    <!-- Inner shackle gap -->
+    <path d="M46.5 24v-5.5a3.5 3.5 0 0 1 7 0V24" fill="none" stroke="#F6821F" stroke-width="2" stroke-linecap="butt"/>
 
-  <!-- Shackle -->
-  <path d="M45 26V17a5 5 0 0 1 10 0v9" fill="none" stroke="#0F172A" stroke-width="3.8" stroke-linecap="round"/>
-  <path d="M46 26V17.5a4 4 0 0 1 8 0V26" fill="none" stroke="#334155" stroke-width="1" stroke-linecap="round" opacity=".25"/>
+    <!-- Padlock body -->
+    <rect x="38" y="24" width="24" height="18" rx="2.5" fill="#1a1a1a"/>
 
-  <!-- Keyhole -->
-  <circle cx="50" cy="33" r="2.8" fill="#F8FAFC"/>
-  <rect x="48.6" y="34" width="2.8" height="5.5" rx=".9" fill="#F8FAFC"/>
+    <!-- Keyhole (classic shape: circle + slot) -->
+    <circle cx="50" cy="31" r="2.8" fill="#F6821F"/>
+    <path d="M48.5 32.5 L50 38 L51.5 32.5 Z" fill="#F6821F"/>
+
+    <!-- Key (below padlock, extending left) -->
+    <!-- Key bow (round handle with hole) -->
+    <circle cx="28" cy="45" r="5" fill="#1a1a1a"/>
+    <circle cx="28" cy="45" r="2" fill="#F6821F"/>
+    <!-- Key shaft -->
+    <rect x="33" y="43.5" width="22" height="3" rx="1" fill="#1a1a1a"/>
+    <!-- Key teeth (bottom of shaft) -->
+    <path d="M48 46.5v3h3v-3h2v2h3v-2h2v3h2v-3" fill="none" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="square"/>
+  </g>
 </svg>
