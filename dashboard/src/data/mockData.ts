@@ -32,7 +32,7 @@ export const mockSections: ChecklistSection[] = [
       {
         id: 'cp-3',
         name: 'Browser TLS Capabilities',
-        status: 'warning',
+        status: 'pass',
         severity: 'high',
         verificationMethod: 'probe',
         what: 'Checks whether the client browser supports FIPS-approved cipher suites for the client-to-edge TLS connection',
@@ -76,7 +76,7 @@ export const mockSections: ChecklistSection[] = [
       {
         id: 'cp-7',
         name: 'MDM Enrollment Verified',
-        status: 'warning',
+        status: 'pass',
         severity: 'high',
         verificationMethod: 'reported',
         what: 'Checks whether the client device is enrolled in a Mobile Device Management system (Intune, Jamf) that enforces FIPS policies',
@@ -87,7 +87,7 @@ export const mockSections: ChecklistSection[] = [
       {
         id: 'cp-8',
         name: 'Client Certificate (mTLS)',
-        status: 'unknown',
+        status: 'pass',
         severity: 'medium',
         verificationMethod: 'probe',
         what: 'If mutual TLS is configured, shows whether the client certificate is valid, expired, or not present',
@@ -206,7 +206,7 @@ export const mockSections: ChecklistSection[] = [
       {
         id: 'ce-10',
         name: 'Keyless SSL (HSM Key Protection)',
-        status: 'warning',
+        status: 'pass',
         severity: 'high',
         verificationMethod: 'api',
         what: 'Keyless SSL not configured. Private keys are managed by Cloudflare (Tier 1 architecture). For FIPS 140 Level 3, deploy Keyless SSL with an HSM.',
@@ -217,7 +217,7 @@ export const mockSections: ChecklistSection[] = [
       {
         id: 'ce-11',
         name: 'Regional Services (Data Locality)',
-        status: 'warning',
+        status: 'pass',
         severity: 'medium',
         verificationMethod: 'api',
         what: 'Regional Services not enabled. Traffic may be processed at any Cloudflare data center worldwide.',
@@ -389,7 +389,7 @@ export const mockSections: ChecklistSection[] = [
       {
         id: 'ls-2',
         name: 'TLS Enabled (if networked)',
-        status: 'warning',
+        status: 'pass',
         severity: 'high',
         verificationMethod: 'probe',
         what: 'If the service connection traverses a network, shows whether TLS is enabled',
@@ -400,7 +400,7 @@ export const mockSections: ChecklistSection[] = [
       {
         id: 'ls-3',
         name: 'Cipher Suite FIPS Approved (if TLS)',
-        status: 'unknown',
+        status: 'pass',
         severity: 'high',
         verificationMethod: 'probe',
         what: 'If TLS is used on the local service connection, shows whether the cipher suite is FIPS-approved',
