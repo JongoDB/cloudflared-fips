@@ -10,16 +10,28 @@ import FIPSBackendCard from '../components/FIPSBackendCard'
 import { mockSections, mockManifest } from '../data/mockData'
 import { useComplianceSSE } from '../hooks/useComplianceSSE'
 import { useComplianceMigration } from '../hooks/useComplianceMigration'
-import type { ComplianceSummary } from '../types/compliance'
+import type { ChecklistSection as SectionType, BuildManifest, ComplianceSummary } from '../types/compliance'
 
 export default function DashboardPage() {
   const [sseEnabled, setSSEEnabled] = useState(false)
   const [deploymentTier, setDeploymentTier] = useState('standard')
+  const [liveSections, setLiveSections] = useState<SectionType[]>(mockSections)
+  const [manifest, setManifest] = useState<BuildManifest>(mockManifest)
 
   const migration = useComplianceMigration()
 
-  // Fetch deployment tier from API, fall back to 'standard'
+  // Fetch real compliance data and manifest from backend on mount
   useEffect(() => {
+    fetch('/api/v1/compliance')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (data?.sections) setLiveSections(data.sections) })
+      .catch(() => {})
+
+    fetch('/api/v1/manifest')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (data?.version) setManifest(data) })
+      .catch(() => {})
+
     fetch('/api/v1/deployment')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => { if (data?.tier) setDeploymentTier(data.tier) })
@@ -28,7 +40,7 @@ export default function DashboardPage() {
 
   const { sections, sseStatus } = useComplianceSSE({
     enabled: sseEnabled,
-    fallbackSections: mockSections,
+    fallbackSections: liveSections,
   })
 
   const summary: ComplianceSummary = useMemo(() => {
@@ -76,12 +88,12 @@ export default function DashboardPage() {
             onToggle={() => setSSEEnabled(!sseEnabled)}
             status={sseStatus}
           />
-          <ExportButtons sections={sections} manifest={mockManifest} summary={summary} />
+          <ExportButtons sections={sections} manifest={manifest} summary={summary} />
         </div>
       </div>
       <SummaryBar summary={summary} />
       <FIPSBackendCard />
-      <BuildManifestPanel manifest={mockManifest} />
+      <BuildManifestPanel manifest={manifest} />
       <div>
         <h2 className="text-lg font-semibold text-gray-900 mb-4">
           Compliance Checklist
