@@ -55,8 +55,8 @@ func (cc *ComplianceChecker) checkClientOSFIPS() compliance.ChecklistItem {
 
 	devices := cc.posture.AllDevices()
 	if len(devices) == 0 {
-		item.Status = compliance.StatusUnknown
-		item.What = "No device posture reports received"
+		item.Status = compliance.StatusWarning
+		item.What = "No device posture reports — deploy WARP agent or configure posture API endpoint"
 		return item
 	}
 
@@ -85,8 +85,8 @@ func (cc *ComplianceChecker) checkClientOSType() compliance.ChecklistItem {
 
 	devices := cc.posture.AllDevices()
 	if len(devices) == 0 {
-		item.Status = compliance.StatusUnknown
-		item.What = "No device posture reports received"
+		item.Status = compliance.StatusWarning
+		item.What = "No device posture reports — deploy WARP agent to collect OS information"
 		return item
 	}
 
@@ -109,8 +109,8 @@ func (cc *ComplianceChecker) checkBrowserTLS() compliance.ChecklistItem {
 
 	stats := cc.inspector.FIPSStats()
 	if stats.Total == 0 {
-		item.Status = compliance.StatusUnknown
-		item.What = "No TLS client connections inspected yet"
+		item.Status = compliance.StatusWarning
+		item.What = "No TLS clients inspected — enable Tier 3 FIPS proxy or WARP for ClientHello analysis"
 		return item
 	}
 
@@ -138,8 +138,8 @@ func (cc *ComplianceChecker) checkNegotiatedCipher() compliance.ChecklistItem {
 
 	recent := cc.inspector.RecentClients(10)
 	if len(recent) == 0 {
-		item.Status = compliance.StatusUnknown
-		item.What = "No recent client connections"
+		item.Status = compliance.StatusWarning
+		item.What = "No recent client connections inspected — requires Tier 3 FIPS proxy"
 		return item
 	}
 
@@ -188,8 +188,8 @@ func (cc *ComplianceChecker) checkDevicePosture() compliance.ChecklistItem {
 
 	devices := cc.posture.AllDevices()
 	if len(devices) == 0 {
-		item.Status = compliance.StatusUnknown
-		item.What = "No posture reports (deploy WARP agent or custom posture endpoint)"
+		item.Status = compliance.StatusWarning
+		item.What = "No posture reports — configure Cloudflare Access device posture checks with WARP agent"
 		return item
 	}
 
@@ -212,7 +212,8 @@ func (cc *ComplianceChecker) checkMDMEnrolled() compliance.ChecklistItem {
 
 	devices := cc.posture.AllDevices()
 	if len(devices) == 0 {
-		item.Status = compliance.StatusUnknown
+		item.Status = compliance.StatusWarning
+		item.What = "No device reports — configure MDM integration (Intune/Jamf) via --mdm-provider flag"
 		return item
 	}
 
@@ -239,8 +240,8 @@ func (cc *ComplianceChecker) checkClientCertificate() compliance.ChecklistItem {
 		Name:               "Client Certificate (mTLS)",
 		Severity:           "medium",
 		VerificationMethod: compliance.VerifyProbe,
-		Status:             compliance.StatusUnknown,
-		What:               "mTLS client certificate status (requires Cloudflare Access mTLS configuration)",
+		Status:             compliance.StatusWarning,
+		What:               "mTLS not configured — optional for enhanced device identity via Cloudflare Access",
 		Why:                "Client certificates provide strong device identity for zero-trust access.",
 		Remediation:        "Configure mTLS in Cloudflare Access with a trusted CA.",
 		NISTRef:            "IA-2, IA-5",

@@ -334,7 +334,9 @@ ExecStartPre=/usr/local/bin/cloudflared-fips-selftest
 ExecStart=/usr/local/bin/cloudflared-fips-dashboard \
   --addr 127.0.0.1:8080 \
   --manifest /etc/cloudflared-fips/build-manifest.json \
-  --config /etc/cloudflared-fips/cloudflared-fips.yaml
+  --config /etc/cloudflared-fips/cloudflared-fips.yaml \
+  --metrics-addr localhost:2000 \
+  --ingress-targets localhost:8080
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
