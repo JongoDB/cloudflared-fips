@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# provision.sh — Multi-role provisioning for cloudflared-fips fleet
+# provision-linux.sh — Multi-role, multi-distro Linux provisioning for cloudflared-fips fleet
 #
 # Usage:
-#   sudo ./scripts/provision.sh                                    # default: server role
-#   sudo ./scripts/provision.sh --role controller                  # fleet controller
-#   sudo ./scripts/provision.sh --role server --tunnel-token TOKEN # server with tunnel
-#   sudo ./scripts/provision.sh --role proxy                       # FIPS edge proxy
-#   sudo ./scripts/provision.sh --role client --enrollment-token T --controller-url URL
-#   sudo ./scripts/provision.sh --no-fips                          # skip FIPS mode (dev/test)
-#   sudo ./scripts/provision.sh --with-cf                          # prompt for CF API creds
+#   sudo ./scripts/provision-linux.sh                                    # default: server role, tier 1
+#   sudo ./scripts/provision-linux.sh --role controller                  # fleet controller
+#   sudo ./scripts/provision-linux.sh --role server --tunnel-token TOKEN # server with tunnel
+#   sudo ./scripts/provision-linux.sh --role server --tier 3 --cert /path/cert.pem --key /path/key.pem
+#   sudo ./scripts/provision-linux.sh --role proxy                       # FIPS edge proxy
+#   sudo ./scripts/provision-linux.sh --role client --enrollment-token T --controller-url URL
+#   sudo ./scripts/provision-linux.sh --no-fips                          # skip FIPS mode (dev/test)
+#   sudo ./scripts/provision-linux.sh --with-cf                          # prompt for CF API creds
+#
+# Supported distros: RHEL 8/9, Rocky 8/9, AlmaLinux 8/9, Ubuntu 20.04+/22.04+,
+#                     Amazon Linux 2/2023, SUSE SLES 15, Oracle Linux 8/9
 #
 # This script is idempotent — safe to re-run after reboot.
 # After enabling FIPS mode it will reboot automatically. Run again after reboot.
@@ -29,10 +33,17 @@ DASHBOARD_ADDR="127.0.0.1:8080"
 MARKER="/var/tmp/.cloudflared-fips-provision-phase"
 CLOUDFLARED_VERSION="2025.2.1"
 
+# Detected at runtime
+PKG_MGR=""
+DISTRO_FAMILY=""  # rhel, debian, suse, amzn
+DISTRO_NAME=""
+DISTRO_VERSION=""
+
 # ---------------------------------------------------------------------------
 # Parse flags
 # ---------------------------------------------------------------------------
 ROLE="server"
+TIER="1"
 SKIP_FIPS=false
 WITH_CF=false
 TUNNEL_TOKEN=""
@@ -41,10 +52,13 @@ CONTROLLER_URL=""
 ADMIN_KEY=""
 NODE_NAME=""
 NODE_REGION=""
+TLS_CERT=""
+TLS_KEY=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --role)            ROLE="$2"; shift 2 ;;
+        --tier)            TIER="$2"; shift 2 ;;
         --no-fips)         SKIP_FIPS=true; shift ;;
         --with-cf)         WITH_CF=true; shift ;;
         --tunnel-token)    TUNNEL_TOKEN="$2"; shift 2 ;;
@@ -53,19 +67,27 @@ while [[ $# -gt 0 ]]; do
         --admin-key)       ADMIN_KEY="$2"; shift 2 ;;
         --node-name)       NODE_NAME="$2"; shift 2 ;;
         --node-region)     NODE_REGION="$2"; shift 2 ;;
+        --cert)            TLS_CERT="$2"; shift 2 ;;
+        --key)             TLS_KEY="$2"; shift 2 ;;
         --help|-h)
             echo "Usage: sudo $0 [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --role ROLE          Node role: controller, server, proxy, client (default: server)"
+            echo "  --tier TIER          Deployment tier: 1, 2, or 3 (default: 1)"
+            echo "                         1 = Cloudflare Tunnel (standard)"
+            echo "                         2 = Cloudflare Tunnel + Regional Services + Keyless SSL"
+            echo "                         3 = Self-hosted FIPS proxy (no Cloudflare dependency)"
             echo "  --no-fips            Skip FIPS mode enablement (dev/test only)"
             echo "  --with-cf            Prompt for Cloudflare API credentials"
-            echo "  --tunnel-token TOKEN cloudflared tunnel token (server role)"
+            echo "  --tunnel-token TOKEN cloudflared tunnel token (server role, tier 1/2)"
             echo "  --enrollment-token T Enrollment token from controller (server/proxy/client)"
             echo "  --controller-url URL Fleet controller URL (required for non-controller roles)"
             echo "  --admin-key KEY      Admin API key for controller"
             echo "  --node-name NAME     Display name for this node"
             echo "  --node-region REGION Region label (e.g., us-east, eu-west)"
+            echo "  --cert PATH          TLS certificate path (tier 3 server/proxy)"
+            echo "  --key PATH           TLS private key path (tier 3 server/proxy)"
             exit 0
             ;;
         *) echo "Unknown flag: $1"; exit 1 ;;
@@ -78,6 +100,28 @@ case "$ROLE" in
     *) echo "Invalid role: $ROLE (must be controller, server, proxy, or client)"; exit 1 ;;
 esac
 
+# Validate tier
+case "$TIER" in
+    1|2|3) ;;
+    *) echo "Invalid tier: $TIER (must be 1, 2, or 3)"; exit 1 ;;
+esac
+
+# Tier 3 server/proxy requires TLS cert+key
+if [[ "$TIER" == "3" && ("$ROLE" == "server" || "$ROLE" == "proxy") ]]; then
+    if [[ -z "$TLS_CERT" || -z "$TLS_KEY" ]]; then
+        echo "Tier 3 server/proxy requires --cert and --key for TLS termination"
+        exit 1
+    fi
+    if [[ ! -f "$TLS_CERT" ]]; then
+        echo "TLS certificate not found: $TLS_CERT"
+        exit 1
+    fi
+    if [[ ! -f "$TLS_KEY" ]]; then
+        echo "TLS key not found: $TLS_KEY"
+        exit 1
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -85,12 +129,14 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 log()  { echo -e "${GREEN}[+]${NC} $*"; }
 warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 fail() { echo -e "${RED}[✗]${NC} $*"; exit 1; }
 info() { echo -e "${BLUE}[i]${NC} $*"; }
+tier() { echo -e "${CYAN}[T${TIER}]${NC} $*"; }
 
 check_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -103,6 +149,92 @@ detect_arch() {
         x86_64)  echo "amd64" ;;
         aarch64) echo "arm64" ;;
         *)       fail "Unsupported architecture: $(uname -m)" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Distro detection
+# ---------------------------------------------------------------------------
+detect_distro() {
+    if [[ ! -f /etc/os-release ]]; then
+        fail "Cannot detect distro: /etc/os-release not found"
+    fi
+
+    # shellcheck source=/dev/null
+    . /etc/os-release
+
+    DISTRO_NAME="${ID}"
+    DISTRO_VERSION="${VERSION_ID:-unknown}"
+
+    case "$ID" in
+        rhel|rocky|almalinux|ol)
+            DISTRO_FAMILY="rhel"
+            PKG_MGR="dnf"
+            # RHEL 8 might only have yum
+            if ! command -v dnf &>/dev/null && command -v yum &>/dev/null; then
+                PKG_MGR="yum"
+            fi
+            ;;
+        centos)
+            DISTRO_FAMILY="rhel"
+            PKG_MGR="dnf"
+            if ! command -v dnf &>/dev/null; then
+                PKG_MGR="yum"
+            fi
+            ;;
+        ubuntu|debian)
+            DISTRO_FAMILY="debian"
+            PKG_MGR="apt-get"
+            ;;
+        amzn)
+            DISTRO_FAMILY="amzn"
+            PKG_MGR="dnf"
+            if [[ "$VERSION_ID" == "2" ]]; then
+                PKG_MGR="yum"
+            fi
+            ;;
+        sles|opensuse*)
+            DISTRO_FAMILY="suse"
+            PKG_MGR="zypper"
+            ;;
+        *)
+            # Try to detect family from ID_LIKE
+            if echo "${ID_LIKE:-}" | grep -q "rhel\|fedora\|centos"; then
+                DISTRO_FAMILY="rhel"
+                PKG_MGR="dnf"
+                if ! command -v dnf &>/dev/null; then
+                    PKG_MGR="yum"
+                fi
+            elif echo "${ID_LIKE:-}" | grep -q "debian\|ubuntu"; then
+                DISTRO_FAMILY="debian"
+                PKG_MGR="apt-get"
+            else
+                fail "Unsupported distro: ${ID} (${ID_LIKE:-no ID_LIKE}). Supported: RHEL, Rocky, Alma, Oracle, Ubuntu, Debian, Amazon Linux, SLES"
+            fi
+            ;;
+    esac
+
+    log "Detected: ${PRETTY_NAME:-$ID $VERSION_ID} (family: ${DISTRO_FAMILY}, pkg: ${PKG_MGR})"
+}
+
+# ---------------------------------------------------------------------------
+# Package installation abstraction
+# ---------------------------------------------------------------------------
+pkg_install() {
+    case "$PKG_MGR" in
+        dnf)     dnf install -y "$@" ;;
+        yum)     yum install -y "$@" ;;
+        apt-get) apt-get install -y "$@" ;;
+        zypper)  zypper install -y "$@" ;;
+    esac
+}
+
+pkg_update() {
+    case "$PKG_MGR" in
+        dnf)     dnf makecache ;;
+        yum)     yum makecache ;;
+        apt-get) apt-get update ;;
+        zypper)  zypper refresh ;;
     esac
 }
 
@@ -121,11 +253,67 @@ phase1_fips() {
         return 0
     fi
 
-    log "Installing crypto-policies and enabling FIPS mode..."
-    dnf install -y crypto-policies-scripts
-
-    log "Enabling FIPS mode (requires reboot)..."
-    fips-mode-setup --enable
+    case "$DISTRO_FAMILY" in
+        rhel)
+            log "Enabling FIPS mode (RHEL family)..."
+            pkg_install crypto-policies-scripts
+            fips-mode-setup --enable
+            ;;
+        debian)
+            if [[ "$DISTRO_NAME" == "ubuntu" ]]; then
+                # Ubuntu Pro required for FIPS
+                if command -v ua &>/dev/null || command -v pro &>/dev/null; then
+                    log "Enabling FIPS mode (Ubuntu Pro)..."
+                    if command -v pro &>/dev/null; then
+                        pro enable fips --assume-yes
+                    else
+                        ua enable fips --assume-yes
+                    fi
+                else
+                    warn "Ubuntu FIPS mode requires Ubuntu Pro subscription."
+                    warn "Install ubuntu-advantage-tools and attach your subscription first:"
+                    warn "  sudo apt install ubuntu-advantage-tools"
+                    warn "  sudo pro attach <token>"
+                    warn "  sudo pro enable fips"
+                    fail "Ubuntu Pro not detected. Cannot enable FIPS mode."
+                fi
+            else
+                warn "Debian does not have official FIPS validation."
+                warn "Consider using Ubuntu Pro or RHEL for FIPS compliance."
+                fail "FIPS mode not available on plain Debian."
+            fi
+            ;;
+        amzn)
+            log "Enabling FIPS mode (Amazon Linux)..."
+            if [[ "$DISTRO_VERSION" == "2" ]]; then
+                yum install -y dracut-fips
+                dracut -f
+                # Enable via kernel parameter
+                grubby --update-kernel=ALL --args="fips=1"
+            else
+                # Amazon Linux 2023
+                pkg_install crypto-policies-scripts 2>/dev/null || true
+                if command -v fips-mode-setup &>/dev/null; then
+                    fips-mode-setup --enable
+                else
+                    # Fallback: kernel parameter
+                    grubby --update-kernel=ALL --args="fips=1"
+                fi
+            fi
+            ;;
+        suse)
+            log "Enabling FIPS mode (SLES)..."
+            # SLES uses kernel boot parameter
+            if command -v grubby &>/dev/null; then
+                grubby --update-kernel=ALL --args="fips=1"
+            else
+                warn "Set fips=1 in GRUB boot parameters manually:"
+                warn "  Edit /etc/default/grub, add fips=1 to GRUB_CMDLINE_LINUX"
+                warn "  Run: grub2-mkconfig -o /boot/grub2/grub.cfg"
+                fail "Cannot auto-enable FIPS on SLES without grubby."
+            fi
+            ;;
+    esac
 
     # Mark that we need to continue after reboot
     echo "2" > "$MARKER"
@@ -150,13 +338,25 @@ phase2_deps() {
         if [[ -f /proc/sys/crypto/fips_enabled ]] && [[ "$(cat /proc/sys/crypto/fips_enabled)" == "1" ]]; then
             log "FIPS mode verified: enabled"
         else
-            fail "FIPS mode is NOT enabled. Run: sudo fips-mode-setup --enable && sudo reboot"
+            fail "FIPS mode is NOT enabled. Enable it and reboot first."
         fi
     fi
 
     # --- Build dependencies ---
     log "Installing build dependencies..."
-    dnf install -y gcc gcc-c++ make git
+    case "$DISTRO_FAMILY" in
+        rhel|amzn)
+            pkg_install gcc gcc-c++ make git curl
+            ;;
+        debian)
+            export DEBIAN_FRONTEND=noninteractive
+            pkg_update
+            pkg_install gcc g++ make git curl ca-certificates
+            ;;
+        suse)
+            pkg_install gcc gcc-c++ make git curl
+            ;;
+    esac
 
     # --- Go 1.24 ---
     if command -v go &>/dev/null && go version 2>/dev/null | grep -q "go${GO_VERSION}"; then
@@ -178,12 +378,22 @@ phase2_deps() {
             log "Node.js already installed: $(node --version)"
         else
             log "Installing Node.js ${NODE_VERSION} (${ARCH})..."
-            dnf remove -y nodejs npm 2>/dev/null || true
-            curl -sLO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+            # Remove distro Node.js if present
+            case "$DISTRO_FAMILY" in
+                rhel|amzn) dnf remove -y nodejs npm 2>/dev/null || yum remove -y nodejs npm 2>/dev/null || true ;;
+                debian)    apt-get remove -y nodejs npm 2>/dev/null || true ;;
+                suse)      zypper remove -y nodejs npm 2>/dev/null || true ;;
+            esac
+
+            local node_arch="x64"
+            if [[ "$ARCH" == "arm64" ]]; then
+                node_arch="arm64"
+            fi
+            curl -sLO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"
             rm -rf /usr/local/node
             mkdir -p /usr/local/node
-            tar -C /usr/local/node --strip-components=1 -xJf "node-v${NODE_VERSION}-linux-x64.tar.xz"
-            rm -f "node-v${NODE_VERSION}-linux-x64.tar.xz"
+            tar -C /usr/local/node --strip-components=1 -xJf "node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"
+            rm -f "node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"
             ln -sf /usr/local/node/bin/node /usr/local/bin/node
             ln -sf /usr/local/node/bin/npm /usr/local/bin/npm
             ln -sf /usr/local/node/bin/npx /usr/local/bin/npx
@@ -213,14 +423,19 @@ phase2_build() {
         cp -r dashboard/dist/* internal/dashboard/static/
     fi
 
-    # --- Build binaries based on role ---
-    log "Building binaries for role: ${ROLE}..."
+    # --- Build binaries based on role and tier ---
+    log "Building binaries for role: ${ROLE}, tier: ${TIER}..."
     case "$ROLE" in
         controller)
             make selftest-bin dashboard-bin
             ;;
         server)
-            make selftest-bin dashboard-bin
+            if [[ "$TIER" == "3" ]]; then
+                # Tier 3: build fips-proxy instead of cloudflared tunnel
+                make selftest-bin dashboard-bin fips-proxy-bin
+            else
+                make selftest-bin dashboard-bin
+            fi
             ;;
         proxy)
             make selftest-bin fips-proxy-bin
@@ -263,7 +478,14 @@ phase3_install() {
         log "Service user '${SERVICE_USER}' already exists"
     else
         log "Creating service user '${SERVICE_USER}'..."
-        useradd -r -s /sbin/nologin "$SERVICE_USER"
+        case "$DISTRO_FAMILY" in
+            rhel|amzn|suse)
+                useradd -r -s /sbin/nologin "$SERVICE_USER"
+                ;;
+            debian)
+                useradd -r -s /usr/sbin/nologin "$SERVICE_USER" || adduser --system --no-create-home --group "$SERVICE_USER"
+                ;;
+        esac
     fi
 
     # --- Install binaries based on role ---
@@ -273,6 +495,9 @@ phase3_install() {
     case "$ROLE" in
         controller|server)
             install -m 0755 build-output/cloudflared-fips-dashboard "${BIN_DIR}/"
+            if [[ "$TIER" == "3" && -f build-output/cloudflared-fips-proxy ]]; then
+                install -m 0755 build-output/cloudflared-fips-proxy "${BIN_DIR}/"
+            fi
             ;;
         proxy)
             install -m 0755 build-output/cloudflared-fips-proxy "${BIN_DIR}/"
@@ -287,6 +512,15 @@ phase3_install() {
     mkdir -p "$DATA_DIR"
     cp -n build-output/build-manifest.json "${CONFIG_DIR}/build-manifest.json" 2>/dev/null || true
     cp -n configs/cloudflared-fips.yaml "${CONFIG_DIR}/cloudflared-fips.yaml" 2>/dev/null || true
+
+    # --- Copy TLS cert/key for Tier 3 ---
+    if [[ "$TIER" == "3" && -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then
+        log "Installing TLS certificate and key for Tier 3..."
+        cp "$TLS_CERT" "${CONFIG_DIR}/tls-cert.pem"
+        cp "$TLS_KEY" "${CONFIG_DIR}/tls-key.pem"
+        chmod 0600 "${CONFIG_DIR}/tls-key.pem"
+        chmod 0644 "${CONFIG_DIR}/tls-cert.pem"
+    fi
 
     # --- Binary hashes for manifest ---
     for bin in selftest dashboard proxy agent; do
@@ -349,6 +583,10 @@ ENVEOF
     elif [[ ! -f "$ENV_FILE" ]]; then
         touch "$ENV_FILE"
     fi
+
+    # Store deployment tier
+    echo "DEPLOYMENT_TIER=${TIER}" >> "$ENV_FILE"
+
     chmod 0600 "$ENV_FILE"
     chown "${SERVICE_USER}:" "$ENV_FILE"
 
@@ -395,8 +633,8 @@ ENREOF
         echo "FLEET_ADMIN_KEY=${ADMIN_KEY}" >> "$ENV_FILE"
     fi
 
-    # --- Download cloudflared (server role) ---
-    if [[ "$ROLE" == "server" ]]; then
+    # --- Download cloudflared (server role, tier 1/2 only) ---
+    if [[ "$ROLE" == "server" && "$TIER" != "3" ]]; then
         install_cloudflared
     fi
 
@@ -424,10 +662,10 @@ install_cloudflared() {
 }
 
 # ---------------------------------------------------------------------------
-# Create systemd units based on role
+# Create systemd units based on role and tier
 # ---------------------------------------------------------------------------
 create_systemd_units() {
-    log "Creating systemd units for role: ${ROLE}..."
+    log "Creating systemd units for role: ${ROLE}, tier: ${TIER}..."
 
     # --- Dashboard service (controller and server) ---
     if [[ "$ROLE" == "controller" || "$ROLE" == "server" ]]; then
@@ -480,8 +718,8 @@ WantedBy=cloudflared-fips.target
 UNITEOF
     fi
 
-    # --- Tunnel service (server role) ---
-    if [[ "$ROLE" == "server" ]]; then
+    # --- Tunnel service (server role, tier 1/2) ---
+    if [[ "$ROLE" == "server" && "$TIER" != "3" ]]; then
         local token_arg=""
         if [[ -n "$TUNNEL_TOKEN" ]]; then
             echo "TUNNEL_TOKEN=${TUNNEL_TOKEN}" >> "${CONFIG_DIR}/env"
@@ -520,8 +758,13 @@ WantedBy=cloudflared-fips.target
 UNITEOF
     fi
 
-    # --- Proxy service (proxy role) ---
-    if [[ "$ROLE" == "proxy" ]]; then
+    # --- FIPS proxy service (proxy role, or server in tier 3) ---
+    if [[ "$ROLE" == "proxy" || ("$ROLE" == "server" && "$TIER" == "3") ]]; then
+        local proxy_extra=""
+        if [[ -n "$TLS_CERT" ]]; then
+            proxy_extra="--tls-cert ${CONFIG_DIR}/tls-cert.pem --tls-key ${CONFIG_DIR}/tls-key.pem"
+        fi
+
         cat > /etc/systemd/system/cloudflared-fips-proxy.service <<UNITEOF
 [Unit]
 Description=cloudflared-fips FIPS Edge Proxy (Tier 3)
@@ -537,7 +780,8 @@ EnvironmentFile=-${CONFIG_DIR}/env
 ExecStartPre=${BIN_DIR}/cloudflared-fips-selftest
 ExecStart=${BIN_DIR}/cloudflared-fips-proxy \\
   --listen :443 \\
-  --upstream localhost:8080
+  --upstream localhost:8080 \\
+  ${proxy_extra}
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -610,7 +854,9 @@ UNITEOF
             ;;
         server)
             systemctl enable cloudflared-fips-dashboard.service
-            if [[ -n "$TUNNEL_TOKEN" ]]; then
+            if [[ "$TIER" == "3" ]]; then
+                systemctl enable cloudflared-fips-proxy.service
+            elif [[ -n "$TUNNEL_TOKEN" ]]; then
                 systemctl enable cloudflared-fips-tunnel.service
             fi
             ;;
@@ -628,9 +874,20 @@ UNITEOF
             info "Opening port 8080 for fleet controller..."
             firewall-cmd --add-port=8080/tcp --permanent 2>/dev/null || true
             firewall-cmd --reload 2>/dev/null || true
-        else
-            info "To expose the dashboard externally (not recommended for prod):"
-            info "  sudo firewall-cmd --add-port=8080/tcp --permanent && sudo firewall-cmd --reload"
+        fi
+        if [[ "$TIER" == "3" && ("$ROLE" == "server" || "$ROLE" == "proxy") ]]; then
+            info "Opening port 443 for FIPS proxy..."
+            firewall-cmd --add-port=443/tcp --permanent 2>/dev/null || true
+            firewall-cmd --reload 2>/dev/null || true
+        fi
+    elif command -v ufw &>/dev/null; then
+        if [[ "$ROLE" == "controller" ]]; then
+            info "Opening port 8080 for fleet controller..."
+            ufw allow 8080/tcp 2>/dev/null || true
+        fi
+        if [[ "$TIER" == "3" && ("$ROLE" == "server" || "$ROLE" == "proxy") ]]; then
+            info "Opening port 443 for FIPS proxy..."
+            ufw allow 443/tcp 2>/dev/null || true
         fi
     fi
 
@@ -641,7 +898,7 @@ UNITEOF
 # Phase 4: Start and verify
 # ---------------------------------------------------------------------------
 phase4_start() {
-    log "Starting cloudflared-fips services (role: ${ROLE})..."
+    log "Starting cloudflared-fips services (role: ${ROLE}, tier: ${TIER})..."
 
     case "$ROLE" in
         controller)
@@ -649,7 +906,9 @@ phase4_start() {
             ;;
         server)
             systemctl start cloudflared-fips-dashboard
-            if systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
+            if [[ "$TIER" == "3" ]]; then
+                systemctl start cloudflared-fips-proxy
+            elif systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
                 systemctl start cloudflared-fips-tunnel
             fi
             ;;
@@ -709,13 +968,60 @@ phase4_start() {
     # --- Cleanup marker ---
     rm -f "$MARKER"
 
+    # --- Post-install summary ---
+    print_summary
+}
+
+# ---------------------------------------------------------------------------
+# Post-install summary with tier-specific guidance
+# ---------------------------------------------------------------------------
+print_summary() {
     echo ""
     log "============================================"
     log "  cloudflared-fips deployed successfully!"
-    log "  Role: ${ROLE}"
+    log "  Role: ${ROLE}  |  Tier: ${TIER}  |  OS: ${DISTRO_NAME} ${DISTRO_VERSION}"
     log "============================================"
     echo ""
 
+    # --- Tier explanation ---
+    case "$TIER" in
+        1)
+            tier "Standard Cloudflare Tunnel"
+            tier "Trust model:"
+            tier "  Client --> Cloudflare Edge --> cloudflared-fips --> Origin"
+            tier "  - Segment 2 (tunnel): FIPS-validated crypto (BoringCrypto)"
+            tier "  - Segment 1 (edge):   Cloudflare FedRAMP Moderate (inherited trust)"
+            tier "  - Edge crypto module NOT independently FIPS-validated"
+            echo ""
+            ;;
+        2)
+            tier "Cloudflare Tunnel + Regional Services + Keyless SSL"
+            tier "Trust model:"
+            tier "  Client --> CF FedRAMP DC --> Keyless SSL (customer HSM) --> cloudflared-fips --> Origin"
+            tier "  - Private keys stay in your FIPS 140-2 Level 3 HSM"
+            tier "  - TLS restricted to FedRAMP-compliant US data centers"
+            tier "  - Bulk encryption still performed by Cloudflare edge BoringSSL"
+            echo ""
+            warn "Required Cloudflare configuration (not automated):"
+            warn "  1. Enable Regional Services for your zone"
+            warn "     Cloudflare Dashboard > SSL/TLS > Edge Certificates > Regional Services"
+            warn "  2. Configure Keyless SSL with your HSM"
+            warn "     See: docs/deployment-tier-guide.md for HSM setup (8 vendor guides)"
+            warn "  3. Verify: curl https://<controller>:8080/api/v1/compliance | jq '.edge'"
+            echo ""
+            ;;
+        3)
+            tier "Self-Hosted FIPS Edge Proxy (full control)"
+            tier "Trust model:"
+            tier "  Client --> FIPS Proxy (your infra) --> Origin"
+            tier "  - Every TLS termination uses FIPS-validated crypto you control"
+            tier "  - No Cloudflare dependency (optional: add CF for WAF/DDoS behind proxy)"
+            tier "  - cloudflared is NOT used — fips-proxy handles TLS termination"
+            echo ""
+            ;;
+    esac
+
+    # --- Role-specific info ---
     case "$ROLE" in
         controller)
             info "Dashboard:    http://0.0.0.0:8080"
@@ -730,13 +1036,16 @@ phase4_start() {
             info "To add a server node:"
             info "  1. Create token: curl -X POST -H 'Authorization: Bearer <admin-key>' \\"
             info "       http://<this-host>:8080/api/v1/fleet/tokens -d '{\"role\":\"server\",\"max_uses\":10}'"
-            info "  2. On server: sudo ./provision.sh --role server --enrollment-token <token> --controller-url http://<this-host>:8080"
+            info "  2. On server: sudo ./provision-linux.sh --role server --tier ${TIER} --enrollment-token <token> --controller-url http://<this-host>:8080"
             ;;
         server)
             info "Dashboard:    http://127.0.0.1:8080"
             info "Self-test:    cloudflared-fips-selftest"
             info "Service logs: journalctl -u cloudflared-fips-dashboard -f"
-            if systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
+            if [[ "$TIER" == "3" ]]; then
+                info "FIPS Proxy:   listening on :443"
+                info "Proxy logs:   journalctl -u cloudflared-fips-proxy -f"
+            elif systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
                 info "Tunnel logs:  journalctl -u cloudflared-fips-tunnel -f"
             fi
             ;;
@@ -750,6 +1059,11 @@ phase4_start() {
             info "Service logs: journalctl -u cloudflared-fips-agent -f"
             ;;
     esac
+
+    echo ""
+    info "FIPS backend:  BoringCrypto (CMVP #4735, FIPS 140-3)"
+    info "OS FIPS mode:  $(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo 'N/A')"
+    info "Distro:        ${DISTRO_NAME} ${DISTRO_VERSION} (${DISTRO_FAMILY})"
     echo ""
 }
 
@@ -758,12 +1072,13 @@ phase4_start() {
 # ---------------------------------------------------------------------------
 main() {
     check_root
+    detect_distro
 
     echo ""
     echo "============================================"
     echo "  cloudflared-fips provisioning"
-    echo "  Role: ${ROLE}"
-    echo "  Target: RHEL 9 / Rocky 9 / AlmaLinux 9"
+    echo "  Role: ${ROLE}  |  Tier: ${TIER}"
+    echo "  OS:   ${DISTRO_NAME} ${DISTRO_VERSION}"
     echo "============================================"
     echo ""
 

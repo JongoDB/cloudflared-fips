@@ -66,7 +66,7 @@ export default function NodeTable({ nodes, onNodeClick }: NodeTableProps) {
       <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
         <p className="text-gray-500">No nodes registered yet.</p>
         <p className="text-sm text-gray-400 mt-1">
-          Use <code className="bg-gray-100 px-1 rounded">provision.sh --role server</code> to add nodes.
+          Use <code className="bg-gray-100 px-1 rounded">install.sh --role server</code> to add nodes.
         </p>
       </div>
     )
