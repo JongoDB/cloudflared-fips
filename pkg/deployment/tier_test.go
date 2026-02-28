@@ -115,14 +115,20 @@ func TestGetTierInfoSelfHosted(t *testing.T) {
 	if info.Tier != TierSelfHosted {
 		t.Errorf("Tier = %q, want %q", info.Tier, TierSelfHosted)
 	}
-	if info.Name != "Self-Hosted FIPS Edge Proxy" {
-		t.Errorf("Name = %q, want %q", info.Name, "Self-Hosted FIPS Edge Proxy")
+	if info.Name != "Per-Site FIPS Gateway" {
+		t.Errorf("Name = %q, want %q", info.Name, "Per-Site FIPS Gateway")
 	}
 	if info.EdgeVerification != "direct" {
 		t.Errorf("EdgeVerification = %q, want %q", info.EdgeVerification, "direct")
 	}
 	if info.FedRAMPDependency {
 		t.Error("FedRAMPDependency = true, want false for self_hosted tier")
+	}
+	if !info.CloudflareOptional {
+		t.Error("CloudflareOptional = false, want true for per-site gateway")
+	}
+	if !info.SymmetricProxy {
+		t.Error("SymmetricProxy = false, want true for per-site gateway")
 	}
 }
 

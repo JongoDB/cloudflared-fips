@@ -39,6 +39,7 @@ NODE_NAME=""
 NODE_REGION=""
 TLS_CERT=""
 TLS_KEY=""
+UPSTREAM="http://localhost:8080"
 CHECK_ONLY=false
 
 while [[ $# -gt 0 ]]; do
@@ -52,6 +53,7 @@ while [[ $# -gt 0 ]]; do
         --node-region)     NODE_REGION="$2"; shift 2 ;;
         --cert)            TLS_CERT="$2"; shift 2 ;;
         --key)             TLS_KEY="$2"; shift 2 ;;
+        --upstream)        UPSTREAM="$2"; shift 2 ;;
         --check)           CHECK_ONLY=true; shift ;;
         --help|-h)
             echo "Usage: sudo $0 [OPTIONS]"
@@ -64,8 +66,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --admin-key KEY      Admin API key for controller"
             echo "  --node-name NAME     Display name for this node"
             echo "  --node-region REGION Region label (e.g., us-east)"
-            echo "  --cert PATH          TLS certificate (tier 3 server/proxy)"
-            echo "  --key PATH           TLS private key (tier 3 server/proxy)"
+            echo "  --cert PATH          TLS certificate (tier 3 server/proxy/controller)"
+            echo "  --key PATH           TLS private key (tier 3 server/proxy/controller)"
+            echo "  --upstream URL       Origin app URL (default: http://localhost:8080)"
             echo "  --check              Check FIPS posture only (no install)"
             echo ""
             echo "macOS FIPS notes:"
@@ -297,7 +300,7 @@ case "$ROLE" in
     controller|server)
         go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-selftest ./cmd/selftest/
         go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-dashboard ./cmd/dashboard/
-        if [[ "$TIER" == "3" ]]; then
+        if [[ "$TIER" == "3" || (-n "$TLS_CERT" && -n "$TLS_KEY") ]]; then
             go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-proxy ./cmd/fips-proxy/
         fi
         ;;
@@ -324,7 +327,7 @@ install -m 0755 build-output/cloudflared-fips-selftest "${BIN_DIR}/"
 case "$ROLE" in
     controller|server)
         install -m 0755 build-output/cloudflared-fips-dashboard "${BIN_DIR}/"
-        if [[ "$TIER" == "3" && -f build-output/cloudflared-fips-proxy ]]; then
+        if [[ -f build-output/cloudflared-fips-proxy ]]; then
             install -m 0755 build-output/cloudflared-fips-proxy "${BIN_DIR}/"
         fi
         ;;
@@ -344,9 +347,9 @@ mkdir -p "$DATA_DIR"
 cp -n build-output/build-manifest.json "${CONFIG_DIR}/build-manifest.json" 2>/dev/null || true
 cp -n configs/cloudflared-fips.yaml "${CONFIG_DIR}/cloudflared-fips.yaml" 2>/dev/null || true
 
-# TLS cert/key for Tier 3
-if [[ "$TIER" == "3" && -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then
-    log "Installing TLS certificate and key for Tier 3..."
+# TLS cert/key for FIPS proxy (Tier 3, or controller with proxy)
+if [[ -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then
+    log "Installing TLS certificate and key..."
     cp "$TLS_CERT" "${CONFIG_DIR}/tls-cert.pem"
     cp "$TLS_KEY" "${CONFIG_DIR}/tls-key.pem"
     chmod 0600 "${CONFIG_DIR}/tls-key.pem"
@@ -459,34 +462,47 @@ PLISTEOF
 
 case "$ROLE" in
     controller)
-        create_plist "${SERVICE_PREFIX}.dashboard" \
-            "${BIN_DIR}/cloudflared-fips-dashboard" \
-            "--addr" "0.0.0.0:8080" \
+        local dash_args=("--addr" "0.0.0.0:8080" \
             "--manifest" "${CONFIG_DIR}/build-manifest.json" \
             "--config" "${CONFIG_DIR}/cloudflared-fips.yaml" \
-            "--fleet-mode" "--db-path" "${DATA_DIR}/fleet.db"
-        ;;
-    server)
+            "--fleet-mode" "--db-path" "${DATA_DIR}/fleet.db")
+        if [[ -n "$TLS_CERT" ]]; then
+            dash_args+=("--proxy-addr" "localhost:8081" "--deployment-tier" "self_hosted")
+        fi
         create_plist "${SERVICE_PREFIX}.dashboard" \
             "${BIN_DIR}/cloudflared-fips-dashboard" \
-            "--addr" "127.0.0.1:8080" \
-            "--manifest" "${CONFIG_DIR}/build-manifest.json" \
-            "--config" "${CONFIG_DIR}/cloudflared-fips.yaml"
+            "${dash_args[@]}"
 
-        if [[ "$TIER" == "3" ]]; then
-            local proxy_args=("--listen" ":443" "--upstream" "localhost:8080")
-            if [[ -n "$TLS_CERT" ]]; then
-                proxy_args+=("--tls-cert" "${CONFIG_DIR}/tls-cert.pem" "--tls-key" "${CONFIG_DIR}/tls-key.pem")
-            fi
+        # Controller with cert+key: also run FIPS proxy for origin-side TLS
+        if [[ -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then
             create_plist "${SERVICE_PREFIX}.proxy" \
                 "${BIN_DIR}/cloudflared-fips-proxy" \
-                "${proxy_args[@]}"
+                "--listen" ":443" "--upstream" "${UPSTREAM}" \
+                "--cert" "${CONFIG_DIR}/tls-cert.pem" "--key" "${CONFIG_DIR}/tls-key.pem"
+        fi
+        ;;
+    server)
+        local dash_args=("--addr" "127.0.0.1:8080" \
+            "--manifest" "${CONFIG_DIR}/build-manifest.json" \
+            "--config" "${CONFIG_DIR}/cloudflared-fips.yaml")
+        if [[ "$TIER" == "3" || (-n "$TLS_CERT" && -n "$TLS_KEY") ]]; then
+            dash_args+=("--proxy-addr" "localhost:8081" "--deployment-tier" "self_hosted")
+        fi
+        create_plist "${SERVICE_PREFIX}.dashboard" \
+            "${BIN_DIR}/cloudflared-fips-dashboard" \
+            "${dash_args[@]}"
+
+        if [[ "$TIER" == "3" || (-n "$TLS_CERT" && -n "$TLS_KEY") ]]; then
+            create_plist "${SERVICE_PREFIX}.proxy" \
+                "${BIN_DIR}/cloudflared-fips-proxy" \
+                "--listen" ":443" "--upstream" "${UPSTREAM}" \
+                "--cert" "${CONFIG_DIR}/tls-cert.pem" "--key" "${CONFIG_DIR}/tls-key.pem"
         fi
         ;;
     proxy)
-        local proxy_args=("--listen" ":443" "--upstream" "localhost:8080")
+        local proxy_args=("--listen" ":443" "--upstream" "${UPSTREAM}")
         if [[ -n "$TLS_CERT" ]]; then
-            proxy_args+=("--tls-cert" "${CONFIG_DIR}/tls-cert.pem" "--tls-key" "${CONFIG_DIR}/tls-key.pem")
+            proxy_args+=("--cert" "${CONFIG_DIR}/tls-cert.pem" "--key" "${CONFIG_DIR}/tls-key.pem")
         fi
         create_plist "${SERVICE_PREFIX}.proxy" \
             "${BIN_DIR}/cloudflared-fips-proxy" \
@@ -511,10 +527,13 @@ log "Loading launchd services..."
 case "$ROLE" in
     controller)
         launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.dashboard.plist"
+        if [[ -f "${PLIST_DIR}/${SERVICE_PREFIX}.proxy.plist" ]]; then
+            launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.proxy.plist"
+        fi
         ;;
     server)
         launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.dashboard.plist"
-        if [[ "$TIER" == "3" ]]; then
+        if [[ -f "${PLIST_DIR}/${SERVICE_PREFIX}.proxy.plist" ]]; then
             launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.proxy.plist"
         fi
         ;;
@@ -552,11 +571,15 @@ case "$ROLE" in
             info "Admin key:    ${ADMIN_KEY}"
         fi
         info "Logs:         tail -f /var/log/${SERVICE_PREFIX}.dashboard.log"
+        if [[ -f "${PLIST_DIR}/${SERVICE_PREFIX}.proxy.plist" ]]; then
+            info "FIPS Proxy:   :443 (origin-side TLS termination)"
+            info "Proxy logs:   tail -f /var/log/${SERVICE_PREFIX}.proxy.log"
+        fi
         ;;
     server)
         info "Dashboard:    http://127.0.0.1:8080"
         info "Logs:         tail -f /var/log/${SERVICE_PREFIX}.dashboard.log"
-        if [[ "$TIER" == "3" ]]; then
+        if [[ -f "${PLIST_DIR}/${SERVICE_PREFIX}.proxy.plist" ]]; then
             info "FIPS Proxy:   :443"
             info "Proxy logs:   tail -f /var/log/${SERVICE_PREFIX}.proxy.log"
         fi

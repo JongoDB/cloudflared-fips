@@ -5,7 +5,7 @@
 #   sudo ./scripts/provision-linux.sh                                    # default: server role, tier 1
 #   sudo ./scripts/provision-linux.sh --role controller                  # fleet controller
 #   sudo ./scripts/provision-linux.sh --role server --tunnel-token TOKEN # server with tunnel
-#   sudo ./scripts/provision-linux.sh --role server --tier 3 --cert /path/cert.pem --key /path/key.pem
+#   sudo ./scripts/provision-linux.sh --role server --tier 3 --cert /path/cert.pem --key /path/key.pem --upstream https://origin:8080
 #   sudo ./scripts/provision-linux.sh --role proxy                       # FIPS edge proxy
 #   sudo ./scripts/provision-linux.sh --role client --enrollment-token T --controller-url URL
 #   sudo ./scripts/provision-linux.sh --no-fips                          # skip FIPS mode (dev/test)
@@ -54,6 +54,7 @@ NODE_NAME=""
 NODE_REGION=""
 TLS_CERT=""
 TLS_KEY=""
+UPSTREAM="http://localhost:8080"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -69,6 +70,7 @@ while [[ $# -gt 0 ]]; do
         --node-region)     NODE_REGION="$2"; shift 2 ;;
         --cert)            TLS_CERT="$2"; shift 2 ;;
         --key)             TLS_KEY="$2"; shift 2 ;;
+        --upstream)        UPSTREAM="$2"; shift 2 ;;
         --help|-h)
             echo "Usage: sudo $0 [OPTIONS]"
             echo ""
@@ -86,8 +88,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --admin-key KEY      Admin API key for controller"
             echo "  --node-name NAME     Display name for this node"
             echo "  --node-region REGION Region label (e.g., us-east, eu-west)"
-            echo "  --cert PATH          TLS certificate path (tier 3 server/proxy)"
-            echo "  --key PATH           TLS private key path (tier 3 server/proxy)"
+            echo "  --cert PATH          TLS certificate path (tier 3 server/proxy/controller)"
+            echo "  --key PATH           TLS private key path (tier 3 server/proxy/controller)"
+            echo "  --upstream URL       Origin app URL (default: http://localhost:8080)"
             exit 0
             ;;
         *) echo "Unknown flag: $1"; exit 1 ;;
@@ -106,20 +109,21 @@ case "$TIER" in
     *) echo "Invalid tier: $TIER (must be 1, 2, or 3)"; exit 1 ;;
 esac
 
-# Tier 3 server/proxy requires TLS cert+key
+# Tier 3 server/proxy requires TLS cert+key; controller with cert+key gets proxy capability
 if [[ "$TIER" == "3" && ("$ROLE" == "server" || "$ROLE" == "proxy") ]]; then
     if [[ -z "$TLS_CERT" || -z "$TLS_KEY" ]]; then
         echo "Tier 3 server/proxy requires --cert and --key for TLS termination"
         exit 1
     fi
-    if [[ ! -f "$TLS_CERT" ]]; then
-        echo "TLS certificate not found: $TLS_CERT"
-        exit 1
-    fi
-    if [[ ! -f "$TLS_KEY" ]]; then
-        echo "TLS key not found: $TLS_KEY"
-        exit 1
-    fi
+fi
+# Validate cert/key files exist when provided
+if [[ -n "$TLS_CERT" && ! -f "$TLS_CERT" ]]; then
+    echo "TLS certificate not found: $TLS_CERT"
+    exit 1
+fi
+if [[ -n "$TLS_KEY" && ! -f "$TLS_KEY" ]]; then
+    echo "TLS key not found: $TLS_KEY"
+    exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -427,11 +431,16 @@ phase2_build() {
     log "Building binaries for role: ${ROLE}, tier: ${TIER}..."
     case "$ROLE" in
         controller)
-            make selftest-bin dashboard-bin
+            if [[ -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then
+                # Controller with cert+key: also gets FIPS proxy for origin-side TLS termination
+                make selftest-bin dashboard-bin fips-proxy-bin
+            else
+                make selftest-bin dashboard-bin
+            fi
             ;;
         server)
             if [[ "$TIER" == "3" ]]; then
-                # Tier 3: build fips-proxy instead of cloudflared tunnel
+                # Tier 3: build fips-proxy for per-site gateway
                 make selftest-bin dashboard-bin fips-proxy-bin
             else
                 make selftest-bin dashboard-bin
@@ -495,7 +504,7 @@ phase3_install() {
     case "$ROLE" in
         controller|server)
             install -m 0755 build-output/cloudflared-fips-dashboard "${BIN_DIR}/"
-            if [[ "$TIER" == "3" && -f build-output/cloudflared-fips-proxy ]]; then
+            if [[ -f build-output/cloudflared-fips-proxy ]]; then
                 install -m 0755 build-output/cloudflared-fips-proxy "${BIN_DIR}/"
             fi
             ;;
@@ -513,9 +522,9 @@ phase3_install() {
     cp -n build-output/build-manifest.json "${CONFIG_DIR}/build-manifest.json" 2>/dev/null || true
     cp -n configs/cloudflared-fips.yaml "${CONFIG_DIR}/cloudflared-fips.yaml" 2>/dev/null || true
 
-    # --- Copy TLS cert/key for Tier 3 ---
-    if [[ "$TIER" == "3" && -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then
-        log "Installing TLS certificate and key for Tier 3..."
+    # --- Copy TLS cert/key for FIPS proxy (Tier 3, or controller with proxy) ---
+    if [[ -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then
+        log "Installing TLS certificate and key..."
         cp "$TLS_CERT" "${CONFIG_DIR}/tls-cert.pem"
         cp "$TLS_KEY" "${CONFIG_DIR}/tls-key.pem"
         chmod 0600 "${CONFIG_DIR}/tls-key.pem"
@@ -633,8 +642,8 @@ ENREOF
         echo "FLEET_ADMIN_KEY=${ADMIN_KEY}" >> "$ENV_FILE"
     fi
 
-    # --- Download cloudflared (server role, tier 1/2 only) ---
-    if [[ "$ROLE" == "server" && "$TIER" != "3" ]]; then
+    # --- Download cloudflared (when tunnel-token is provided) ---
+    if [[ -n "$TUNNEL_TOKEN" ]]; then
         install_cloudflared
     fi
 
@@ -671,11 +680,25 @@ create_systemd_units() {
     if [[ "$ROLE" == "controller" || "$ROLE" == "server" ]]; then
         local fleet_flags=""
         local listen_addr="127.0.0.1:8080"
+        local proxy_addr_flag=""
+        local tier_flag="--deployment-tier standard"
 
         if [[ "$ROLE" == "controller" ]]; then
             fleet_flags="--fleet-mode --db-path ${DATA_DIR}/fleet.db"
             listen_addr="0.0.0.0:8080"  # Controllers need to be accessible
         fi
+
+        # When a proxy is running alongside, dashboard fetches client stats from it
+        if [[ -n "$TLS_CERT" || "$TIER" == "3" ]]; then
+            proxy_addr_flag="--proxy-addr localhost:8081"
+        fi
+
+        # Map tier to deployment-tier flag value
+        case "$TIER" in
+            1) tier_flag="--deployment-tier standard" ;;
+            2) tier_flag="--deployment-tier regional_keyless" ;;
+            3) tier_flag="--deployment-tier self_hosted" ;;
+        esac
 
         cat > /etc/systemd/system/cloudflared-fips-dashboard.service <<UNITEOF
 [Unit]
@@ -696,6 +719,8 @@ ExecStart=${BIN_DIR}/cloudflared-fips-dashboard \\
   --config ${CONFIG_DIR}/cloudflared-fips.yaml \\
   --metrics-addr localhost:2000 \\
   --ingress-targets localhost:8080 \\
+  ${tier_flag} \\
+  ${proxy_addr_flag} \\
   ${fleet_flags}
 Restart=on-failure
 RestartSec=5
@@ -718,13 +743,9 @@ WantedBy=cloudflared-fips.target
 UNITEOF
     fi
 
-    # --- Tunnel service (server role, tier 1/2) ---
-    if [[ "$ROLE" == "server" && "$TIER" != "3" ]]; then
-        local token_arg=""
-        if [[ -n "$TUNNEL_TOKEN" ]]; then
-            echo "TUNNEL_TOKEN=${TUNNEL_TOKEN}" >> "${CONFIG_DIR}/env"
-            token_arg='--token ${TUNNEL_TOKEN}'
-        fi
+    # --- Tunnel service (any role with tunnel-token) ---
+    if [[ -n "$TUNNEL_TOKEN" ]]; then
+        echo "TUNNEL_TOKEN=${TUNNEL_TOKEN}" >> "${CONFIG_DIR}/env"
 
         cat > /etc/systemd/system/cloudflared-fips-tunnel.service <<UNITEOF
 [Unit]
@@ -739,7 +760,7 @@ User=${SERVICE_USER}
 Group=${SERVICE_USER}
 EnvironmentFile=-${CONFIG_DIR}/env
 ExecStartPre=${BIN_DIR}/cloudflared-fips-selftest
-ExecStart=${BIN_DIR}/cloudflared tunnel run --metrics localhost:2000 --protocol quic ${token_arg}
+ExecStart=${BIN_DIR}/cloudflared tunnel run --metrics localhost:2000 --protocol quic --token \${TUNNEL_TOKEN}
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -758,16 +779,11 @@ WantedBy=cloudflared-fips.target
 UNITEOF
     fi
 
-    # --- FIPS proxy service (proxy role, or server in tier 3) ---
-    if [[ "$ROLE" == "proxy" || ("$ROLE" == "server" && "$TIER" == "3") ]]; then
-        local proxy_extra=""
-        if [[ -n "$TLS_CERT" ]]; then
-            proxy_extra="--tls-cert ${CONFIG_DIR}/tls-cert.pem --tls-key ${CONFIG_DIR}/tls-key.pem"
-        fi
-
+    # --- FIPS proxy service (proxy role, server/controller with cert+key, or server in tier 3) ---
+    if [[ "$ROLE" == "proxy" || ("$ROLE" == "server" && "$TIER" == "3") || ("$ROLE" == "controller" && -n "$TLS_CERT") ]]; then
         cat > /etc/systemd/system/cloudflared-fips-proxy.service <<UNITEOF
 [Unit]
-Description=cloudflared-fips FIPS Edge Proxy (Tier 3)
+Description=cloudflared-fips Per-Site FIPS Gateway Proxy
 Documentation=https://github.com/JongoDB/cloudflared-fips
 After=network-online.target
 Wants=network-online.target
@@ -780,8 +796,9 @@ EnvironmentFile=-${CONFIG_DIR}/env
 ExecStartPre=${BIN_DIR}/cloudflared-fips-selftest
 ExecStart=${BIN_DIR}/cloudflared-fips-proxy \\
   --listen :443 \\
-  --upstream localhost:8080 \\
-  ${proxy_extra}
+  --cert ${CONFIG_DIR}/tls-cert.pem \\
+  --key ${CONFIG_DIR}/tls-key.pem \\
+  --upstream ${UPSTREAM}
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -851,12 +868,19 @@ UNITEOF
     case "$ROLE" in
         controller)
             systemctl enable cloudflared-fips-dashboard.service
+            if [[ -f /etc/systemd/system/cloudflared-fips-proxy.service ]]; then
+                systemctl enable cloudflared-fips-proxy.service
+            fi
+            if [[ -f /etc/systemd/system/cloudflared-fips-tunnel.service ]]; then
+                systemctl enable cloudflared-fips-tunnel.service
+            fi
             ;;
         server)
             systemctl enable cloudflared-fips-dashboard.service
-            if [[ "$TIER" == "3" ]]; then
+            if [[ -f /etc/systemd/system/cloudflared-fips-proxy.service ]]; then
                 systemctl enable cloudflared-fips-proxy.service
-            elif [[ -n "$TUNNEL_TOKEN" ]]; then
+            fi
+            if [[ -f /etc/systemd/system/cloudflared-fips-tunnel.service ]]; then
                 systemctl enable cloudflared-fips-tunnel.service
             fi
             ;;
@@ -869,23 +893,33 @@ UNITEOF
     esac
 
     # --- Firewall ---
+    local needs_8080=false
+    local needs_443=false
+    if [[ "$ROLE" == "controller" ]]; then
+        needs_8080=true
+    fi
+    if [[ -f /etc/systemd/system/cloudflared-fips-proxy.service ]]; then
+        needs_443=true
+    fi
+
     if command -v firewall-cmd &>/dev/null; then
-        if [[ "$ROLE" == "controller" ]]; then
+        if [[ "$needs_8080" == "true" ]]; then
             info "Opening port 8080 for fleet controller..."
             firewall-cmd --add-port=8080/tcp --permanent 2>/dev/null || true
-            firewall-cmd --reload 2>/dev/null || true
         fi
-        if [[ "$TIER" == "3" && ("$ROLE" == "server" || "$ROLE" == "proxy") ]]; then
+        if [[ "$needs_443" == "true" ]]; then
             info "Opening port 443 for FIPS proxy..."
             firewall-cmd --add-port=443/tcp --permanent 2>/dev/null || true
+        fi
+        if [[ "$needs_8080" == "true" || "$needs_443" == "true" ]]; then
             firewall-cmd --reload 2>/dev/null || true
         fi
     elif command -v ufw &>/dev/null; then
-        if [[ "$ROLE" == "controller" ]]; then
+        if [[ "$needs_8080" == "true" ]]; then
             info "Opening port 8080 for fleet controller..."
             ufw allow 8080/tcp 2>/dev/null || true
         fi
-        if [[ "$TIER" == "3" && ("$ROLE" == "server" || "$ROLE" == "proxy") ]]; then
+        if [[ "$needs_443" == "true" ]]; then
             info "Opening port 443 for FIPS proxy..."
             ufw allow 443/tcp 2>/dev/null || true
         fi
@@ -903,12 +937,19 @@ phase4_start() {
     case "$ROLE" in
         controller)
             systemctl start cloudflared-fips-dashboard
+            if systemctl is-enabled --quiet cloudflared-fips-proxy 2>/dev/null; then
+                systemctl start cloudflared-fips-proxy
+            fi
+            if systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
+                systemctl start cloudflared-fips-tunnel
+            fi
             ;;
         server)
             systemctl start cloudflared-fips-dashboard
-            if [[ "$TIER" == "3" ]]; then
+            if systemctl is-enabled --quiet cloudflared-fips-proxy 2>/dev/null; then
                 systemctl start cloudflared-fips-proxy
-            elif systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
+            fi
+            if systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
                 systemctl start cloudflared-fips-tunnel
             fi
             ;;
@@ -1011,12 +1052,16 @@ print_summary() {
             echo ""
             ;;
         3)
-            tier "Self-Hosted FIPS Edge Proxy (full control)"
+            tier "Per-Site FIPS Gateway (symmetric architecture)"
             tier "Trust model:"
-            tier "  Client --> FIPS Proxy (your infra) --> Origin"
-            tier "  - Every TLS termination uses FIPS-validated crypto you control"
-            tier "  - No Cloudflare dependency (optional: add CF for WAF/DDoS behind proxy)"
-            tier "  - cloudflared is NOT used — fips-proxy handles TLS termination"
+            tier "  [Client Site]                     [Origin / Data Center]"
+            tier "  Client -> FIPS Proxy (:443)       Controller (:443 + :8080 fleet)"
+            tier "        -> Cloudflare (WAF/CDN) --> cloudflared tunnel -> Origin App"
+            tier ""
+            tier "  - Symmetric: site proxy mirrors origin controller"
+            tier "  - Every TLS hop uses FIPS-validated crypto (BoringCrypto)"
+            tier "  - Zero trust: even localhost connections use FIPS TLS"
+            tier "  - Cloudflare optional: add for WAF/CDN via tunnel"
             echo ""
             ;;
     esac
@@ -1028,24 +1073,34 @@ print_summary() {
             info "Fleet API:    http://0.0.0.0:8080/api/v1/fleet/"
             info "Self-test:    cloudflared-fips-selftest"
             info "Service logs: journalctl -u cloudflared-fips-dashboard -f"
+            if systemctl is-enabled --quiet cloudflared-fips-proxy 2>/dev/null; then
+                info "FIPS Proxy:   listening on :443 (origin-side TLS termination)"
+                info "Proxy logs:   journalctl -u cloudflared-fips-proxy -f"
+            fi
+            if systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
+                info "Tunnel:       cloudflared receiving traffic from Cloudflare"
+                info "Tunnel logs:  journalctl -u cloudflared-fips-tunnel -f"
+            fi
             if [[ -n "$ADMIN_KEY" ]]; then
                 info "Admin key:    ${ADMIN_KEY}"
                 info "  (save this — needed for creating enrollment tokens)"
             fi
             echo ""
-            info "To add a server node:"
+            info "To add a site proxy node:"
             info "  1. Create token: curl -X POST -H 'Authorization: Bearer <admin-key>' \\"
-            info "       http://<this-host>:8080/api/v1/fleet/tokens -d '{\"role\":\"server\",\"max_uses\":10}'"
-            info "  2. On server: sudo ./provision-linux.sh --role server --tier ${TIER} --enrollment-token <token> --controller-url http://<this-host>:8080"
+            info "       http://<this-host>:8080/api/v1/fleet/tokens -d '{\"role\":\"proxy\",\"max_uses\":10}'"
+            info "  2. On site: sudo ./provision-linux.sh --role proxy --tier 3 --cert /path/cert --key /path/key --enrollment-token <token> --controller-url http://<this-host>:8080"
             ;;
         server)
             info "Dashboard:    http://127.0.0.1:8080"
             info "Self-test:    cloudflared-fips-selftest"
             info "Service logs: journalctl -u cloudflared-fips-dashboard -f"
-            if [[ "$TIER" == "3" ]]; then
+            if systemctl is-enabled --quiet cloudflared-fips-proxy 2>/dev/null; then
                 info "FIPS Proxy:   listening on :443"
                 info "Proxy logs:   journalctl -u cloudflared-fips-proxy -f"
-            elif systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
+            fi
+            if systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
+                info "Tunnel:       cloudflared tunnel active"
                 info "Tunnel logs:  journalctl -u cloudflared-fips-tunnel -f"
             fi
             ;;

@@ -40,6 +40,9 @@ func main() {
 	metricsAddr := flag.String("metrics-addr", "localhost:2000", "cloudflared metrics endpoint")
 	ingressTargets := flag.String("ingress-targets", "", "comma-separated local service endpoints to probe (host:port)")
 
+	// Gateway proxy stats (Tier 3 / per-site FIPS gateway)
+	proxyAddr := flag.String("proxy-addr", "", "fips-proxy metrics address for gateway client stats (e.g., localhost:8081)")
+
 	// Deployment tier
 	deployTier := flag.String("deployment-tier", "standard", "deployment tier: standard, regional_keyless, self_hosted")
 
@@ -123,6 +126,13 @@ func main() {
 	// Add client posture section from TLS inspection + device reports
 	clientChecker := clientdetect.NewComplianceChecker(inspector, postureCollector)
 	checker.AddSection(clientChecker.RunClientPostureChecks())
+
+	// Gateway proxy stats (fetches client TLS inspection data from fips-proxy)
+	if *proxyAddr != "" {
+		logger.Printf("Gateway proxy stats enabled: fetching from %s", *proxyAddr)
+		proxyChecker := compliance.NewProxyStatsChecker(*proxyAddr)
+		checker.AddSection(proxyChecker.RunGatewayClientChecks())
+	}
 
 	handler := dashboard.NewHandler(*manifestPath, checker)
 

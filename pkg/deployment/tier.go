@@ -34,7 +34,7 @@ func ParseTier(s string) (Tier, error) {
 	}
 }
 
-// Info returns a human-readable description of the tier.
+// TierInfo returns a human-readable description of the tier.
 type TierInfo struct {
 	Tier        Tier   `json:"tier"`
 	Name        string `json:"name"`
@@ -44,6 +44,8 @@ type TierInfo struct {
 	KeyManagement      string `json:"key_management"`
 	ClientInspection   string `json:"client_inspection"`
 	FedRAMPDependency  bool   `json:"fedramp_dependency"`
+	CloudflareOptional bool   `json:"cloudflare_optional"`
+	SymmetricProxy     bool   `json:"symmetric_proxy"`
 }
 
 // GetTierInfo returns detailed information about a deployment tier.
@@ -71,13 +73,15 @@ func GetTierInfo(tier Tier) TierInfo {
 		}
 	case TierSelfHosted:
 		return TierInfo{
-			Tier:              tier,
-			Name:              "Self-Hosted FIPS Edge Proxy",
-			Description:       "Customer-controlled FIPS proxy terminates TLS with BoringCrypto. Full ClientHello inspection and JA4 fingerprinting. Deployed in GovCloud.",
-			EdgeVerification:  "direct",
-			KeyManagement:     "Customer-managed (local cert + key, or HSM)",
-			ClientInspection:  "Full (TLS ClientHello analysis, JA4, cipher logging)",
-			FedRAMPDependency: false,
+			Tier:               tier,
+			Name:               "Per-Site FIPS Gateway",
+			Description:        "FIPS-validated per-site gateway replaces hardware appliances. Client-facing TLS termination with BoringCrypto. Symmetric architecture: site proxy (client edge) mirrors controller (origin edge). Optional Cloudflare tunnel for remote access and WAF/CDN. Zero trust — all hops use FIPS TLS, including localhost.",
+			EdgeVerification:   "direct",
+			KeyManagement:      "Customer-managed (local cert + key, or HSM)",
+			ClientInspection:   "Full (TLS ClientHello analysis, JA4, cipher logging)",
+			FedRAMPDependency:  false,
+			CloudflareOptional: true,
+			SymmetricProxy:     true,
 		}
 	default:
 		return TierInfo{

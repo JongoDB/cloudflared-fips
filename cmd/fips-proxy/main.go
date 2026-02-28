@@ -1,17 +1,17 @@
 // Command fips-proxy is a lightweight FIPS-compliant TLS reverse proxy.
-// It provides Tier 3 deployment: customer-controlled TLS termination using
-// BoringCrypto, with ClientHello inspection and JA4 fingerprinting.
+// It provides per-site FIPS gateway functionality: client-facing TLS
+// termination using BoringCrypto, with ClientHello inspection and JA4
+// fingerprinting. Zero trust — upstream connections use FIPS TLS by default.
 //
-// Deploy in a GovCloud environment (AWS GovCloud, Azure Government, etc.)
-// for complete control over the TLS termination point.
+// Deploy at client sites or origin data centers as a symmetric FIPS gateway.
 //
 // Usage:
 //
 //	fips-proxy \
 //	  --listen :443 \
-//	  --cert /etc/ssl/proxy.crt \
-//	  --key /etc/ssl/proxy.key \
-//	  --upstream localhost:8080 \
+//	  --tls-cert /etc/ssl/proxy.crt \
+//	  --tls-key /etc/ssl/proxy.key \
+//	  --upstream https://origin:8080 \
 //	  --dashboard-addr localhost:8081
 package main
 
@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -40,20 +41,35 @@ const shutdownTimeout = 10 * time.Second
 
 func main() {
 	listenAddr := flag.String("listen", ":443", "TLS listen address")
-	certFile := flag.String("cert", "", "TLS certificate file (required)")
-	keyFile := flag.String("key", "", "TLS private key file (required)")
+	// Primary flag names match provision scripts; --cert/--key kept as aliases
+	tlsCertFile := flag.String("tls-cert", "", "TLS certificate file (required)")
+	tlsKeyFile := flag.String("tls-key", "", "TLS private key file (required)")
+	certFileAlias := flag.String("cert", "", "TLS certificate file (alias for --tls-cert)")
+	keyFileAlias := flag.String("key", "", "TLS private key file (alias for --tls-key)")
 	upstream := flag.String("upstream", "http://localhost:8080", "upstream backend URL")
+	upstreamTLS := flag.Bool("upstream-tls", true, "use FIPS TLS for upstream connections (zero trust)")
+	upstreamInsecure := flag.Bool("upstream-insecure", false, "skip upstream TLS certificate verification (dev only)")
 	dashboardAddr := flag.String("dashboard-addr", "127.0.0.1:8081", "dashboard/metrics listen address")
 	runSelfTest := flag.Bool("selftest", true, "run FIPS self-test on startup")
 	flag.Parse()
 
+	// Resolve cert/key flag aliases: --tls-cert/--tls-key take priority
+	certFile := *tlsCertFile
+	if certFile == "" {
+		certFile = *certFileAlias
+	}
+	keyFile := *tlsKeyFile
+	if keyFile == "" {
+		keyFile = *keyFileAlias
+	}
+
 	logger := log.New(os.Stderr, "[fips-proxy] ", log.LstdFlags)
 
 	logger.Printf("%s", buildinfo.String())
-	logger.Printf("FIPS Proxy — Tier 3 Self-Hosted Edge")
+	logger.Printf("FIPS Proxy — Per-Site FIPS Gateway")
 
-	if *certFile == "" || *keyFile == "" {
-		logger.Printf("Error: --cert and --key are required")
+	if certFile == "" || keyFile == "" {
+		logger.Printf("Error: --tls-cert and --tls-key are required (or --cert/--key)")
 		os.Exit(1)
 	}
 
@@ -80,22 +96,41 @@ func main() {
 	tlsCfg := selftest.GetFIPSTLSConfig()
 	tlsCfg.GetConfigForClient = inspector.GetConfigForClient
 
-	cert, err := tls.LoadX509KeyPair(*certFile, *keyFile)
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		logger.Printf("Failed to load certificate: %v", err)
 		os.Exit(1)
 	}
 	tlsCfg.Certificates = []tls.Certificate{cert}
 
-	// Parse upstream
-	upstreamURL, err := url.Parse(*upstream)
+	// Parse upstream — auto-upgrade to HTTPS when --upstream-tls is enabled
+	upstreamStr := *upstream
+	if *upstreamTLS && strings.HasPrefix(upstreamStr, "http://") {
+		upstreamStr = "https://" + strings.TrimPrefix(upstreamStr, "http://")
+		logger.Printf("Upstream TLS enabled: auto-upgraded %s → %s", *upstream, upstreamStr)
+	}
+
+	upstreamURL, err := url.Parse(upstreamStr)
 	if err != nil {
 		logger.Printf("Invalid upstream URL: %v", err)
 		os.Exit(1)
 	}
 
-	// Reverse proxy
+	// Reverse proxy with optional FIPS TLS transport for upstream
 	proxy := httputil.NewSingleHostReverseProxy(upstreamURL)
+	if upstreamURL.Scheme == "https" {
+		upstreamTLSCfg := selftest.GetFIPSTLSConfig()
+		upstreamTLSCfg.InsecureSkipVerify = *upstreamInsecure
+		proxy.Transport = &http.Transport{
+			TLSClientConfig:     upstreamTLSCfg,
+			MaxIdleConns:        100,
+			IdleConnTimeout:     90 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+		}
+		if *upstreamInsecure {
+			logger.Printf("WARNING: upstream TLS certificate verification disabled (--upstream-insecure)")
+		}
+	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		http.Error(w, "upstream unreachable", http.StatusBadGateway)
 	}

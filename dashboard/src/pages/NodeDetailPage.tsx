@@ -6,6 +6,33 @@ import ChecklistSection from '../components/ChecklistSection'
 import type { ChecklistSection as SectionType, ComplianceSummary } from '../types/compliance'
 import type { FleetNode } from '../types/fleet'
 
+/** Extract FIPS/non-FIPS counts from a "Gateway Clients" section's checklist items. */
+function parseGatewayStats(section: SectionType) {
+  let total = 0
+  let fips = 0
+  let nonFips = 0
+
+  for (const item of section.items) {
+    if (item.id === 'gw-1') {
+      // "Total client TLS connections inspected: N"
+      const m = item.what?.match(/inspected:\s*(\d+)/)
+      if (m) total = parseInt(m[1], 10)
+    }
+    if (item.id === 'gw-2') {
+      // "N of M clients are FIPS-capable (P%)"
+      const m = item.what?.match(/(\d+)\s+of\s+\d+\s+clients/)
+      if (m) fips = parseInt(m[1], 10)
+    }
+    if (item.id === 'gw-3') {
+      // "N non-FIPS client connections detected"
+      const m = item.what?.match(/(\d+)\s+non-FIPS/)
+      if (m) nonFips = parseInt(m[1], 10)
+    }
+  }
+
+  return { total, fips, nonFips }
+}
+
 export default function NodeDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -69,13 +96,18 @@ export default function NodeDetailPage() {
     return result
   }, [sections])
 
-  const statusColors = {
+  const gatewaySection = useMemo(
+    () => sections.find((s) => s.id === 'gateway'),
+    [sections],
+  )
+
+  const statusColors: Record<string, string> = {
     online: 'bg-green-100 text-green-800',
     degraded: 'bg-yellow-100 text-yellow-800',
     offline: 'bg-red-100 text-red-800',
   }
 
-  const roleColors = {
+  const roleColors: Record<string, string> = {
     controller: 'bg-purple-100 text-purple-800',
     server: 'bg-blue-100 text-blue-800',
     proxy: 'bg-orange-100 text-orange-800',
@@ -126,6 +158,9 @@ export default function NodeDetailPage() {
               </div>
             </div>
 
+            {/* Gateway Client Stats card — shown when this node has a gateway section */}
+            {gatewaySection && <GatewayClientCard section={gatewaySection} />}
+
             {sections.length > 0 ? (
               <>
                 <SummaryBar summary={summary} />
@@ -150,5 +185,55 @@ export default function NodeDetailPage() {
         )}
       </div>
     </Layout>
+  )
+}
+
+/** Renders a compact card with gateway client TLS stats and a FIPS/non-FIPS bar. */
+function GatewayClientCard({ section }: { section: SectionType }) {
+  const { total, fips, nonFips } = parseGatewayStats(section)
+  const pct = total > 0 ? Math.round((fips / total) * 100) : 0
+  const hasNonFips = nonFips > 0
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-gray-900">Gateway Client Stats</h3>
+        {hasNonFips && (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+            {nonFips} non-FIPS
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-3 gap-4 text-center mb-3">
+        <div>
+          <p className="text-2xl font-bold text-gray-900">{total}</p>
+          <p className="text-xs text-gray-500">Total Connections</p>
+        </div>
+        <div>
+          <p className="text-2xl font-bold text-green-600">{fips}</p>
+          <p className="text-xs text-gray-500">FIPS-Capable</p>
+        </div>
+        <div>
+          <p className={`text-2xl font-bold ${hasNonFips ? 'text-yellow-600' : 'text-gray-400'}`}>{nonFips}</p>
+          <p className="text-xs text-gray-500">Non-FIPS</p>
+        </div>
+      </div>
+
+      {total > 0 && (
+        <div>
+          <div className="flex justify-between text-xs text-gray-500 mb-1">
+            <span>FIPS compliance</span>
+            <span>{pct}%</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div
+              className={`h-2 rounded-full ${pct === 100 ? 'bg-green-500' : pct >= 80 ? 'bg-yellow-400' : 'bg-red-400'}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
