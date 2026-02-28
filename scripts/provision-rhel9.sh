@@ -229,27 +229,61 @@ phase3_install() {
     # --- Populate binary_sha256 in build manifest ---
     DASHBOARD_HASH=$(sha256sum "${BIN_DIR}/cloudflared-fips-dashboard" | awk '{print $1}')
     if command -v python3 &>/dev/null && [[ -f "${CONFIG_DIR}/build-manifest.json" ]]; then
-        python3 -c "
-import json, sys
-with open('${CONFIG_DIR}/build-manifest.json', 'r') as f:
-    m = json.load(f)
-m['binary_sha256'] = '${DASHBOARD_HASH}'
-with open('${CONFIG_DIR}/build-manifest.json', 'w') as f:
-    json.dump(m, f, indent=2)
-"
+        python3 -c "import json; m=json.load(open('${CONFIG_DIR}/build-manifest.json')); m['binary_sha256']='${DASHBOARD_HASH}'; json.dump(m, open('${CONFIG_DIR}/build-manifest.json','w'), indent=2)"
         log "Binary SHA-256 written to manifest: ${DASHBOARD_HASH:0:16}..."
     fi
 
     # --- Generate SBOM ---
-    if [[ -f "${INSTALL_DIR}/scripts/generate-sbom.sh" ]]; then
-        log "Generating SBOM..."
-        cd "$INSTALL_DIR"
-        bash scripts/generate-sbom.sh 2>/dev/null || true
-        for f in sbom.cyclonedx.json sbom.spdx.json; do
-            [[ -f "$f" ]] && cp "$f" "${CONFIG_DIR}/"
-        done
-        cd - >/dev/null
+    log "Generating SBOM..."
+    cd "$INSTALL_DIR"
+    if [[ -f scripts/generate-sbom.sh ]]; then
+        bash scripts/generate-sbom.sh "$INSTALL_DIR" "${CONFIG_DIR}" "${VERSION:-dev}" 2>&1 || true
     fi
+    # Fallback: if generate-sbom.sh didn't produce files, create a minimal CycloneDX SBOM
+    if [[ ! -f "${CONFIG_DIR}/sbom.cyclonedx.json" ]]; then
+        log "Creating SBOM from go list..."
+        SBOM_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        COMPS=$(go list -m -json all 2>/dev/null | python3 -c "
+import sys,json
+d=json.JSONDecoder(); c=sys.stdin.read().strip(); mods=[]; p=0
+while p<len(c):
+    try:
+        o,e=d.raw_decode(c,p); mods.append(o); p=e
+        while p<len(c) and c[p] in ' \t\n\r': p+=1
+    except: break
+out=[]
+for m in mods:
+    pa,v=m.get('Path',''),m.get('Version','')
+    if m.get('Main') or not pa or not v: continue
+    out.append({'type':'library','name':pa,'version':v,'purl':f'pkg:golang/{pa}@{v}'})
+print(json.dumps(out,indent=2))
+" 2>/dev/null || echo "[]")
+        cat > "${CONFIG_DIR}/sbom.cyclonedx.json" <<SBOMEOF
+{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"metadata":{"timestamp":"${SBOM_TIMESTAMP}","component":{"type":"application","name":"cloudflared-fips","version":"${VERSION:-dev}"}},"components":${COMPS}}
+SBOMEOF
+        log "Minimal CycloneDX SBOM generated"
+    fi
+    cd - >/dev/null
+
+    # --- Generate artifact signatures manifest ---
+    log "Generating signatures manifest..."
+    SELFTEST_HASH=$(sha256sum "${BIN_DIR}/cloudflared-fips-selftest" 2>/dev/null | awk '{print $1}' || echo "")
+    PROXY_HASH=$(sha256sum "${BIN_DIR}/cloudflared-fips-proxy" 2>/dev/null | awk '{print $1}' || echo "")
+    TUI_HASH=$(sha256sum "${BIN_DIR}/cloudflared-fips-tui" 2>/dev/null | awk '{print $1}' || echo "")
+    SIG_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "${CONFIG_DIR}/signatures.json" <<SIGEOF
+{
+  "generated": "${SIG_TIMESTAMP}",
+  "method": "sha256",
+  "artifacts": {
+    "cloudflared-fips-dashboard": "${DASHBOARD_HASH}",
+    "cloudflared-fips-selftest": "${SELFTEST_HASH}",
+    "cloudflared-fips-proxy": "${PROXY_HASH}",
+    "cloudflared-fips-tui": "${TUI_HASH}"
+  }
+}
+SIGEOF
+    log "Signatures manifest written to ${CONFIG_DIR}/signatures.json"
 
     chown -R "${SERVICE_USER}:" "$CONFIG_DIR"
 
