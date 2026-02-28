@@ -310,6 +310,187 @@ func TestSQLiteStore_Summary(t *testing.T) {
 	}
 }
 
+func TestSQLiteStore_UpdateNodeStatus(t *testing.T) {
+	store := tempDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
+	store.CreateNode(ctx, node, "h1")
+
+	// Mark degraded
+	if err := store.UpdateNodeStatus(ctx, "n1", StatusDegraded); err != nil {
+		t.Fatalf("UpdateNodeStatus to degraded: %v", err)
+	}
+	got, _ := store.GetNode(ctx, "n1")
+	if got.Status != StatusDegraded {
+		t.Errorf("Status = %q, want degraded", got.Status)
+	}
+
+	// Mark offline
+	if err := store.UpdateNodeStatus(ctx, "n1", StatusOffline); err != nil {
+		t.Fatalf("UpdateNodeStatus to offline: %v", err)
+	}
+	got2, _ := store.GetNode(ctx, "n1")
+	if got2.Status != StatusOffline {
+		t.Errorf("Status = %q, want offline", got2.Status)
+	}
+
+	// Back to online
+	if err := store.UpdateNodeStatus(ctx, "n1", StatusOnline); err != nil {
+		t.Fatalf("UpdateNodeStatus to online: %v", err)
+	}
+	got3, _ := store.GetNode(ctx, "n1")
+	if got3.Status != StatusOnline {
+		t.Errorf("Status = %q, want online", got3.Status)
+	}
+}
+
+func TestSQLiteStore_GetLatestReport_Nonexistent(t *testing.T) {
+	store := tempDB(t)
+	ctx := context.Background()
+
+	_, err := store.GetLatestReport(ctx, "nonexistent-node")
+	if err == nil {
+		t.Error("expected error for nonexistent node report")
+	}
+}
+
+func TestSQLiteStore_GetNodeByAPIKey_Nonexistent(t *testing.T) {
+	store := tempDB(t)
+	ctx := context.Background()
+
+	_, err := store.GetNodeByAPIKey(ctx, "nonexistent-hash")
+	if err == nil {
+		t.Error("expected error for nonexistent API key")
+	}
+}
+
+func TestSQLiteStore_GetNode_Nonexistent(t *testing.T) {
+	store := tempDB(t)
+	ctx := context.Background()
+
+	_, err := store.GetNode(ctx, "nonexistent-id")
+	if err == nil {
+		t.Error("expected error for nonexistent node")
+	}
+}
+
+func TestSQLiteStore_MultipleReports_LatestReturned(t *testing.T) {
+	store := tempDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
+	store.CreateNode(ctx, node, "h1")
+
+	// Store two reports with >1s gap to guarantee different RFC3339 timestamps
+	report1 := []byte(`{"version":"1"}`)
+	report2 := []byte(`{"version":"2"}`)
+	if err := store.StoreReport(ctx, "n1", report1); err != nil {
+		t.Fatalf("StoreReport 1: %v", err)
+	}
+	// SQLite timestamps use RFC3339 (second precision), need >1s gap
+	time.Sleep(1100 * time.Millisecond)
+	if err := store.StoreReport(ctx, "n1", report2); err != nil {
+		t.Fatalf("StoreReport 2: %v", err)
+	}
+
+	got, err := store.GetLatestReport(ctx, "n1")
+	if err != nil {
+		t.Fatalf("GetLatestReport: %v", err)
+	}
+	if string(got) != `{"version":"2"}` {
+		t.Errorf("GetLatestReport = %q, want report 2", string(got))
+	}
+}
+
+func TestSQLiteStore_DeleteNode_CascadesReports(t *testing.T) {
+	store := tempDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
+	store.CreateNode(ctx, node, "h1")
+	store.StoreReport(ctx, "n1", []byte(`{"report":true}`))
+
+	if err := store.DeleteNode(ctx, "n1"); err != nil {
+		t.Fatalf("DeleteNode: %v", err)
+	}
+
+	// Reports should be cascade-deleted
+	_, err := store.GetLatestReport(ctx, "n1")
+	if err == nil {
+		t.Error("expected error for report of deleted node")
+	}
+}
+
+func TestSQLiteStore_ListNodes_NoFilter(t *testing.T) {
+	store := tempDB(t)
+	ctx := context.Background()
+
+	// Empty DB
+	nodes, err := store.ListNodes(ctx, NodeFilter{})
+	if err != nil {
+		t.Fatalf("ListNodes: %v", err)
+	}
+	if len(nodes) != 0 {
+		t.Errorf("expected 0 nodes, got %d", len(nodes))
+	}
+}
+
+func TestSQLiteStore_Summary_EmptyDB(t *testing.T) {
+	store := tempDB(t)
+	ctx := context.Background()
+
+	summary, err := store.GetSummary(ctx)
+	if err != nil {
+		t.Fatalf("GetSummary: %v", err)
+	}
+	if summary.TotalNodes != 0 {
+		t.Errorf("TotalNodes = %d, want 0", summary.TotalNodes)
+	}
+	if summary.FullyCompliant != 0 {
+		t.Errorf("FullyCompliant = %d, want 0", summary.FullyCompliant)
+	}
+}
+
+func TestSQLiteStore_DuplicateNodeID(t *testing.T) {
+	store := tempDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
+	if err := store.CreateNode(ctx, node, "h1"); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+
+	// Duplicate ID should fail
+	node2 := &Node{ID: "n1", Name: "dup", Role: RoleProxy, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
+	err := store.CreateNode(ctx, node2, "h2")
+	if err == nil {
+		t.Error("expected error for duplicate node ID")
+	}
+}
+
+func TestSQLiteStore_DuplicateAPIKeyHash(t *testing.T) {
+	store := tempDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
+	if err := store.CreateNode(ctx, node, "same-hash"); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+
+	// Duplicate API key hash should fail (UNIQUE constraint)
+	node2 := &Node{ID: "n2", Name: "test2", Role: RoleProxy, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
+	err := store.CreateNode(ctx, node2, "same-hash")
+	if err == nil {
+		t.Error("expected error for duplicate API key hash")
+	}
+}
+
 func TestSQLiteStore_PersistReopen(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "persist.db")

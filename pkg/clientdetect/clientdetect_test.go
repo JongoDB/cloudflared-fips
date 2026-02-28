@@ -3,6 +3,7 @@ package clientdetect
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -286,5 +287,187 @@ func TestFIPSSummaryJSON(t *testing.T) {
 	}
 	if decoded != s {
 		t.Errorf("round-trip mismatch: got %+v", decoded)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// analyzeFIPSCapability — banned ciphers branch
+// ---------------------------------------------------------------------------
+
+func TestAnalyzeFIPSCapability_BannedCiphers(t *testing.T) {
+	tests := []struct {
+		name      string
+		suites    []uint16
+		wantFIPS  bool
+		wantMatch string
+	}{
+		{
+			name: "3DES present",
+			suites: []uint16{
+				0xc02f, // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+				0x000a, // TLS_RSA_WITH_3DES_EDE_CBC_SHA
+			},
+			wantFIPS:  false,
+			wantMatch: "banned ciphers",
+		},
+		{
+			name: "RC4 present",
+			suites: []uint16{
+				0xc02f, // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+				0x0005, // TLS_RSA_WITH_RC4_128_SHA
+			},
+			wantFIPS:  false,
+			wantMatch: "banned ciphers",
+		},
+		{
+			name: "Only non-GCM AES (no AES-GCM)",
+			suites: []uint16{
+				0x002f, // TLS_RSA_WITH_AES_128_CBC_SHA
+			},
+			wantFIPS:  false,
+			wantMatch: "does not offer AES-GCM",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotFIPS, reason := analyzeFIPSCapability(tt.suites)
+			if gotFIPS != tt.wantFIPS {
+				t.Errorf("FIPS capability: got %v, want %v (reason: %s)", gotFIPS, tt.wantFIPS, reason)
+			}
+			if !strings.Contains(reason, tt.wantMatch) {
+				t.Errorf("reason %q does not contain %q", reason, tt.wantMatch)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FIPSStats and RecentClients with populated data
+// ---------------------------------------------------------------------------
+
+func TestFIPSStatsPopulated(t *testing.T) {
+	ins := NewInspector(100)
+	// Manually add client entries (can't call GetConfigForClient without a real net.Conn)
+	ins.mu.Lock()
+	ins.clients = []ClientInfo{
+		{RemoteAddr: "1.1.1.1:1234", FIPSCapable: true},
+		{RemoteAddr: "2.2.2.2:5678", FIPSCapable: true},
+		{RemoteAddr: "3.3.3.3:9012", FIPSCapable: false},
+	}
+	ins.mu.Unlock()
+
+	stats := ins.FIPSStats()
+	if stats.Total != 3 {
+		t.Errorf("Total = %d, want 3", stats.Total)
+	}
+	if stats.FIPSCapable != 2 {
+		t.Errorf("FIPSCapable = %d, want 2", stats.FIPSCapable)
+	}
+	if stats.NonFIPS != 1 {
+		t.Errorf("NonFIPS = %d, want 1", stats.NonFIPS)
+	}
+}
+
+func TestRecentClientsPopulated(t *testing.T) {
+	ins := NewInspector(100)
+	ins.mu.Lock()
+	ins.clients = []ClientInfo{
+		{RemoteAddr: "a"},
+		{RemoteAddr: "b"},
+		{RemoteAddr: "c"},
+		{RemoteAddr: "d"},
+		{RemoteAddr: "e"},
+	}
+	ins.mu.Unlock()
+
+	// Request fewer than available
+	got := ins.RecentClients(3)
+	if len(got) != 3 {
+		t.Fatalf("RecentClients(3) = %d, want 3", len(got))
+	}
+	// Should be the last 3
+	if got[0].RemoteAddr != "c" || got[1].RemoteAddr != "d" || got[2].RemoteAddr != "e" {
+		t.Errorf("RecentClients(3) = %v, want [c d e]", []string{got[0].RemoteAddr, got[1].RemoteAddr, got[2].RemoteAddr})
+	}
+
+	// Request more than available
+	got2 := ins.RecentClients(10)
+	if len(got2) != 5 {
+		t.Errorf("RecentClients(10) = %d, want 5 (all)", len(got2))
+	}
+
+	// Request zero
+	got3 := ins.RecentClients(0)
+	if len(got3) != 5 {
+		t.Errorf("RecentClients(0) = %d, want 5 (all)", len(got3))
+	}
+
+	// Request negative
+	got4 := ins.RecentClients(-1)
+	if len(got4) != 5 {
+		t.Errorf("RecentClients(-1) = %d, want 5 (all)", len(got4))
+	}
+}
+
+func TestInspectorLogTrimming(t *testing.T) {
+	ins := NewInspector(5)
+	ins.mu.Lock()
+	for i := 0; i < 10; i++ {
+		ins.clients = append(ins.clients, ClientInfo{RemoteAddr: fmt.Sprintf("client-%d", i)})
+	}
+	// Simulate the trimming that GetConfigForClient does
+	if len(ins.clients) > ins.maxLog {
+		ins.clients = ins.clients[len(ins.clients)-ins.maxLog:]
+	}
+	ins.mu.Unlock()
+
+	clients := ins.RecentClients(0)
+	if len(clients) != 5 {
+		t.Errorf("after trimming: got %d clients, want 5", len(clients))
+	}
+	// Should have the last 5 (client-5 through client-9)
+	if clients[0].RemoteAddr != "client-5" {
+		t.Errorf("first client after trim = %q, want client-5", clients[0].RemoteAddr)
+	}
+}
+
+func TestClientInfoJSON(t *testing.T) {
+	ci := ClientInfo{
+		RemoteAddr:  "1.2.3.4:443",
+		ServerName:  "example.com",
+		TLSVersion:  0x0303,
+		FIPSCapable: true,
+		FIPSReason:  "AES-GCM only",
+		JA4Hash:     "t13_04_h2_abc123",
+	}
+	data, err := json.Marshal(ci)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded ClientInfo
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.RemoteAddr != ci.RemoteAddr {
+		t.Errorf("RemoteAddr = %q, want %q", decoded.RemoteAddr, ci.RemoteAddr)
+	}
+	if decoded.FIPSCapable != true {
+		t.Error("FIPSCapable should be true after round-trip")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// PostureCollector — HandlePostureReport with wrong method
+// ---------------------------------------------------------------------------
+
+func TestPostureCollectorWrongMethod(t *testing.T) {
+	pc := NewPostureCollector()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/posture", nil)
+	w := httptest.NewRecorder()
+	pc.HandlePostureReport(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
 	}
 }

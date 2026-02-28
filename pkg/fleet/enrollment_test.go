@@ -213,6 +213,159 @@ func TestEnrollment_DeleteToken(t *testing.T) {
 	}
 }
 
+func TestEnrollment_CreateToken_MissingRole(t *testing.T) {
+	store := tempDB(t)
+	enrollment := NewEnrollment(store)
+	ctx := context.Background()
+
+	_, err := enrollment.CreateToken(ctx, CreateTokenRequest{
+		// Role intentionally omitted
+		MaxUses:   1,
+		ExpiresIn: 3600,
+	})
+	if err == nil {
+		t.Error("expected error for missing role")
+	}
+}
+
+func TestEnrollment_CreateToken_Defaults(t *testing.T) {
+	store := tempDB(t)
+	enrollment := NewEnrollment(store)
+	ctx := context.Background()
+
+	token, err := enrollment.CreateToken(ctx, CreateTokenRequest{
+		Role: RoleProxy,
+		// MaxUses and ExpiresIn omitted — should get defaults
+	})
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+	if token.MaxUses != 1 {
+		t.Errorf("MaxUses = %d, want 1 (default)", token.MaxUses)
+	}
+	// ExpiresIn defaults to 3600s = 1 hour
+	if time.Until(token.ExpiresAt) < 59*time.Minute {
+		t.Error("ExpiresAt should be ~1 hour from now (default)")
+	}
+}
+
+func TestEnrollment_Enroll_EmptyToken(t *testing.T) {
+	store := tempDB(t)
+	enrollment := NewEnrollment(store)
+	ctx := context.Background()
+
+	_, err := enrollment.Enroll(ctx, EnrollmentRequest{
+		Token: "",
+		Name:  "test",
+	})
+	if err == nil {
+		t.Error("expected error for empty token")
+	}
+}
+
+func TestEnrollment_Enroll_EmptyName(t *testing.T) {
+	store := tempDB(t)
+	enrollment := NewEnrollment(store)
+	ctx := context.Background()
+
+	token, _ := enrollment.CreateToken(ctx, CreateTokenRequest{
+		Role:      RoleServer,
+		ExpiresIn: 3600,
+	})
+
+	_, err := enrollment.Enroll(ctx, EnrollmentRequest{
+		Token: token.Token,
+		Name:  "",
+	})
+	if err == nil {
+		t.Error("expected error for empty name")
+	}
+}
+
+func TestEnrollment_Enroll_CustomRegionOverridesToken(t *testing.T) {
+	store := tempDB(t)
+	enrollment := NewEnrollment(store)
+	ctx := context.Background()
+
+	token, _ := enrollment.CreateToken(ctx, CreateTokenRequest{
+		Role:      RoleServer,
+		Region:    "us-east",
+		MaxUses:   5,
+		ExpiresIn: 3600,
+	})
+
+	resp, err := enrollment.Enroll(ctx, EnrollmentRequest{
+		Token:  token.Token,
+		Name:   "server-1",
+		Region: "eu-west", // Override token region
+	})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+
+	node, _ := store.GetNode(ctx, resp.NodeID)
+	if node.Region != "eu-west" {
+		t.Errorf("Region = %q, want eu-west (custom region should override token)", node.Region)
+	}
+}
+
+func TestEnrollment_Enroll_InheritsTokenRegion(t *testing.T) {
+	store := tempDB(t)
+	enrollment := NewEnrollment(store)
+	ctx := context.Background()
+
+	token, _ := enrollment.CreateToken(ctx, CreateTokenRequest{
+		Role:      RoleServer,
+		Region:    "ap-south",
+		MaxUses:   5,
+		ExpiresIn: 3600,
+	})
+
+	resp, err := enrollment.Enroll(ctx, EnrollmentRequest{
+		Token: token.Token,
+		Name:  "server-2",
+		// Region omitted — should inherit from token
+	})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+
+	node, _ := store.GetNode(ctx, resp.NodeID)
+	if node.Region != "ap-south" {
+		t.Errorf("Region = %q, want ap-south (inherited from token)", node.Region)
+	}
+}
+
+func TestEnrollment_Enroll_LabelsPreserved(t *testing.T) {
+	store := tempDB(t)
+	enrollment := NewEnrollment(store)
+	ctx := context.Background()
+
+	token, _ := enrollment.CreateToken(ctx, CreateTokenRequest{
+		Role:      RoleClient,
+		ExpiresIn: 3600,
+		MaxUses:   5,
+	})
+
+	labels := map[string]string{"env": "staging", "team": "security"}
+	resp, err := enrollment.Enroll(ctx, EnrollmentRequest{
+		Token:  token.Token,
+		Name:   "client-1",
+		Labels: labels,
+	})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+
+	node, _ := store.GetNode(ctx, resp.NodeID)
+	if node.Labels["env"] != "staging" {
+		t.Errorf("Labels[env] = %q, want staging", node.Labels["env"])
+	}
+	if node.Labels["team"] != "security" {
+		t.Errorf("Labels[team] = %q, want security", node.Labels["team"])
+	}
+}
+
 func TestHashToken(t *testing.T) {
 	h1 := HashToken("test-token-1")
 	h2 := HashToken("test-token-2")
