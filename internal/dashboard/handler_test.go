@@ -318,3 +318,257 @@ func TestWriteSSEEvent(t *testing.T) {
 		t.Errorf("expected data, got %q", body)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Integration: proxy → ProxyStatsChecker → Checker → Dashboard /api/v1/compliance
+// ---------------------------------------------------------------------------
+
+// TestProxyToDashboardIntegration simulates the full data flow:
+// 1. Mock fips-proxy serves /api/v1/clients with TLS inspection stats
+// 2. ProxyStatsChecker fetches from mock proxy
+// 3. Gateway section is added to the compliance Checker
+// 4. Dashboard handler serves /api/v1/compliance with gateway data included
+func TestProxyToDashboardIntegration(t *testing.T) {
+	// Step 1: Mock fips-proxy returning client stats
+	mockProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/clients" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"summary": map[string]interface{}{
+				"total":        42,
+				"fips_capable": 38,
+				"non_fips":     4,
+			},
+		})
+	}))
+	defer mockProxy.Close()
+
+	// Step 2: ProxyStatsChecker pointed at mock proxy
+	proxyAddr := strings.TrimPrefix(mockProxy.URL, "http://")
+	proxyChecker := compliance.NewProxyStatsChecker(proxyAddr)
+
+	// Step 3: Build Checker with gateway section
+	checker := compliance.NewChecker()
+	checker.AddSection(proxyChecker.RunGatewayClientChecks())
+
+	// Step 4: Dashboard handler serves the report
+	handler := NewHandler("", checker)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/compliance", nil)
+	w := httptest.NewRecorder()
+	handler.HandleCompliance(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var report compliance.ComplianceReport
+	if err := json.NewDecoder(w.Body).Decode(&report); err != nil {
+		t.Fatalf("decode report: %v", err)
+	}
+
+	// Verify gateway section is present
+	var gatewaySec *compliance.Section
+	for i, s := range report.Sections {
+		if s.ID == "gateway" {
+			gatewaySec = &report.Sections[i]
+			break
+		}
+	}
+	if gatewaySec == nil {
+		t.Fatal("expected 'gateway' section in compliance report, not found")
+	}
+
+	if gatewaySec.Name != "Gateway Clients" {
+		t.Errorf("section name = %q, want 'Gateway Clients'", gatewaySec.Name)
+	}
+
+	if len(gatewaySec.Items) != 4 {
+		t.Fatalf("expected 4 gateway items, got %d", len(gatewaySec.Items))
+	}
+
+	// gw-1: total connections
+	gw1 := gatewaySec.Items[0]
+	if gw1.ID != "gw-1" {
+		t.Errorf("item 0 ID = %q, want gw-1", gw1.ID)
+	}
+	if gw1.Status != compliance.StatusPass {
+		t.Errorf("gw-1 status = %q, want pass", gw1.Status)
+	}
+	if !strings.Contains(gw1.What, "42") {
+		t.Errorf("gw-1 should mention 42 total connections, got: %s", gw1.What)
+	}
+
+	// gw-2: FIPS-capable (38 of 42 = ~90%, not 100% → warning)
+	gw2 := gatewaySec.Items[1]
+	if gw2.ID != "gw-2" {
+		t.Errorf("item 1 ID = %q, want gw-2", gw2.ID)
+	}
+	if gw2.Status != compliance.StatusWarning {
+		t.Errorf("gw-2 status = %q, want warning (not 100%% FIPS)", gw2.Status)
+	}
+	if !strings.Contains(gw2.What, "38") {
+		t.Errorf("gw-2 should mention 38 FIPS-capable clients, got: %s", gw2.What)
+	}
+
+	// gw-3: non-FIPS clients (4 > 0 → warning)
+	gw3 := gatewaySec.Items[2]
+	if gw3.ID != "gw-3" {
+		t.Errorf("item 2 ID = %q, want gw-3", gw3.ID)
+	}
+	if gw3.Status != compliance.StatusWarning {
+		t.Errorf("gw-3 status = %q, want warning (4 non-FIPS)", gw3.Status)
+	}
+	if !strings.Contains(gw3.What, "4") {
+		t.Errorf("gw-3 should mention 4 non-FIPS clients, got: %s", gw3.What)
+	}
+
+	// gw-4: proxy active
+	gw4 := gatewaySec.Items[3]
+	if gw4.ID != "gw-4" {
+		t.Errorf("item 3 ID = %q, want gw-4", gw4.ID)
+	}
+	if gw4.Status != compliance.StatusPass {
+		t.Errorf("gw-4 status = %q, want pass", gw4.Status)
+	}
+
+	// Verify summary counts
+	if report.Summary.Total != 4 {
+		t.Errorf("total items = %d, want 4", report.Summary.Total)
+	}
+	// 2 pass (gw-1, gw-4) + 2 warnings (gw-2, gw-3)
+	if report.Summary.Passed != 2 {
+		t.Errorf("passed = %d, want 2", report.Summary.Passed)
+	}
+	if report.Summary.Warnings != 2 {
+		t.Errorf("warnings = %d, want 2", report.Summary.Warnings)
+	}
+}
+
+// TestProxyToDashboardIntegration_ProxyDown verifies fail-closed behavior:
+// when the proxy is unreachable, the gateway section shows all-unknown items.
+func TestProxyToDashboardIntegration_ProxyDown(t *testing.T) {
+	// Point at an address that will definitely refuse connections
+	proxyChecker := compliance.NewProxyStatsChecker("127.0.0.1:1")
+
+	checker := compliance.NewChecker()
+	checker.AddSection(proxyChecker.RunGatewayClientChecks())
+
+	handler := NewHandler("", checker)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/compliance", nil)
+	w := httptest.NewRecorder()
+	handler.HandleCompliance(w, req)
+
+	var report compliance.ComplianceReport
+	if err := json.NewDecoder(w.Body).Decode(&report); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var gatewaySec *compliance.Section
+	for i, s := range report.Sections {
+		if s.ID == "gateway" {
+			gatewaySec = &report.Sections[i]
+			break
+		}
+	}
+	if gatewaySec == nil {
+		t.Fatal("expected gateway section even when proxy is down")
+	}
+
+	// All 4 items should be unknown (fail-closed)
+	for _, item := range gatewaySec.Items {
+		if item.Status != compliance.StatusUnknown {
+			t.Errorf("item %s: status = %q, want unknown (fail-closed)", item.ID, item.Status)
+		}
+	}
+
+	if report.Summary.Unknown != 4 {
+		t.Errorf("unknown count = %d, want 4", report.Summary.Unknown)
+	}
+}
+
+// TestProxyToDashboardIntegration_AllFIPS verifies the happy path:
+// 100% FIPS clients → all items pass.
+func TestProxyToDashboardIntegration_AllFIPS(t *testing.T) {
+	mockProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"summary": map[string]interface{}{
+				"total":        100,
+				"fips_capable": 100,
+				"non_fips":     0,
+			},
+		})
+	}))
+	defer mockProxy.Close()
+
+	proxyAddr := strings.TrimPrefix(mockProxy.URL, "http://")
+	proxyChecker := compliance.NewProxyStatsChecker(proxyAddr)
+
+	checker := compliance.NewChecker()
+	checker.AddSection(proxyChecker.RunGatewayClientChecks())
+
+	handler := NewHandler("", checker)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/compliance", nil)
+	w := httptest.NewRecorder()
+	handler.HandleCompliance(w, req)
+
+	var report compliance.ComplianceReport
+	if err := json.NewDecoder(w.Body).Decode(&report); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// All 4 items should pass when 100% FIPS
+	if report.Summary.Passed != 4 {
+		t.Errorf("passed = %d, want 4 (all FIPS)", report.Summary.Passed)
+	}
+	if report.Summary.Warnings != 0 {
+		t.Errorf("warnings = %d, want 0", report.Summary.Warnings)
+	}
+	if report.Summary.Failed != 0 {
+		t.Errorf("failed = %d, want 0", report.Summary.Failed)
+	}
+}
+
+// TestProxyToDashboardIntegration_SSE verifies gateway data flows through SSE.
+func TestProxyToDashboardIntegration_SSE(t *testing.T) {
+	mockProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"summary": map[string]interface{}{
+				"total":        10,
+				"fips_capable": 8,
+				"non_fips":     2,
+			},
+		})
+	}))
+	defer mockProxy.Close()
+
+	proxyAddr := strings.TrimPrefix(mockProxy.URL, "http://")
+	proxyChecker := compliance.NewProxyStatsChecker(proxyAddr)
+
+	checker := compliance.NewChecker()
+	checker.AddSection(proxyChecker.RunGatewayClientChecks())
+
+	handler := NewHandler("", checker)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events", nil)
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	handler.HandleSSE(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, "event: compliance") {
+		t.Error("expected SSE compliance event")
+	}
+	if !strings.Contains(body, "gateway") {
+		t.Error("expected gateway section in SSE data")
+	}
+	if !strings.Contains(body, "gw-1") {
+		t.Error("expected gw-1 item in SSE data")
+	}
+}
