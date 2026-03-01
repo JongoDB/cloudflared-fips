@@ -5,11 +5,18 @@ package wizard
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/cloudflared-fips/cloudflared-fips/internal/tui/common"
 	"github.com/cloudflared-fips/cloudflared-fips/internal/tui/config"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo"
+)
+
+// Fixed line counts for wizard chrome (header + progress + footer).
+const (
+	headerLines = 6 // title, version, divider, blank, progress, blank
+	footerLines = 4 // blank, border, nav hints, padding
 )
 
 // WizardModel is the top-level Bubbletea model for the setup wizard.
@@ -21,6 +28,7 @@ type WizardModel struct {
 	height    int
 	done      bool
 	err       string
+	viewport  viewport.Model
 
 	// Page 1 is always the RoleTierPage; kept as typed reference for
 	// rebuild decisions.
@@ -39,8 +47,11 @@ func NewWizardModel() WizardModel {
 	m := WizardModel{
 		config:       cfg,
 		roleTierPage: rtp,
+		viewport:     viewport.New(80, 20),
 	}
+	m.viewport.MouseWheelEnabled = false
 	m.rebuildPages()
+	m.syncViewport()
 	return m
 }
 
@@ -93,6 +104,30 @@ func (m *WizardModel) needsRebuild() bool {
 		m.roleTierPage.SelectedTier() != m.lastTier
 }
 
+// syncViewport sets the viewport content to the current page's rendered output
+// and scrolls to keep the focused field visible.
+func (m *WizardModel) syncViewport() {
+	content := m.pages[m.pageIndex].View()
+
+	// Add error if present.
+	if m.err != "" {
+		content += "\n\n" + common.ErrorStyle.Render(m.err)
+	}
+
+	m.viewport.SetContent(content)
+
+	// Auto-scroll to keep focused field visible. Target: focused field
+	// is ~3 lines from the top of the viewport.
+	offset := m.pages[m.pageIndex].ScrollOffset()
+	margin := 3
+	if offset > margin {
+		offset -= margin
+	} else {
+		offset = 0
+	}
+	m.viewport.SetYOffset(offset)
+}
+
 // Init initializes the wizard, focusing the first page.
 func (m WizardModel) Init() tea.Cmd {
 	return m.pages[0].Focus()
@@ -107,6 +142,14 @@ func (m WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, p := range m.pages {
 			p.SetSize(msg.Width-4, msg.Height-8)
 		}
+		// Resize viewport to fit between header and footer.
+		vpHeight := msg.Height - headerLines - footerLines
+		if vpHeight < 5 {
+			vpHeight = 5
+		}
+		m.viewport.Width = msg.Width - 4 // account for PageStyle padding
+		m.viewport.Height = vpHeight
+		m.syncViewport()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -135,6 +178,7 @@ func (m WizardModel) handlePageAdvance(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// For the review page, enter triggers config write / provision — don't advance
 	if m.pageIndex == total-1 {
+		m.syncViewport()
 		return m, cmd
 	}
 
@@ -144,6 +188,7 @@ func (m WizardModel) handlePageAdvance(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.advancePage()
 	}
 
+	m.syncViewport()
 	return m, cmd
 }
 
@@ -155,8 +200,10 @@ func (m WizardModel) handlePageBack(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if cmd == nil && m.pageIndex > 0 {
 		m.pageIndex--
 		focusCmd := m.pages[m.pageIndex].Focus()
+		m.syncViewport()
 		return m, focusCmd
 	}
+	m.syncViewport()
 	return m, cmd
 }
 
@@ -166,6 +213,7 @@ func (m WizardModel) advancePage() (tea.Model, tea.Cmd) {
 	// Validate current page
 	if !m.pages[m.pageIndex].Validate() {
 		m.err = "Please fix the errors above before continuing."
+		m.syncViewport()
 		return m, nil
 	}
 	m.err = ""
@@ -198,6 +246,7 @@ func (m WizardModel) advancePage() (tea.Model, tea.Cmd) {
 		}
 
 		focusCmd := m.pages[m.pageIndex].Focus()
+		m.syncViewport()
 		return m, focusCmd
 	}
 	return m, nil
@@ -206,6 +255,7 @@ func (m WizardModel) advancePage() (tea.Model, tea.Cmd) {
 func (m WizardModel) delegateToPage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	page, cmd := m.pages[m.pageIndex].Update(msg)
 	m.pages[m.pageIndex] = page
+	m.syncViewport()
 	return m, cmd
 }
 
@@ -225,14 +275,8 @@ func (m WizardModel) View() string {
 	b.WriteString(renderProgress(m.pageIndex+1, total, m.pages[m.pageIndex].Title()))
 	b.WriteString("\n\n")
 
-	// Page content
-	b.WriteString(m.pages[m.pageIndex].View())
-
-	// Error
-	if m.err != "" {
-		b.WriteString("\n\n")
-		b.WriteString(common.ErrorStyle.Render(m.err))
-	}
+	// Page content via viewport (enables scrolling for tall pages)
+	b.WriteString(m.viewport.View())
 
 	// Footer
 	b.WriteString("\n")

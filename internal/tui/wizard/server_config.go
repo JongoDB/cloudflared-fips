@@ -149,6 +149,14 @@ func (p *ServerConfigPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	return p, cmd
 }
 
+func (p *ServerConfigPage) ScrollOffset() int {
+	offsets := []int{2, 7, 13, 18, 23, 28, 32, 37}
+	if p.focus < len(offsets) {
+		return offsets[p.focus]
+	}
+	return 0
+}
+
 func (p *ServerConfigPage) Validate() bool {
 	valid := true
 	if !p.serviceName.RunValidation() {

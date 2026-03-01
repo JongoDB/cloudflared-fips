@@ -153,6 +153,11 @@ func (p *RoleTierPage) isSelectorFocused() bool {
 	return false
 }
 
+func (p *RoleTierPage) ScrollOffset() int {
+	// Page is short enough — no scrolling needed.
+	return 0
+}
+
 func (p *RoleTierPage) Validate() bool { return true }
 
 func (p *RoleTierPage) Apply(cfg *config.Config) {

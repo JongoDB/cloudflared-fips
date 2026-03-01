@@ -83,7 +83,7 @@ var (
 
 // Input prompt styles — show cursor indicator only when focused.
 var (
-	FocusedPrompt = lipgloss.NewStyle().Foreground(ColorPrimary).Render("> ")
+	FocusedPrompt = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render("▸ ")
 	BlurredPrompt = "  "
 )
 

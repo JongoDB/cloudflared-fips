@@ -167,6 +167,14 @@ func (p *ProxyConfigPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	return p, cmd
 }
 
+func (p *ProxyConfigPage) ScrollOffset() int {
+	offsets := []int{2, 7, 13, 18, 23, 28, 33, 39, 44}
+	if p.focus < len(offsets) {
+		return offsets[p.focus]
+	}
+	return 0
+}
+
 func (p *ProxyConfigPage) Validate() bool {
 	valid := true
 	if !p.listenAddr.RunValidation() {

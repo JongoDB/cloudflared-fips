@@ -109,6 +109,14 @@ func (p *AgentConfigPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	return p, cmd
 }
 
+func (p *AgentConfigPage) ScrollOffset() int {
+	offsets := []int{0, 9, 12, 15}
+	if p.focus < len(offsets) {
+		return offsets[p.focus]
+	}
+	return 0
+}
+
 func (p *AgentConfigPage) Validate() bool {
 	valid := true
 	if !p.controllerURL.RunValidation() {

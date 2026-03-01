@@ -2,6 +2,7 @@ package common
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Toggle is a boolean [x]/[ ] toggle component.
@@ -46,14 +47,14 @@ func (t *Toggle) Update(msg tea.Msg) {
 
 // View renders the toggle.
 func (t *Toggle) View() string {
-	check := "[ ]"
+	check := lipgloss.NewStyle().Foreground(ColorMuted).Render("[ ]")
 	if t.Enabled {
-		check = SuccessStyle.Render("[x]")
+		check = lipgloss.NewStyle().Bold(true).Foreground(ColorSuccess).Render("[✓]")
 	}
 
 	label := t.Label
 	if t.Focused {
-		label = LabelStyle.Render(label)
+		label = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(label)
 	} else {
 		label = MutedStyle.Render(label)
 	}
@@ -65,7 +66,7 @@ func (t *Toggle) View() string {
 
 	cursor := "  "
 	if t.Focused {
-		cursor = "> "
+		cursor = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render("▸ ")
 	}
 
 	return cursor + check + " " + label + hint

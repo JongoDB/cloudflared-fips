@@ -426,6 +426,16 @@ func (p *DashboardWiringPage) fetchZones(accountID string) tea.Cmd {
 	}
 }
 
+func (p *DashboardWiringPage) ScrollOffset() int {
+	// Base field offsets (apiToken, zone, account, tunnelID, metricsAddr, mdmProvider).
+	offsets := []int{0, 5, 10, 15, 20, 25}
+	if p.focus < len(offsets) {
+		return offsets[p.focus]
+	}
+	// MDM-specific fields start after the selector.
+	return 33 + (p.focus-6)*5
+}
+
 func (p *DashboardWiringPage) Validate() bool {
 	valid := true
 	// If using pickers, values come from selected items — skip hex validation

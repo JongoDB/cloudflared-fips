@@ -102,6 +102,11 @@ func (p *FIPSOptionsPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	return p, nil
 }
 
+func (p *FIPSOptionsPage) ScrollOffset() int {
+	// Page is short enough — no scrolling needed.
+	return 0
+}
+
 func (p *FIPSOptionsPage) Validate() bool {
 	return true
 }

@@ -32,4 +32,9 @@ type Page interface {
 
 	// Focus is called when the page becomes active.
 	Focus() tea.Cmd
+
+	// ScrollOffset returns the approximate line offset of the currently
+	// focused field. The wizard viewport uses this to auto-scroll so the
+	// focused field stays visible.
+	ScrollOffset() int
 }

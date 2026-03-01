@@ -7,11 +7,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// simulateKey creates a tea.KeyMsg for testing.
-func simulateKey(key string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
-}
-
 func simulateTab() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyTab}
 }
@@ -35,11 +30,12 @@ func TestWizardFocus_RoleTierPage(t *testing.T) {
 	if cmd == nil {
 		t.Error("RoleTierPage.Focus() returned nil — should return a command to trigger re-render")
 	}
+	m.syncViewport()
 
 	view := m.View()
 
 	// The role selector should show a focused cursor ">"
-	if !strings.Contains(view, "> ") {
+	if !strings.Contains(view, "▸") {
 		t.Error("RoleTierPage should show '> ' cursor indicator when focused")
 	}
 }
@@ -115,7 +111,7 @@ func TestWizardFocus_AdvanceToFIPSOptions(t *testing.T) {
 
 	// View should show cursor on first toggle
 	view := fips.View()
-	if !strings.Contains(view, "> ") {
+	if !strings.Contains(view, "▸") {
 		t.Error("FIPSOptionsPage should show '> ' cursor on focused toggle")
 	}
 }
@@ -202,6 +198,52 @@ func TestWizardFocus_FullControllerFlow(t *testing.T) {
 	}
 }
 
+// TestWizardViewport_ScrollsToFocusedField verifies that on a tall page
+// (ControllerConfigPage, 10 fields), the viewport auto-scrolls so the
+// focused field is visible. With a short viewport (15 lines), the first
+// field should be visible initially, and tabbing far enough should scroll.
+func TestWizardViewport_ScrollsToFocusedField(t *testing.T) {
+	m := NewWizardModel()
+	// Simulate a small terminal so viewport clips the content.
+	m.width = 80
+	m.height = 25
+	vpHeight := m.height - headerLines - footerLines
+	m.viewport.Width = m.width - 4
+	m.viewport.Height = vpHeight
+	for _, p := range m.pages {
+		p.SetSize(m.width-4, m.height-8)
+	}
+	m.pages[0].Focus()
+
+	var model tea.Model = m
+
+	// Advance past RoleTierPage (3 tabs) → ControllerConfigPage
+	for i := 0; i < 3; i++ {
+		model, _ = model.Update(simulateTab())
+	}
+	m = model.(WizardModel)
+	if m.pageIndex != 1 {
+		t.Fatalf("expected page 1, got %d", m.pageIndex)
+	}
+
+	// First field focused — viewport should show "Admin API Key"
+	view := m.View()
+	if !strings.Contains(view, "Admin API Key") {
+		t.Error("viewport should show 'Admin API Key' when first field is focused")
+	}
+
+	// Tab down to field 6 (enforcementMode) — this is far enough to require scrolling.
+	for i := 0; i < 6; i++ {
+		model, _ = model.Update(simulateTab())
+	}
+	m = model.(WizardModel)
+
+	view = m.View()
+	if !strings.Contains(view, "Enforcement Mode") {
+		t.Error("after tabbing to field 6, viewport should show 'Enforcement Mode'")
+	}
+}
+
 // TestWizardFocus_BackNavigation verifies that shift+tab correctly restores
 // focus when going back to a previous page.
 func TestWizardFocus_BackNavigation(t *testing.T) {
@@ -236,7 +278,7 @@ func TestWizardFocus_BackNavigation(t *testing.T) {
 
 	// Verify RoleTierPage shows focus
 	view := m.View()
-	if !strings.Contains(view, "> ") {
+	if !strings.Contains(view, "▸") {
 		t.Error("RoleTierPage should show cursor after returning")
 	}
 }

@@ -159,11 +159,11 @@ func (e *IngressEditor) View() string {
 	for i, entry := range e.Entries {
 		cursor := "  "
 		if i == e.Cursor && e.Focused && !e.Adding {
-			cursor = "> "
+			cursor = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render("▸ ")
 		}
 		style := MutedStyle
 		if i == e.Cursor && e.Focused {
-			style = lipgloss.NewStyle().Foreground(ColorWhite)
+			style = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite)
 		}
 		b.WriteString(cursor + style.Render(fmt.Sprintf("%s → %s", entry.Hostname, entry.Service)) + "\n")
 	}

@@ -165,6 +165,11 @@ func (p *TierSpecificPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	return p, cmd
 }
 
+func (p *TierSpecificPage) ScrollOffset() int {
+	// Both tier variants are short enough to fit most terminals.
+	return 0
+}
+
 func (p *TierSpecificPage) Validate() bool {
 	if p.tier == "self_hosted" {
 		valid := true

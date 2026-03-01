@@ -324,7 +324,8 @@ func BuildProvisionCommand(cfg *config.Config) (script string, args []string) {
 	return script, args
 }
 
-func (p *ReviewPage) Validate() bool { return true }
+func (p *ReviewPage) ScrollOffset() int { return 0 }
+func (p *ReviewPage) Validate() bool    { return true }
 
 func (p *ReviewPage) Apply(_ *config.Config) {}
 

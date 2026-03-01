@@ -92,20 +92,33 @@ func (s *Selector) View() string {
 		selected := i == s.Cursor
 
 		cursor := "  "
-		radio := "( )"
+		radio := lipgloss.NewStyle().Foreground(ColorMuted).Render("○")
 		if selected {
-			cursor = "> "
-			radio = lipgloss.NewStyle().Foreground(ColorPrimary).Render("(●)")
+			if s.Focused {
+				cursor = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render("▸ ")
+				radio = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render("●")
+			} else {
+				cursor = "  "
+				radio = lipgloss.NewStyle().Foreground(ColorPrimary).Render("●")
+			}
 		}
 
 		label := opt.Label
 		if selected && s.Focused {
 			label = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(label)
+		} else if selected {
+			label = lipgloss.NewStyle().Foreground(ColorWhite).Render(label)
+		} else {
+			label = lipgloss.NewStyle().Foreground(ColorDim).Render(label)
 		}
 
 		b.WriteString(cursor + radio + " " + label + "\n")
 		if opt.Description != "" {
-			desc := HintStyle.Render("    " + opt.Description)
+			descStyle := HintStyle
+			if selected && s.Focused {
+				descStyle = lipgloss.NewStyle().Foreground(ColorDim)
+			}
+			desc := descStyle.Render("    " + opt.Description)
 			b.WriteString(desc + "\n")
 		}
 	}

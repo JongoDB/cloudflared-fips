@@ -171,6 +171,16 @@ func (p *ControllerConfigPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	return p, cmd
 }
 
+func (p *ControllerConfigPage) ScrollOffset() int {
+	// Approximate line offsets per field in the View() output.
+	// Each TextInput = ~2 lines (label + input), each \n\n gap = 1 blank.
+	offsets := []int{0, 5, 8, 13, 16, 22, 28, 35, 38, 41}
+	if p.focus < len(offsets) {
+		return offsets[p.focus]
+	}
+	return 0
+}
+
 func (p *ControllerConfigPage) Validate() bool {
 	return p.tunnelToken.RunValidation()
 }
