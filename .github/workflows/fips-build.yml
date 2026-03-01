@@ -598,6 +598,7 @@ jobs:
         id: notes
         run: |
           TAG="${{ github.ref_name }}"
+          VER="${TAG#v}"  # Strip leading 'v': v0.3.0 → 0.3.0
 
           # Find the previous tag to build a changelog
           PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -1)
@@ -630,23 +631,15 @@ jobs:
             echo ""
             echo "### Install"
             echo ""
-            echo "Download the package for your platform from the assets below, then:"
-            echo ""
             echo "**RHEL / Rocky / Alma 9:**"
             echo '```bash'
-            echo "sudo dnf install ${RELEASE_URL}/cloudflared-fips-\${VERSION}.el9.x86_64.rpm"
-            echo '```'
-            echo ""
-            echo "**Ubuntu / Debian:**"
-            echo '```bash'
-            echo "curl -fLO ${RELEASE_URL}/cloudflared-fips_\${VERSION}_amd64.deb"
-            echo "sudo dpkg -i cloudflared-fips_*_amd64.deb"
+            echo "sudo dnf install ${RELEASE_URL}/cloudflared-fips-${VER}-1.el9.x86_64.rpm"
             echo '```'
             echo ""
             echo "**macOS:**"
             echo '```bash'
-            echo "curl -fLO ${RELEASE_URL}/cloudflared-fips-\${VERSION}.pkg"
-            echo "sudo installer -pkg cloudflared-fips-*.pkg -target /"
+            echo "curl -fLO ${RELEASE_URL}/cloudflared-fips-${VER}.pkg"
+            echo "sudo installer -pkg cloudflared-fips-${VER}.pkg -target /"
             echo '```'
             echo ""
             echo "### Configure"
