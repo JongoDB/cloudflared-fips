@@ -14,13 +14,6 @@ import (
 // loginCompleteMsg is sent when the interactive cloudflared login finishes.
 type loginCompleteMsg struct{ err error }
 
-// fieldNavMsg is a no-op message returned when the page handles Tab/Enter
-// internally (field-to-field navigation). The wizard uses non-nil cmd to
-// distinguish "page handled it" from "page is done, advance wizard".
-type fieldNavMsg struct{}
-
-func fieldNav() tea.Msg { return fieldNavMsg{} }
-
 // Async messages for tunnel CLI operations.
 type tunnelsListedMsg struct {
 	tunnels []common.CLITunnel

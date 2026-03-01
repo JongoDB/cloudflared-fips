@@ -4,6 +4,19 @@ package config
 
 // Config represents the full cloudflared-fips configuration file.
 type Config struct {
+	// Fleet / provisioning fields
+	Role            string `yaml:"role,omitempty"`
+	TunnelToken     string `yaml:"tunnel_token,omitempty"`
+	ControllerURL   string `yaml:"controller_url,omitempty"`
+	EnrollmentToken string `yaml:"enrollment_token,omitempty"`
+	AdminKey        string `yaml:"fleet_admin_key,omitempty"`
+	NodeName        string `yaml:"node_name,omitempty"`
+	NodeRegion      string `yaml:"node_region,omitempty"`
+	SkipFIPS        bool   `yaml:"skip_fips,omitempty"`
+
+	// Transient flags (not persisted to YAML)
+	WithCF bool `yaml:"-"`
+
 	Tunnel          string          `yaml:"tunnel"`
 	CredentialsFile string          `yaml:"credentials-file"`
 	Protocol        string          `yaml:"protocol"`
@@ -85,6 +98,7 @@ type MDMConfig struct {
 // NewDefaultConfig returns a Config populated with safe defaults.
 func NewDefaultConfig() *Config {
 	return &Config{
+		Role:            "server",
 		CredentialsFile: "/etc/cloudflared/credentials.json",
 		Protocol:        "quic",
 		GracePeriod:     "30s",

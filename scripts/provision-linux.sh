@@ -55,6 +55,10 @@ NODE_REGION=""
 TLS_CERT=""
 TLS_KEY=""
 UPSTREAM="http://localhost:8080"
+CF_API_TOKEN=""
+CF_ZONE_ID=""
+CF_ACCOUNT_ID=""
+CF_TUNNEL_ID=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -71,6 +75,10 @@ while [[ $# -gt 0 ]]; do
         --cert)            TLS_CERT="$2"; shift 2 ;;
         --key)             TLS_KEY="$2"; shift 2 ;;
         --upstream)        UPSTREAM="$2"; shift 2 ;;
+        --cf-api-token)    CF_API_TOKEN="$2"; shift 2 ;;
+        --cf-zone-id)      CF_ZONE_ID="$2"; shift 2 ;;
+        --cf-account-id)   CF_ACCOUNT_ID="$2"; shift 2 ;;
+        --cf-tunnel-id)    CF_TUNNEL_ID="$2"; shift 2 ;;
         --help|-h)
             echo "Usage: sudo $0 [OPTIONS]"
             echo ""
@@ -91,6 +99,10 @@ while [[ $# -gt 0 ]]; do
             echo "  --cert PATH          TLS certificate path (tier 3 server/proxy/controller)"
             echo "  --key PATH           TLS private key path (tier 3 server/proxy/controller)"
             echo "  --upstream URL       Origin app URL (default: http://localhost:8080)"
+            echo "  --cf-api-token TOK   Cloudflare API token (non-interactive)"
+            echo "  --cf-zone-id ID      Cloudflare zone ID (non-interactive)"
+            echo "  --cf-account-id ID   Cloudflare account ID (non-interactive)"
+            echo "  --cf-tunnel-id ID    Cloudflare tunnel ID (non-interactive)"
             exit 0
             ;;
         *) echo "Unknown flag: $1"; exit 1 ;;
@@ -574,7 +586,16 @@ phase3_install() {
 
     # --- Environment file for Cloudflare API (optional) ---
     ENV_FILE="${CONFIG_DIR}/env"
-    if [[ "$WITH_CF" == "true" && ! -f "$ENV_FILE" ]]; then
+    if [[ -n "$CF_API_TOKEN" ]]; then
+        # Non-interactive: credentials passed via flags (from TUI wizard)
+        log "Writing Cloudflare API credentials from flags..."
+        cat > "$ENV_FILE" <<ENVEOF
+CF_API_TOKEN=${CF_API_TOKEN}
+CF_ZONE_ID=${CF_ZONE_ID}
+CF_ACCOUNT_ID=${CF_ACCOUNT_ID}
+CF_TUNNEL_ID=${CF_TUNNEL_ID}
+ENVEOF
+    elif [[ "$WITH_CF" == "true" && ! -f "$ENV_FILE" ]]; then
         log "Setting up Cloudflare API credentials..."
         echo ""
         read -rp "  CF_API_TOKEN: " CF_API_TOKEN

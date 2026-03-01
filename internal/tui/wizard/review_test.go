@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -132,8 +133,8 @@ func TestRenderNavHints_Last(t *testing.T) {
 	if !strings.Contains(got, "Back") {
 		t.Error("last page should show Back hint")
 	}
-	if !strings.Contains(got, "Write Config") {
-		t.Error("last page should show Write Config hint")
+	if !strings.Contains(got, "Provision") {
+		t.Error("last page should show Review & Provision hint")
 	}
 	if strings.Contains(got, "Tab/Enter=Next") {
 		t.Error("last page should not show Next hint")
@@ -145,8 +146,8 @@ func TestRenderNavHints_FirstAndLast(t *testing.T) {
 	if strings.Contains(got, "Back") {
 		t.Error("first+last should not show Back")
 	}
-	if !strings.Contains(got, "Write Config") {
-		t.Error("last should show Write Config")
+	if !strings.Contains(got, "Provision") {
+		t.Error("last should show Review & Provision")
 	}
 }
 
@@ -181,6 +182,32 @@ func TestParseInt(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// tierNumber
+// ---------------------------------------------------------------------------
+
+func TestTierNumber(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"standard", "1"},
+		{"regional_keyless", "2"},
+		{"self_hosted", "3"},
+		{"", "1"},
+		{"unknown", "1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := tierNumber(tt.input)
+			if got != tt.want {
+				t.Errorf("tierNumber(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // renderSummary
 // ---------------------------------------------------------------------------
 
@@ -192,16 +219,16 @@ func TestRenderSummary_NilConfig(t *testing.T) {
 	}
 }
 
-func TestRenderSummary_StandardTier(t *testing.T) {
+func TestRenderSummary_ServerRole(t *testing.T) {
 	p := NewReviewPage()
 	p.cfg = &config.Config{
-		Tunnel:          "abc-123-uuid",
-		CredentialsFile: "/home/user/.cloudflared/abc.json",
-		Protocol:        "quic",
+		Role:           "server",
+		TunnelToken:    "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QifQ",
+		Protocol:       "quic",
+		DeploymentTier: "standard",
 		Ingress: []config.IngressRule{
 			{Hostname: "app.example.com", Service: "https://localhost:8443"},
 		},
-		DeploymentTier: "standard",
 		Dashboard: config.DashboardConfig{
 			CFAPIToken:     "secret-token-value",
 			ZoneID:         "zone-123",
@@ -211,21 +238,33 @@ func TestRenderSummary_StandardTier(t *testing.T) {
 			MDM:            config.MDMConfig{Provider: "none"},
 		},
 		FIPS: config.FIPSConfig{
-			SelfTestOnStart:      true,
+			SelfTestOnStart:       true,
 			FailOnSelfTestFailure: true,
-			VerifySignature:      false,
-			SelfTestOutput:       "/var/log/cloudflared/selftest.json",
+			VerifySignature:       false,
+			SelfTestOutput:        "/var/log/cloudflared/selftest.json",
 		},
 	}
 
 	got := p.renderSummary()
 
+	// Role & Tier section
+	if !strings.Contains(got, "ROLE & TIER") {
+		t.Error("should contain ROLE & TIER section")
+	}
+	if !strings.Contains(got, "server") {
+		t.Error("should show role")
+	}
+
 	// Tunnel section
 	if !strings.Contains(got, "TUNNEL") {
-		t.Error("should contain TUNNEL section header")
+		t.Error("should contain TUNNEL section for server role")
 	}
-	if !strings.Contains(got, "abc-123-uuid") {
-		t.Error("should show tunnel UUID")
+	// Tunnel token should be masked
+	if strings.Contains(got, "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QifQ") {
+		t.Error("tunnel token should be masked")
+	}
+	if !strings.Contains(got, "****") {
+		t.Error("tunnel token should show masked form ****")
 	}
 	if !strings.Contains(got, "quic") {
 		t.Error("should show protocol")
@@ -234,23 +273,12 @@ func TestRenderSummary_StandardTier(t *testing.T) {
 		t.Error("should show ingress hostname")
 	}
 
-	// Dashboard section — token should be masked
-	if !strings.Contains(got, "DASHBOARD") {
-		t.Error("should contain DASHBOARD WIRING section")
+	// Dashboard section
+	if !strings.Contains(got, "DASHBOARD WIRING") {
+		t.Error("should contain DASHBOARD WIRING section for server role")
 	}
 	if strings.Contains(got, "secret-token-value") {
-		t.Error("API token should be masked, not shown in cleartext")
-	}
-	if !strings.Contains(got, "****") {
-		t.Error("API token should show masked form ****")
-	}
-
-	// Deployment tier
-	if !strings.Contains(got, "DEPLOYMENT TIER") {
-		t.Error("should contain DEPLOYMENT TIER section")
-	}
-	if !strings.Contains(got, "standard") {
-		t.Error("should show tier value")
+		t.Error("API token should be masked")
 	}
 
 	// FIPS options
@@ -260,11 +288,92 @@ func TestRenderSummary_StandardTier(t *testing.T) {
 	if !strings.Contains(got, "true") {
 		t.Error("should show self-test on start = true")
 	}
+
+	// Provision command
+	if !strings.Contains(got, "PROVISION COMMAND") {
+		t.Error("should contain PROVISION COMMAND section")
+	}
+	if !strings.Contains(got, "--role server") {
+		t.Error("provision command should include --role server")
+	}
+}
+
+func TestRenderSummary_ControllerRole(t *testing.T) {
+	p := NewReviewPage()
+	p.cfg = &config.Config{
+		Role:           "controller",
+		AdminKey:       "super-secret-admin-key",
+		DeploymentTier: "standard",
+		Dashboard:      config.DashboardConfig{MDM: config.MDMConfig{Provider: "none"}},
+		FIPS:           config.FIPSConfig{},
+	}
+
+	got := p.renderSummary()
+	if !strings.Contains(got, "CONTROLLER") {
+		t.Error("should contain CONTROLLER section")
+	}
+	if strings.Contains(got, "super-secret-admin-key") {
+		t.Error("admin key should be masked")
+	}
+	if !strings.Contains(got, "****") {
+		t.Error("admin key should show masked form")
+	}
+}
+
+func TestRenderSummary_ClientRole(t *testing.T) {
+	p := NewReviewPage()
+	p.cfg = &config.Config{
+		Role:            "client",
+		ControllerURL:   "https://ctrl.example.com:8080",
+		EnrollmentToken: "tok-1234567890",
+		DeploymentTier:  "standard",
+		FIPS:            config.FIPSConfig{},
+	}
+
+	got := p.renderSummary()
+	if !strings.Contains(got, "AGENT") {
+		t.Error("should contain AGENT section for client role")
+	}
+	if !strings.Contains(got, "ctrl.example.com") {
+		t.Error("should show controller URL")
+	}
+	// Dashboard wiring should NOT appear for client
+	if strings.Contains(got, "DASHBOARD WIRING") {
+		t.Error("client role should not show DASHBOARD WIRING section")
+	}
+}
+
+func TestRenderSummary_ProxyRole(t *testing.T) {
+	p := NewReviewPage()
+	p.cfg = &config.Config{
+		Role:            "proxy",
+		DeploymentTier:  "self_hosted",
+		ProxyListenAddr: "0.0.0.0:443",
+		ProxyCertFile:   "/etc/pki/tls/proxy.pem",
+		ProxyKeyFile:    "/etc/pki/tls/proxy-key.pem",
+		ProxyUpstream:   "https://app.internal:8443",
+		FIPS:            config.FIPSConfig{},
+	}
+
+	got := p.renderSummary()
+	if !strings.Contains(got, "FIPS PROXY") {
+		t.Error("should contain FIPS PROXY section for proxy role")
+	}
+	if !strings.Contains(got, "0.0.0.0:443") {
+		t.Error("should show proxy listen address")
+	}
+	if !strings.Contains(got, "proxy.pem") {
+		t.Error("should show proxy cert")
+	}
+	if !strings.Contains(got, "app.internal") {
+		t.Error("should show proxy upstream")
+	}
 }
 
 func TestRenderSummary_Tier2Fields(t *testing.T) {
 	p := NewReviewPage()
 	p.cfg = &config.Config{
+		Role:             "server",
 		DeploymentTier:   "regional_keyless",
 		KeylessSSLHost:   "keyless.example.com",
 		KeylessSSLPort:   2407,
@@ -282,33 +391,10 @@ func TestRenderSummary_Tier2Fields(t *testing.T) {
 	}
 }
 
-func TestRenderSummary_Tier3Fields(t *testing.T) {
-	p := NewReviewPage()
-	p.cfg = &config.Config{
-		DeploymentTier:  "self_hosted",
-		ProxyListenAddr: "0.0.0.0:443",
-		ProxyCertFile:   "/etc/pki/tls/proxy.pem",
-		ProxyKeyFile:    "/etc/pki/tls/proxy-key.pem",
-		ProxyUpstream:   "https://app.internal:8443",
-		Dashboard:       config.DashboardConfig{MDM: config.MDMConfig{Provider: "none"}},
-		FIPS:            config.FIPSConfig{},
-	}
-
-	got := p.renderSummary()
-	if !strings.Contains(got, "0.0.0.0:443") {
-		t.Error("tier 3 should show Proxy Listen address")
-	}
-	if !strings.Contains(got, "proxy.pem") {
-		t.Error("tier 3 should show Proxy Cert")
-	}
-	if !strings.Contains(got, "app.internal") {
-		t.Error("tier 3 should show Proxy Upstream")
-	}
-}
-
 func TestRenderSummary_MDMIntune(t *testing.T) {
 	p := NewReviewPage()
 	p.cfg = &config.Config{
+		Role:           "server",
 		DeploymentTier: "standard",
 		Dashboard: config.DashboardConfig{
 			MDM: config.MDMConfig{
@@ -328,7 +414,6 @@ func TestRenderSummary_MDMIntune(t *testing.T) {
 	if !strings.Contains(got, "tenant-abc") {
 		t.Error("should show Intune Tenant ID")
 	}
-	// Client secret should be masked
 	if strings.Contains(got, "super-secret-value") {
 		t.Error("client secret should be masked")
 	}
@@ -337,6 +422,7 @@ func TestRenderSummary_MDMIntune(t *testing.T) {
 func TestRenderSummary_MDMJamf(t *testing.T) {
 	p := NewReviewPage()
 	p.cfg = &config.Config{
+		Role:           "server",
 		DeploymentTier: "standard",
 		Dashboard: config.DashboardConfig{
 			MDM: config.MDMConfig{
@@ -355,7 +441,6 @@ func TestRenderSummary_MDMJamf(t *testing.T) {
 	if !strings.Contains(got, "jamf.example.com") {
 		t.Error("should show Jamf Base URL")
 	}
-	// API token should be masked
 	if strings.Contains(got, "jamf-api-token-12345") {
 		t.Error("API token should be masked")
 	}
@@ -364,6 +449,7 @@ func TestRenderSummary_MDMJamf(t *testing.T) {
 func TestRenderSummary_CatchAllIngress(t *testing.T) {
 	p := NewReviewPage()
 	p.cfg = &config.Config{
+		Role: "server",
 		Ingress: []config.IngressRule{
 			{Hostname: "", Service: "http_status:404"},
 		},
@@ -372,7 +458,6 @@ func TestRenderSummary_CatchAllIngress(t *testing.T) {
 	}
 
 	got := p.renderSummary()
-	// Catch-all rules have empty hostname → show "* →"
 	if !strings.Contains(got, "* →") {
 		t.Error("catch-all ingress should show '* →'")
 	}
@@ -384,8 +469,9 @@ func TestRenderSummary_CatchAllIngress(t *testing.T) {
 
 func TestNewWizardModel(t *testing.T) {
 	m := NewWizardModel()
+	// Default role is "server" → pages: RoleTier, ServerConfig, DashboardWiring, FIPS, Review = 5
 	if len(m.pages) != 5 {
-		t.Errorf("expected 5 pages, got %d", len(m.pages))
+		t.Errorf("expected 5 pages for default server role, got %d", len(m.pages))
 	}
 	if m.pageIndex != 0 {
 		t.Errorf("pageIndex = %d, want 0", m.pageIndex)
@@ -397,9 +483,12 @@ func TestNewWizardModel(t *testing.T) {
 		t.Error("should not be done initially")
 	}
 
-	// Verify page titles
-	expectedTitles := []string{"Tunnel Configuration", "Dashboard Wiring", "Deployment Tier", "FIPS Options", "Review & Write"}
+	// Verify page titles for default server role
+	expectedTitles := []string{"Role & Tier", "Server Config", "Dashboard Wiring", "FIPS Options", "Review & Provision"}
 	for i, want := range expectedTitles {
+		if i >= len(m.pages) {
+			break
+		}
 		got := m.pages[i].Title()
 		if got != want {
 			t.Errorf("page %d title = %q, want %q", i, got, want)
@@ -423,5 +512,169 @@ func TestNewWizardModel_View(t *testing.T) {
 	}
 	if !strings.Contains(view, "Step 1 of 5") {
 		t.Error("View should show step progress")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// BuildProvisionCommand
+// ---------------------------------------------------------------------------
+
+func TestBuildProvisionCommand_ServerDefaults(t *testing.T) {
+	cfg := &config.Config{
+		Role:           "server",
+		DeploymentTier: "standard",
+		TunnelToken:    "eyJtest",
+	}
+
+	script, args := BuildProvisionCommand(cfg)
+
+	if runtime.GOOS == "darwin" {
+		if script != "./scripts/provision-macos.sh" {
+			t.Errorf("expected macOS script, got %q", script)
+		}
+	} else {
+		if script != "./scripts/provision-linux.sh" {
+			t.Errorf("expected Linux script, got %q", script)
+		}
+	}
+
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "--role server") {
+		t.Error("should include --role server")
+	}
+	if !strings.Contains(argStr, "--tier 1") {
+		t.Error("should include --tier 1 for standard tier")
+	}
+	if !strings.Contains(argStr, "--tunnel-token eyJtest") {
+		t.Error("should include --tunnel-token")
+	}
+}
+
+func TestBuildProvisionCommand_ClientWithFleet(t *testing.T) {
+	cfg := &config.Config{
+		Role:            "client",
+		DeploymentTier:  "standard",
+		ControllerURL:   "https://ctrl.example.com:8080",
+		EnrollmentToken: "tok-abc123",
+		NodeName:        "workstation-1",
+		NodeRegion:      "us-east",
+	}
+
+	_, args := BuildProvisionCommand(cfg)
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "--role client") {
+		t.Error("should include --role client")
+	}
+	if !strings.Contains(argStr, "--enrollment-token tok-abc123") {
+		t.Error("should include --enrollment-token")
+	}
+	if !strings.Contains(argStr, "--controller-url https://ctrl.example.com:8080") {
+		t.Error("should include --controller-url")
+	}
+	if !strings.Contains(argStr, "--node-name workstation-1") {
+		t.Error("should include --node-name")
+	}
+	if !strings.Contains(argStr, "--node-region us-east") {
+		t.Error("should include --node-region")
+	}
+}
+
+func TestBuildProvisionCommand_Tier3Proxy(t *testing.T) {
+	cfg := &config.Config{
+		Role:            "proxy",
+		DeploymentTier:  "self_hosted",
+		ProxyCertFile:   "/etc/pki/cert.pem",
+		ProxyKeyFile:    "/etc/pki/key.pem",
+		ProxyUpstream:   "https://origin:8443",
+	}
+
+	_, args := BuildProvisionCommand(cfg)
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "--role proxy") {
+		t.Error("should include --role proxy")
+	}
+	if !strings.Contains(argStr, "--tier 3") {
+		t.Error("should include --tier 3 for self_hosted")
+	}
+	if !strings.Contains(argStr, "--cert /etc/pki/cert.pem") {
+		t.Error("should include --cert")
+	}
+	if !strings.Contains(argStr, "--key /etc/pki/key.pem") {
+		t.Error("should include --key")
+	}
+	if !strings.Contains(argStr, "--upstream https://origin:8443") {
+		t.Error("should include --upstream")
+	}
+}
+
+func TestBuildProvisionCommand_CFCredentials(t *testing.T) {
+	cfg := &config.Config{
+		Role:           "controller",
+		DeploymentTier: "standard",
+		Dashboard: config.DashboardConfig{
+			CFAPIToken: "token-abc",
+			ZoneID:     "zone-123",
+			AccountID:  "acc-456",
+			TunnelID:   "tun-789",
+		},
+	}
+
+	_, args := BuildProvisionCommand(cfg)
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "--cf-api-token token-abc") {
+		t.Error("should include --cf-api-token")
+	}
+	if !strings.Contains(argStr, "--cf-zone-id zone-123") {
+		t.Error("should include --cf-zone-id")
+	}
+	if !strings.Contains(argStr, "--cf-account-id acc-456") {
+		t.Error("should include --cf-account-id")
+	}
+	if !strings.Contains(argStr, "--cf-tunnel-id tun-789") {
+		t.Error("should include --cf-tunnel-id")
+	}
+}
+
+func TestBuildProvisionCommand_SkipFIPS(t *testing.T) {
+	cfg := &config.Config{
+		Role:           "server",
+		DeploymentTier: "standard",
+		SkipFIPS:       true,
+	}
+
+	_, args := BuildProvisionCommand(cfg)
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "--no-fips") {
+		t.Error("should include --no-fips when SkipFIPS is true")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RoleTierPage
+// ---------------------------------------------------------------------------
+
+func TestRoleTierPage_Defaults(t *testing.T) {
+	p := NewRoleTierPage()
+	if p.SelectedRole() != "server" {
+		t.Errorf("default role = %q, want server", p.SelectedRole())
+	}
+	if p.SelectedTier() != "standard" {
+		t.Errorf("default tier = %q, want standard", p.SelectedTier())
+	}
+}
+
+func TestRoleTierPage_Apply(t *testing.T) {
+	p := NewRoleTierPage()
+	cfg := config.NewDefaultConfig()
+	p.Apply(cfg)
+	if cfg.Role != "server" {
+		t.Errorf("cfg.Role = %q, want server", cfg.Role)
+	}
+	if cfg.DeploymentTier != "standard" {
+		t.Errorf("cfg.DeploymentTier = %q, want standard", cfg.DeploymentTier)
 	}
 }

@@ -49,7 +49,7 @@ func renderNavHints(isFirst, isLast bool) string {
 		hints += "Shift+Tab=Back  "
 	}
 	if isLast {
-		hints += "Enter=Write Config  "
+		hints += "Enter=Review & Provision  "
 	} else {
 		hints += "Tab/Enter=Next  "
 	}

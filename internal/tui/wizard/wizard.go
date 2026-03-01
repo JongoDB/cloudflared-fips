@@ -1,6 +1,5 @@
 // Package wizard implements the interactive setup wizard for cloudflared-fips.
-// It walks through 5 pages: Tunnel, Dashboard Wiring, Deployment Tier,
-// FIPS Options, and Review & Write.
+// Pages are built dynamically based on the selected role and deployment tier.
 package wizard
 
 import (
@@ -13,8 +12,6 @@ import (
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo"
 )
 
-const totalPages = 5
-
 // WizardModel is the top-level Bubbletea model for the setup wizard.
 type WizardModel struct {
 	pages     []Page
@@ -24,28 +21,80 @@ type WizardModel struct {
 	height    int
 	done      bool
 	err       string
+
+	// Page 1 is always the RoleTierPage; kept as typed reference for
+	// rebuild decisions.
+	roleTierPage *RoleTierPage
+
+	// Track last-built role+tier to avoid unnecessary rebuilds.
+	lastRole string
+	lastTier string
 }
 
-// NewWizardModel creates a new setup wizard.
+// NewWizardModel creates a new setup wizard starting with the Role & Tier page.
 func NewWizardModel() WizardModel {
 	cfg := config.NewDefaultConfig()
+	rtp := NewRoleTierPage()
 
-	tunnelPage := NewTunnelPage()
-	dashPage := NewDashboardWiringPage()
-	tierPage := NewDeploymentTierPage()
-	fipsPage := NewFIPSOptionsPage()
-	reviewPage := NewReviewPage()
-
-	return WizardModel{
-		pages: []Page{
-			tunnelPage,
-			dashPage,
-			tierPage,
-			fipsPage,
-			reviewPage,
-		},
-		config: cfg,
+	m := WizardModel{
+		config:       cfg,
+		roleTierPage: rtp,
 	}
+	m.rebuildPages()
+	return m
+}
+
+func (m WizardModel) totalPages() int {
+	return len(m.pages)
+}
+
+// rebuildPages constructs the full page list based on the current role and tier
+// selections. Page 1 (RoleTierPage) is always present; the rest are dynamic.
+func (m *WizardModel) rebuildPages() {
+	role := m.roleTierPage.SelectedRole()
+	tier := m.roleTierPage.SelectedTier()
+
+	pages := []Page{m.roleTierPage}
+
+	switch role {
+	case "controller":
+		pages = append(pages, NewControllerConfigPage())
+		pages = append(pages, NewDashboardWiringPage())
+		if tier == "regional_keyless" || tier == "self_hosted" {
+			pages = append(pages, NewTierSpecificPage(tier))
+		}
+	case "server":
+		pages = append(pages, NewServerConfigPage())
+		pages = append(pages, NewDashboardWiringPage())
+		if tier == "regional_keyless" || tier == "self_hosted" {
+			pages = append(pages, NewTierSpecificPage(tier))
+		}
+	case "proxy":
+		pages = append(pages, NewProxyConfigPage())
+	case "client":
+		pages = append(pages, NewAgentConfigPage())
+	}
+
+	pages = append(pages, NewFIPSOptionsPage())
+	pages = append(pages, NewReviewPage())
+
+	m.pages = pages
+	m.lastRole = role
+	m.lastTier = tier
+
+	// Apply saved dimensions to all pages.
+	if m.width > 0 {
+		for _, p := range m.pages {
+			p.SetSize(m.width-4, m.height-8)
+		}
+	}
+}
+
+// needsRebuild returns true if the role/tier selection has changed since the
+// last rebuild.
+func (m *WizardModel) needsRebuild() bool {
+	return m.roleTierPage.SelectedRole() != m.lastRole ||
+		m.roleTierPage.SelectedTier() != m.lastTier
 }
 
 // Init initializes the wizard, focusing the first page.
@@ -60,7 +109,7 @@ func (m WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		for _, p := range m.pages {
-			p.SetSize(msg.Width-4, msg.Height-8) // Reserve for chrome
+			p.SetSize(msg.Width-4, msg.Height-8)
 		}
 		return m, nil
 
@@ -70,13 +119,6 @@ func (m WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "tab", "enter":
-			// Check if current page can handle this itself
-			// (internal field navigation). The page's Update will consume it
-			// if it can advance internally. We need to check if we should
-			// advance the wizard page instead.
-			//
-			// Strategy: let the page update first, then check if we need
-			// to advance.
 			return m.handlePageAdvance(msg)
 
 		case "shift+tab":
@@ -89,28 +131,20 @@ func (m WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m WizardModel) handlePageAdvance(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	total := m.totalPages()
+
 	// First, delegate to the page to handle internal navigation
 	page, cmd := m.pages[m.pageIndex].Update(msg)
 	m.pages[m.pageIndex] = page
 
-	// For the review page, enter triggers config write — don't advance
-	if m.pageIndex == totalPages-1 {
+	// For the review page, enter triggers config write / provision — don't advance
+	if m.pageIndex == total-1 {
 		return m, cmd
 	}
 
-	// If we're on the last internal field, advance the wizard page
-	// We detect this by attempting to advance and checking if the page
-	// would have consumed the key. Since our pages return without cmd
-	// when at their last field, we use a simpler approach: try to advance
-	// the wizard page directly when tab/enter is pressed, but only after
-	// letting the page try to handle it.
-	//
-	// For simplicity: if no cmd was returned and the key was tab/enter,
-	// try advancing the wizard.
-	if cmd == nil && msg.String() == "tab" {
-		return m.advancePage()
-	}
-	if cmd == nil && msg.String() == "enter" {
+	// If no cmd was returned, the page has no more internal fields to advance
+	// through — try advancing the wizard page.
+	if cmd == nil {
 		return m.advancePage()
 	}
 
@@ -131,6 +165,8 @@ func (m WizardModel) handlePageBack(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m WizardModel) advancePage() (tea.Model, tea.Cmd) {
+	total := m.totalPages()
+
 	// Validate current page
 	if !m.pages[m.pageIndex].Validate() {
 		m.err = "Please fix the errors above before continuing."
@@ -141,21 +177,26 @@ func (m WizardModel) advancePage() (tea.Model, tea.Cmd) {
 	// Apply values to shared config
 	m.pages[m.pageIndex].Apply(m.config)
 
-	if m.pageIndex < totalPages-1 {
+	// After page 1, rebuild the page list if role/tier changed
+	if m.pageIndex == 0 && m.needsRebuild() {
+		m.rebuildPages()
+		total = m.totalPages()
+	}
+
+	if m.pageIndex < total-1 {
 		m.pageIndex++
 
-		// Pre-populate cross-page data
-		if m.pageIndex == 1 {
-			if dp, ok := m.pages[1].(*DashboardWiringPage); ok {
-				dp.PrePopulateTunnelID(m.config.Tunnel)
-			}
+		// Pre-populate cross-page data: tunnel ID → dashboard wiring
+		if dp, ok := m.pages[m.pageIndex].(*DashboardWiringPage); ok {
+			dp.PrePopulateTunnelID(m.config.Tunnel)
 		}
-		if m.pageIndex == totalPages-1 {
-			// Apply all pages before review
-			for i := 0; i < totalPages-1; i++ {
+
+		// Before showing review page, apply all preceding pages
+		if m.pageIndex == total-1 {
+			for i := 0; i < total-1; i++ {
 				m.pages[i].Apply(m.config)
 			}
-			if rp, ok := m.pages[totalPages-1].(*ReviewPage); ok {
+			if rp, ok := m.pages[total-1].(*ReviewPage); ok {
 				rp.SetConfig(m.config)
 			}
 		}
@@ -174,6 +215,7 @@ func (m WizardModel) delegateToPage(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View renders the complete wizard view.
 func (m WizardModel) View() string {
+	total := m.totalPages()
 	var b strings.Builder
 
 	// Header
@@ -184,7 +226,7 @@ func (m WizardModel) View() string {
 	b.WriteString("\n")
 
 	// Progress
-	b.WriteString(renderProgress(m.pageIndex+1, totalPages, m.pages[m.pageIndex].Title()))
+	b.WriteString(renderProgress(m.pageIndex+1, total, m.pages[m.pageIndex].Title()))
 	b.WriteString("\n\n")
 
 	// Page content
@@ -198,7 +240,7 @@ func (m WizardModel) View() string {
 
 	// Footer
 	b.WriteString("\n")
-	b.WriteString(common.FooterStyle.Render(renderNavHints(m.pageIndex == 0, m.pageIndex == totalPages-1)))
+	b.WriteString(common.FooterStyle.Render(renderNavHints(m.pageIndex == 0, m.pageIndex == total-1)))
 
 	return common.PageStyle.Render(b.String())
 }
