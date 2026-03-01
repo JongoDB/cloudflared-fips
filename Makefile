@@ -2,7 +2,8 @@
        selftest setup status dashboard tui fips-proxy agent \
        dashboard-dev dashboard-build dashboard-embed \
        lint test test-cover vet check \
-       manifest docker-build docs sbom crypto-audit clean
+       manifest docker-build docs sbom crypto-audit \
+       rpm deb clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -201,6 +202,37 @@ sbom:
 # Run full crypto dependency audit
 crypto-audit:
 	./scripts/audit-crypto-deps.sh upstream-cloudflared $(OUTPUT_DIR)/crypto-audit-full.json
+
+# ──────────────────────────────────────────────────────
+# Packaging targets
+# ──────────────────────────────────────────────────────
+
+# Build RPM package (requires rpmbuild)
+rpm: build-all
+	@echo "=== Building RPM package ==="
+	mkdir -p /tmp/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
+	cp $(OUTPUT_DIR)/cloudflared-fips-selftest /tmp/rpmbuild/SOURCES/
+	cp $(OUTPUT_DIR)/cloudflared-fips-dashboard /tmp/rpmbuild/SOURCES/
+	cp $(OUTPUT_DIR)/cloudflared-fips-tui /tmp/rpmbuild/SOURCES/
+	cp $(OUTPUT_DIR)/cloudflared-fips-proxy /tmp/rpmbuild/SOURCES/
+	cp $(OUTPUT_DIR)/cloudflared-fips-agent /tmp/rpmbuild/SOURCES/
+	cp scripts/provision-linux.sh /tmp/rpmbuild/SOURCES/cloudflared-fips-provision
+	chmod +x /tmp/rpmbuild/SOURCES/cloudflared-fips-provision
+	cp configs/cloudflared-fips.yaml /tmp/rpmbuild/SOURCES/ 2>/dev/null || true
+	cp configs/build-manifest.json /tmp/rpmbuild/SOURCES/ 2>/dev/null || true
+	VERSION=$(VERSION) rpmbuild --define "_topdir /tmp/rpmbuild" -bb build/packaging/rpm/cloudflared-fips.spec
+	cp /tmp/rpmbuild/RPMS/*/*.rpm $(OUTPUT_DIR)/
+	@echo "=== RPM built in $(OUTPUT_DIR)/ ==="
+
+# Build DEB package (requires dpkg-deb)
+deb: build-all
+	@echo "=== Building DEB package ==="
+	cp scripts/provision-linux.sh $(OUTPUT_DIR)/cloudflared-fips-provision
+	chmod +x $(OUTPUT_DIR)/cloudflared-fips-provision
+	cp configs/cloudflared-fips.yaml $(OUTPUT_DIR)/ 2>/dev/null || true
+	cp configs/build-manifest.json $(OUTPUT_DIR)/ 2>/dev/null || true
+	bash build/packaging/deb/build-deb.sh $(VERSION) amd64 $(OUTPUT_DIR) $(OUTPUT_DIR)
+	@echo "=== DEB built in $(OUTPUT_DIR)/ ==="
 
 # ──────────────────────────────────────────────────────
 # Clean

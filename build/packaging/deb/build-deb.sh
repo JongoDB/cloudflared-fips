@@ -25,7 +25,6 @@ mkdir -p "$PKG_DIR/DEBIAN"
 mkdir -p "$PKG_DIR/usr/local/bin"
 mkdir -p "$PKG_DIR/etc/cloudflared"
 mkdir -p "$PKG_DIR/usr/share/cloudflared-fips"
-mkdir -p "$PKG_DIR/usr/lib/systemd/system"
 
 # Copy DEBIAN control files with variable substitution
 sed -e "s/\${VERSION}/${VERSION}/" \
@@ -36,14 +35,21 @@ cp "$SCRIPT_DIR/DEBIAN/postinst" "$PKG_DIR/DEBIAN/postinst"
 cp "$SCRIPT_DIR/DEBIAN/prerm" "$PKG_DIR/DEBIAN/prerm"
 chmod 755 "$PKG_DIR/DEBIAN/postinst" "$PKG_DIR/DEBIAN/prerm"
 
-# Install binary
-cp "$BINARY_DIR/cloudflared" "$PKG_DIR/usr/local/bin/cloudflared"
-chmod 755 "$PKG_DIR/usr/local/bin/cloudflared"
+# Install fleet binaries
+for bin in cloudflared-fips-selftest cloudflared-fips-dashboard cloudflared-fips-tui \
+           cloudflared-fips-proxy cloudflared-fips-agent; do
+    if [ -f "$BINARY_DIR/$bin" ]; then
+        cp "$BINARY_DIR/$bin" "$PKG_DIR/usr/local/bin/$bin"
+        chmod 755 "$PKG_DIR/usr/local/bin/$bin"
+    else
+        echo "WARNING: $bin not found in $BINARY_DIR"
+    fi
+done
 
-# Install self-test if present
-if [ -f "$BINARY_DIR/selftest" ]; then
-    cp "$BINARY_DIR/selftest" "$PKG_DIR/usr/local/bin/cloudflared-selftest"
-    chmod 755 "$PKG_DIR/usr/local/bin/cloudflared-selftest"
+# Install provision script
+if [ -f "$BINARY_DIR/cloudflared-fips-provision" ]; then
+    cp "$BINARY_DIR/cloudflared-fips-provision" "$PKG_DIR/usr/local/bin/cloudflared-fips-provision"
+    chmod 755 "$PKG_DIR/usr/local/bin/cloudflared-fips-provision"
 fi
 
 # Install build manifest
@@ -55,26 +61,6 @@ fi
 if [ -f "$BINARY_DIR/cloudflared-fips.yaml" ]; then
     cp "$BINARY_DIR/cloudflared-fips.yaml" "$PKG_DIR/etc/cloudflared/config.yaml.sample"
 fi
-
-# Install systemd unit
-cat > "$PKG_DIR/usr/lib/systemd/system/cloudflared.service" <<'UNIT'
-[Unit]
-Description=Cloudflare Tunnel (FIPS)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=notify
-ExecStartPre=/usr/local/bin/cloudflared-selftest
-ExecStart=/usr/local/bin/cloudflared tunnel run
-Restart=on-failure
-RestartSec=5
-LimitNOFILE=65536
-Environment=GODEBUG=fips140=on
-
-[Install]
-WantedBy=multi-user.target
-UNIT
 
 # Build the package
 mkdir -p "$OUTPUT_DIR"

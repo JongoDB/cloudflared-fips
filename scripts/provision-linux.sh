@@ -133,6 +133,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ---------------------------------------------------------------------------
+# Detect pre-installed binaries (from RPM/DEB package)
+# ---------------------------------------------------------------------------
+PREINSTALLED=false
+if [ -x /usr/local/bin/cloudflared-fips-selftest ] && [ -x /usr/local/bin/cloudflared-fips-agent ]; then
+    PREINSTALLED=true
+fi
+
 # Validate role
 case "$ROLE" in
     controller|server|proxy|client) ;;
@@ -514,7 +522,9 @@ phase2_build() {
 # Phase 3: Install and configure
 # ---------------------------------------------------------------------------
 phase3_install() {
-    cd "$INSTALL_DIR"
+    if [[ "$PREINSTALLED" == "false" ]]; then
+        cd "$INSTALL_DIR"
+    fi
 
     # --- Create service user ---
     if id "$SERVICE_USER" &>/dev/null; then
@@ -532,34 +542,43 @@ phase3_install() {
     fi
 
     # --- Install binaries based on role ---
-    log "Installing binaries for role: ${ROLE}..."
-    install -m 0755 build-output/cloudflared-fips-selftest "${BIN_DIR}/"
+    if [[ "$PREINSTALLED" == "true" ]]; then
+        log "Binaries already installed at ${BIN_DIR}/ (from package). Skipping install."
+    else
+        log "Installing binaries for role: ${ROLE}..."
+        install -m 0755 build-output/cloudflared-fips-selftest "${BIN_DIR}/"
 
-    case "$ROLE" in
-        controller)
-            install -m 0755 build-output/cloudflared-fips-dashboard "${BIN_DIR}/"
-            install -m 0755 build-output/cloudflared-fips-agent "${BIN_DIR}/"
-            if [[ -f build-output/cloudflared-fips-proxy ]]; then
+        case "$ROLE" in
+            controller)
+                install -m 0755 build-output/cloudflared-fips-dashboard "${BIN_DIR}/"
+                install -m 0755 build-output/cloudflared-fips-agent "${BIN_DIR}/"
+                if [[ -f build-output/cloudflared-fips-proxy ]]; then
+                    install -m 0755 build-output/cloudflared-fips-proxy "${BIN_DIR}/"
+                fi
+                ;;
+            server)
+                install -m 0755 build-output/cloudflared-fips-agent "${BIN_DIR}/"
+                ;;
+            proxy)
                 install -m 0755 build-output/cloudflared-fips-proxy "${BIN_DIR}/"
-            fi
-            ;;
-        server)
-            install -m 0755 build-output/cloudflared-fips-agent "${BIN_DIR}/"
-            ;;
-        proxy)
-            install -m 0755 build-output/cloudflared-fips-proxy "${BIN_DIR}/"
-            install -m 0755 build-output/cloudflared-fips-agent "${BIN_DIR}/"
-            ;;
-        client)
-            install -m 0755 build-output/cloudflared-fips-agent "${BIN_DIR}/"
-            ;;
-    esac
+                install -m 0755 build-output/cloudflared-fips-agent "${BIN_DIR}/"
+                ;;
+            client)
+                install -m 0755 build-output/cloudflared-fips-agent "${BIN_DIR}/"
+                ;;
+        esac
+    fi
 
     # --- Config and data directories ---
     mkdir -p "$CONFIG_DIR"
     mkdir -p "$DATA_DIR"
-    cp -n build-output/build-manifest.json "${CONFIG_DIR}/build-manifest.json" 2>/dev/null || true
-    cp -n configs/cloudflared-fips.yaml "${CONFIG_DIR}/cloudflared-fips.yaml" 2>/dev/null || true
+    if [[ "$PREINSTALLED" == "true" ]]; then
+        cp -n /usr/share/cloudflared-fips/build-manifest.json "${CONFIG_DIR}/build-manifest.json" 2>/dev/null || true
+        cp -n /etc/cloudflared/config.yaml.sample "${CONFIG_DIR}/cloudflared-fips.yaml" 2>/dev/null || true
+    else
+        cp -n build-output/build-manifest.json "${CONFIG_DIR}/build-manifest.json" 2>/dev/null || true
+        cp -n configs/cloudflared-fips.yaml "${CONFIG_DIR}/cloudflared-fips.yaml" 2>/dev/null || true
+    fi
 
     # --- Copy TLS cert/key for FIPS proxy (Tier 3, or controller with proxy) ---
     if [[ -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then
@@ -571,7 +590,7 @@ phase3_install() {
     fi
 
     # --- Binary hashes for manifest ---
-    for bin in selftest dashboard proxy agent; do
+    for bin in selftest dashboard tui proxy agent; do
         binpath="${BIN_DIR}/cloudflared-fips-${bin}"
         if [[ -f "$binpath" ]]; then
             hash=$(sha256sum "$binpath" | awk '{print $1}')
@@ -583,7 +602,7 @@ phase3_install() {
     log "Generating signatures manifest..."
     SIG_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     declare -A HASHES=()
-    for bin in selftest dashboard proxy agent; do
+    for bin in selftest dashboard tui proxy agent; do
         binpath="${BIN_DIR}/cloudflared-fips-${bin}"
         if [[ -f "$binpath" ]]; then
             HASHES[$bin]=$(sha256sum "$binpath" | awk '{print $1}')
@@ -654,9 +673,23 @@ ENVEOF
         hostname=$(hostname -s)
         local name="${NODE_NAME:-${hostname}}"
 
+        # Resolve version from build manifest (package or source build)
+        local manifest_path=""
+        if [[ -f "${CONFIG_DIR}/build-manifest.json" ]]; then
+            manifest_path="${CONFIG_DIR}/build-manifest.json"
+        elif [[ -f /usr/share/cloudflared-fips/build-manifest.json ]]; then
+            manifest_path="/usr/share/cloudflared-fips/build-manifest.json"
+        elif [[ -f build-output/build-manifest.json ]]; then
+            manifest_path="build-output/build-manifest.json"
+        fi
+        local node_version="dev"
+        if [[ -n "$manifest_path" ]]; then
+            node_version=$(python3 -c "import sys,json; print(json.load(open('${manifest_path}')).get('version','dev'))" 2>/dev/null || echo "dev")
+        fi
+
         ENROLL_RESP=$(curl -sf -X POST "${CONTROLLER_URL}/api/v1/fleet/enroll" \
             -H "Content-Type: application/json" \
-            -d "{\"token\":\"${ENROLLMENT_TOKEN}\",\"name\":\"${name}\",\"region\":\"${NODE_REGION}\",\"version\":\"$(cat build-output/build-manifest.json 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get(\"version\",\"dev\"))' 2>/dev/null || echo dev)\",\"fips_backend\":\"BoringCrypto\"}" \
+            -d "{\"token\":\"${ENROLLMENT_TOKEN}\",\"name\":\"${name}\",\"region\":\"${NODE_REGION}\",\"version\":\"${node_version}\",\"fips_backend\":\"BoringCrypto\"}" \
         ) || fail "Fleet enrollment failed. Check --controller-url and --enrollment-token."
 
         NODE_ID=$(echo "$ENROLL_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['node_id'])")
@@ -1239,8 +1272,14 @@ main() {
     fi
 
     phase1_fips
-    phase2_deps
-    phase2_build
+
+    if [[ "$PREINSTALLED" == "true" ]]; then
+        log "Detected pre-installed binaries (from package). Skipping build phase."
+    else
+        phase2_deps
+        phase2_build
+    fi
+
     phase3_install
     phase4_start
 }

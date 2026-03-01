@@ -3,8 +3,13 @@ set -e
 
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
     if command -v systemctl >/dev/null 2>&1; then
-        systemctl stop cloudflared 2>/dev/null || true
-        systemctl disable cloudflared 2>/dev/null || true
+        # Stop all fleet services
+        systemctl stop cloudflared-fips.target 2>/dev/null || true
+        systemctl disable cloudflared-fips.target 2>/dev/null || true
+        for svc in dashboard tunnel proxy agent; do
+            systemctl stop "cloudflared-fips-${svc}.service" 2>/dev/null || true
+            systemctl disable "cloudflared-fips-${svc}.service" 2>/dev/null || true
+        done
     fi
 fi
 

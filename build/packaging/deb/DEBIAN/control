@@ -6,10 +6,10 @@ Architecture: ${ARCH}
 Depends: libssl3 (>= 3.0), openssl
 Maintainer: cloudflared-fips maintainers <noreply@example.com>
 Homepage: https://github.com/cloudflared-fips/cloudflared-fips
-Description: FIPS 140-2 compliant Cloudflare Tunnel client
- FIPS 140-2 compliant build of Cloudflare Tunnel (cloudflared) using
- BoringCrypto (CMVP #4407). Includes runtime self-test suite, compliance
- dashboard, and build manifest with full cryptographic provenance.
+Description: FIPS 140-3 compliant Cloudflare Tunnel client with fleet management
+ FIPS 140-3 compliant build of Cloudflare Tunnel (cloudflared) using
+ BoringCrypto (CMVP #4735). Ships all fleet binaries for zero-trust
+ network fabric deployment with 4 roles: controller, server, proxy, client.
  .
- This package installs the FIPS-validated cloudflared binary, runs FIPS
- self-tests on install, and creates a systemd service unit.
+ Included: selftest, dashboard, tui wizard, fips-proxy, agent, provision script.
+ Role selection happens at provision time via the TUI wizard or provision script.

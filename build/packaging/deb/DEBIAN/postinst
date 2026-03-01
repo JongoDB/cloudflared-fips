@@ -2,20 +2,23 @@
 set -e
 
 echo "Running FIPS self-test..."
-/usr/local/bin/cloudflared-selftest || {
-    echo "WARNING: FIPS self-test failed. Check /usr/local/bin/cloudflared-selftest output."
+/usr/local/bin/cloudflared-fips-selftest || {
+    echo "WARNING: FIPS self-test failed. Check /usr/local/bin/cloudflared-fips-selftest output."
     echo "The binary may not be FIPS-compliant on this system."
 }
 
-# Reload systemd if available
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload || true
-fi
-
 echo ""
 echo "cloudflared-fips installed successfully."
-echo "  Config sample: /etc/cloudflared/config.yaml.sample"
-echo "  Build manifest: /usr/share/cloudflared-fips/build-manifest.json"
-echo "  Systemd unit: systemctl enable --now cloudflared"
+echo ""
+echo "  Binaries installed to /usr/local/bin/cloudflared-fips-*"
+echo "  Config sample:    /etc/cloudflared/config.yaml.sample"
+echo "  Build manifest:   /usr/share/cloudflared-fips/build-manifest.json"
+echo ""
+echo "  Next steps — choose one:"
+echo "    cloudflared-fips-tui setup                              # interactive wizard"
+echo "    cloudflared-fips-provision --role controller             # fleet controller"
+echo "    cloudflared-fips-provision --role server --enrollment-token <T> --controller-url <URL>"
+echo "    cloudflared-fips-provision --role proxy  --enrollment-token <T> --controller-url <URL>"
+echo "    cloudflared-fips-provision --role client --enrollment-token <T> --controller-url <URL>"
 
 #DEBHELPER#
