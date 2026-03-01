@@ -194,10 +194,17 @@ jobs:
         run: |
           # dpkg-deb may not be on RHEL; install if missing
           dnf install -y dpkg 2>/dev/null || true
+
+          if ! command -v dpkg-deb >/dev/null 2>&1; then
+            echo "::warning::dpkg-deb not available on this runner — skipping DEB packaging"
+            exit 0
+          fi
+
           DEB_ARCH=${{ matrix.goarch }}
 
           # Copy config and manifest alongside binaries for build-deb.sh
           cp configs/cloudflared-fips.yaml /tmp/ 2>/dev/null || true
+          cp /tmp/build-manifest.json /tmp/ 2>/dev/null || true
 
           bash build/packaging/deb/build-deb.sh \
             "${UPSTREAM_VERSION}-fips" \
