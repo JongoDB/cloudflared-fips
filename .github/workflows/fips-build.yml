@@ -621,24 +621,31 @@ jobs:
               git log --pretty=format:'- %s (`%h`)' --no-merges
             fi
 
+            REPO="${{ github.repository }}"
+            RELEASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+
             echo ""
             echo ""
             echo "---"
             echo ""
             echo "### Install"
             echo ""
+            echo "Download the package for your platform from the assets below, then:"
+            echo ""
             echo "**RHEL / Rocky / Alma 9:**"
             echo '```bash'
-            echo "sudo dnf install ./cloudflared-fips-*.el9.\$(uname -m).rpm"
+            echo "sudo dnf install ${RELEASE_URL}/cloudflared-fips-\${VERSION}.el9.x86_64.rpm"
             echo '```'
             echo ""
             echo "**Ubuntu / Debian:**"
             echo '```bash'
-            echo "sudo dpkg -i ./cloudflared-fips_*_amd64.deb"
+            echo "curl -fLO ${RELEASE_URL}/cloudflared-fips_\${VERSION}_amd64.deb"
+            echo "sudo dpkg -i cloudflared-fips_*_amd64.deb"
             echo '```'
             echo ""
             echo "**macOS:**"
             echo '```bash'
+            echo "curl -fLO ${RELEASE_URL}/cloudflared-fips-\${VERSION}.pkg"
             echo "sudo installer -pkg cloudflared-fips-*.pkg -target /"
             echo '```'
             echo ""
