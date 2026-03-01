@@ -89,21 +89,21 @@ func (p *ServerConfigPage) updateFocus() {
 
 	switch p.focus {
 	case 0:
-		p.nodeName.Input.Focus()
+		p.nodeName.Focus()
 	case 1:
-		p.region.Input.Focus()
+		p.region.Focus()
 	case 2:
-		p.serviceName.Input.Focus()
+		p.serviceName.Focus()
 	case 3:
-		p.serviceHost.Input.Focus()
+		p.serviceHost.Focus()
 	case 4:
-		p.servicePort.Input.Focus()
+		p.servicePort.Focus()
 	case 5:
 		p.serviceTLS.Focus()
 	case 6:
-		p.controllerURL.Input.Focus()
+		p.controllerURL.Focus()
 	case 7:
-		p.enrollToken.Input.Focus()
+		p.enrollToken.Focus()
 	}
 }
 

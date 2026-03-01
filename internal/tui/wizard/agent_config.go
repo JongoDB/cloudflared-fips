@@ -65,13 +65,13 @@ func (p *AgentConfigPage) updateFocus() {
 
 	switch p.focus {
 	case 0:
-		p.controllerURL.Input.Focus()
+		p.controllerURL.Focus()
 	case 1:
-		p.enrollToken.Input.Focus()
+		p.enrollToken.Focus()
 	case 2:
-		p.nodeName.Input.Focus()
+		p.nodeName.Focus()
 	case 3:
-		p.region.Input.Focus()
+		p.region.Focus()
 	}
 }
 

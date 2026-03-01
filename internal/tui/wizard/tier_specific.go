@@ -100,22 +100,22 @@ func (p *TierSpecificPage) updateFocus() {
 	if p.tier == "regional_keyless" {
 		switch p.focus {
 		case 0:
-			p.keylessSSLHost.Input.Focus()
+			p.keylessSSLHost.Focus()
 		case 1:
-			p.keylessSSLPort.Input.Focus()
+			p.keylessSSLPort.Focus()
 		case 2:
 			p.regionalServices.Focus()
 		}
 	} else {
 		switch p.focus {
 		case 0:
-			p.proxyListenAddr.Input.Focus()
+			p.proxyListenAddr.Focus()
 		case 1:
-			p.proxyCertFile.Input.Focus()
+			p.proxyCertFile.Focus()
 		case 2:
-			p.proxyKeyFile.Input.Focus()
+			p.proxyKeyFile.Focus()
 		case 3:
-			p.proxyUpstream.Input.Focus()
+			p.proxyUpstream.Focus()
 		}
 	}
 }

@@ -81,6 +81,12 @@ var (
 				Padding(0, 1)
 )
 
+// Input prompt styles — show cursor indicator only when focused.
+var (
+	FocusedPrompt = lipgloss.NewStyle().Foreground(ColorPrimary).Render("> ")
+	BlurredPrompt = "  "
+)
+
 // Badge styles.
 var (
 	PassBadge = lipgloss.NewStyle().

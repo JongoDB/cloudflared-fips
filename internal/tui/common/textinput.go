@@ -25,6 +25,8 @@ func NewTextInput(label, placeholder, hint string) TextInput {
 	ti.Placeholder = placeholder
 	ti.CharLimit = 256
 	ti.Width = 50
+	ti.Prompt = BlurredPrompt
+	ti.TextStyle = lipgloss.NewStyle().Foreground(ColorMuted)
 	return TextInput{
 		Label: label,
 		Hint:  hint,
@@ -41,14 +43,28 @@ func NewPasswordInput(label, placeholder, hint string) TextInput {
 	return ti
 }
 
-// Focus gives focus to this input.
+// Focus gives focus to this input and updates visual styling.
 func (t *TextInput) Focus() tea.Cmd {
+	t.applyFocusStyle()
 	return t.Input.Focus()
 }
 
-// Blur removes focus from this input.
+// Blur removes focus from this input and updates visual styling.
 func (t *TextInput) Blur() {
+	t.Input.Prompt = BlurredPrompt
+	t.Input.TextStyle = lipgloss.NewStyle().Foreground(ColorMuted)
 	t.Input.Blur()
+}
+
+// applyFocusStyle sets focused visual styling (prompt and text color).
+func (t *TextInput) applyFocusStyle() {
+	t.Input.Prompt = FocusedPrompt
+	t.Input.TextStyle = lipgloss.NewStyle().Foreground(ColorWhite)
+}
+
+// Focused returns whether this input is currently focused.
+func (t *TextInput) Focused() bool {
+	return t.Input.Focused()
 }
 
 // Value returns the current input value.

@@ -64,7 +64,7 @@ func (p *FIPSOptionsPage) updateFocus() {
 	case 2:
 		p.verifySignature.Focus()
 	case 3:
-		p.selfTestOutput.Input.Focus()
+		p.selfTestOutput.Focus()
 	}
 }
 

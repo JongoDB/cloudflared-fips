@@ -95,13 +95,13 @@ func (p *ControllerConfigPage) updateFocus() {
 
 	switch p.focus {
 	case 0:
-		p.adminKey.Input.Focus()
+		p.adminKey.Focus()
 	case 1:
-		p.nodeName.Input.Focus()
+		p.nodeName.Focus()
 	case 2:
-		p.region.Input.Focus()
+		p.region.Focus()
 	case 3:
-		p.tunnelToken.Input.Focus()
+		p.tunnelToken.Focus()
 	case 4:
 		p.protocol.Focus()
 	case 5:

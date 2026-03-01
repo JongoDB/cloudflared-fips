@@ -173,23 +173,23 @@ func (p *DashboardWiringPage) updateFocus() {
 
 	switch p.focus {
 	case 0:
-		p.apiToken.Input.Focus()
+		p.apiToken.Focus()
 	case 1:
 		if p.hasZones() {
 			p.zonePicker.Focus()
 		} else {
-			p.zoneID.Input.Focus()
+			p.zoneID.Focus()
 		}
 	case 2:
 		if p.hasAccounts() {
 			p.accountPicker.Focus()
 		} else {
-			p.accountID.Input.Focus()
+			p.accountID.Focus()
 		}
 	case 3:
-		p.tunnelID.Input.Focus()
+		p.tunnelID.Focus()
 	case 4:
-		p.metricsAddr.Input.Focus()
+		p.metricsAddr.Focus()
 	case 5:
 		p.mdmProvider.Focus()
 	default:
@@ -198,18 +198,18 @@ func (p *DashboardWiringPage) updateFocus() {
 		case "intune":
 			switch idx {
 			case 0:
-				p.intuneTenantID.Input.Focus()
+				p.intuneTenantID.Focus()
 			case 1:
-				p.intuneClientID.Input.Focus()
+				p.intuneClientID.Focus()
 			case 2:
-				p.intuneClientSecret.Input.Focus()
+				p.intuneClientSecret.Focus()
 			}
 		case "jamf":
 			switch idx {
 			case 0:
-				p.jamfBaseURL.Input.Focus()
+				p.jamfBaseURL.Focus()
 			case 1:
-				p.jamfAPIToken.Input.Focus()
+				p.jamfAPIToken.Focus()
 			}
 		}
 	}

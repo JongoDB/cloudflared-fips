@@ -99,23 +99,23 @@ func (p *ProxyConfigPage) updateFocus() {
 
 	switch p.focus {
 	case 0:
-		p.nodeName.Input.Focus()
+		p.nodeName.Focus()
 	case 1:
-		p.region.Input.Focus()
+		p.region.Focus()
 	case 2:
-		p.listenAddr.Input.Focus()
+		p.listenAddr.Focus()
 	case 3:
-		p.certFile.Input.Focus()
+		p.certFile.Focus()
 	case 4:
-		p.keyFile.Input.Focus()
+		p.keyFile.Focus()
 	case 5:
-		p.tunnelToken.Input.Focus()
+		p.tunnelToken.Focus()
 	case 6:
 		p.protocol.Focus()
 	case 7:
-		p.controllerURL.Input.Focus()
+		p.controllerURL.Focus()
 	case 8:
-		p.enrollToken.Input.Focus()
+		p.enrollToken.Focus()
 	}
 }
 
