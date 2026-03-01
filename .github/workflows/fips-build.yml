@@ -49,7 +49,9 @@ jobs:
       - name: Clone upstream cloudflared
         run: |
           git clone --depth 1 https://github.com/cloudflare/cloudflared.git upstream-cloudflared
-          echo "UPSTREAM_VERSION=$(git -C upstream-cloudflared describe --tags 2>/dev/null || echo 'main')" >> $GITHUB_ENV
+          UPSTREAM_RAW=$(git -C upstream-cloudflared describe --tags 2>/dev/null || echo '0.0.0')
+          # Strip leading 'v' and replace hyphens with dots for RPM compatibility
+          echo "UPSTREAM_VERSION=$(echo "$UPSTREAM_RAW" | sed 's/^v//; s/-/./g')" >> $GITHUB_ENV
           echo "UPSTREAM_COMMIT=$(git -C upstream-cloudflared rev-parse --short HEAD)" >> $GITHUB_ENV
 
       - name: Dependency crypto audit
@@ -141,7 +143,9 @@ jobs:
           cp configs/cloudflared-fips.yaml /root/rpmbuild/SOURCES/ 2>/dev/null || true
           cp /tmp/build-manifest.json /root/rpmbuild/SOURCES/ 2>/dev/null || true
 
-          VERSION="${UPSTREAM_VERSION}-fips" rpmbuild -bb build/packaging/rpm/cloudflared-fips.spec
+          # RPM versions cannot contain hyphens — use dots
+          RPM_VERSION=$(echo "${UPSTREAM_VERSION}.fips" | sed 's/-/./g')
+          VERSION="${RPM_VERSION}" rpmbuild -bb build/packaging/rpm/cloudflared-fips.spec
           cp /root/rpmbuild/RPMS/*/*.rpm /tmp/ 2>/dev/null || true
 
       - name: Package — DEB
