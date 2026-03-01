@@ -53,7 +53,7 @@ func (p *RoleTierPage) Init() tea.Cmd { return nil }
 func (p *RoleTierPage) Focus() tea.Cmd {
 	p.focus = 0
 	p.updateFocus()
-	return nil
+	return fieldNav
 }
 
 func (p *RoleTierPage) SetSize(w, h int) {

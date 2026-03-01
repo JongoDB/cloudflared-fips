@@ -42,7 +42,7 @@ func (p *FIPSOptionsPage) Init() tea.Cmd { return nil }
 func (p *FIPSOptionsPage) Focus() tea.Cmd {
 	p.focus = 0
 	p.updateFocus()
-	return nil
+	return fieldNav
 }
 
 func (p *FIPSOptionsPage) SetSize(w, h int) {

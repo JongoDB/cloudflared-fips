@@ -68,7 +68,12 @@ func (p *TierSpecificPage) Init() tea.Cmd { return nil }
 func (p *TierSpecificPage) Focus() tea.Cmd {
 	p.focus = 0
 	p.updateFocus()
-	return nil
+	// Tier 2 starts with a TextInput — return its focus command for cursor blink.
+	// Tier 3 also starts with a TextInput.
+	if p.tier == "regional_keyless" {
+		return p.keylessSSLHost.Focus()
+	}
+	return p.proxyListenAddr.Focus()
 }
 
 func (p *TierSpecificPage) SetSize(w, h int) {
