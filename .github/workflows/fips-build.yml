@@ -535,6 +535,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for changelog generation
 
       - uses: actions/download-artifact@v4
         with:
@@ -592,56 +594,91 @@ jobs:
           echo "=== Release assets ==="
           ls -lh release/
 
+      - name: Generate release notes
+        id: notes
+        run: |
+          TAG="${{ github.ref_name }}"
+
+          # Find the previous tag to build a changelog
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -1)
+          echo "Previous tag: ${PREV_TAG:-none}"
+
+          # Build the changelog section from commits between tags
+          {
+            echo "## cloudflared-fips ${TAG}"
+            echo ""
+
+            if [ -n "$PREV_TAG" ]; then
+              echo "### What's Changed"
+              echo ""
+              git log "${PREV_TAG}..${TAG}" --pretty=format:'- %s (`%h`)' --no-merges
+              echo ""
+              echo ""
+              echo "**Full diff:** [\`${PREV_TAG}...${TAG}\`](https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG})"
+            else
+              echo "### Initial Release"
+              echo ""
+              git log --pretty=format:'- %s (`%h`)' --no-merges
+            fi
+
+            echo ""
+            echo ""
+            echo "---"
+            echo ""
+            echo "### Install"
+            echo ""
+            echo "**RHEL / Rocky / Alma 9:**"
+            echo '```bash'
+            echo "sudo dnf install ./cloudflared-fips-*.el9.\$(uname -m).rpm"
+            echo '```'
+            echo ""
+            echo "**Ubuntu / Debian:**"
+            echo '```bash'
+            echo "sudo dpkg -i ./cloudflared-fips_*_amd64.deb"
+            echo '```'
+            echo ""
+            echo "**macOS:**"
+            echo '```bash'
+            echo "sudo installer -pkg cloudflared-fips-*.pkg -target /"
+            echo '```'
+            echo ""
+            echo "### Configure"
+            echo ""
+            echo '```bash'
+            echo "# Interactive wizard"
+            echo "cloudflared-fips-tui setup"
+            echo ""
+            echo "# Or non-interactive provisioning"
+            echo 'sudo cloudflared-fips-provision --role controller'
+            echo 'sudo cloudflared-fips-provision --role server --enrollment-token <T> --controller-url <URL>'
+            echo 'sudo cloudflared-fips-provision --role proxy  --enrollment-token <T> --controller-url <URL>'
+            echo 'sudo cloudflared-fips-provision --role client --enrollment-token <T> --controller-url <URL>'
+            echo '```'
+            echo ""
+            echo "### Binaries"
+            echo ""
+            echo "| Binary | Description |"
+            echo "|--------|-------------|"
+            echo "| \`cloudflared-fips-selftest\` | FIPS self-test suite (KATs, cipher validation) |"
+            echo "| \`cloudflared-fips-dashboard\` | Compliance dashboard + fleet controller API |"
+            echo "| \`cloudflared-fips-tui\` | Interactive setup wizard + live status monitor |"
+            echo "| \`cloudflared-fips-proxy\` | Tier 3 self-hosted FIPS edge proxy |"
+            echo "| \`cloudflared-fips-agent\` | Lightweight endpoint FIPS posture agent |"
+            echo "| \`cloudflared-fips-provision\` | Multi-role provisioning script |"
+            echo ""
+            echo "### Crypto Modules"
+            echo ""
+            echo "- **Linux:** BoringCrypto (CMVP #4735, FIPS 140-3) via \`GOEXPERIMENT=boringcrypto\`"
+            echo "- **macOS/Windows:** Go native FIPS 140-3 module (CAVP A6650) via \`GODEBUG=fips140=on\`"
+          } > /tmp/release-notes.md
+
+          echo "=== Generated release notes ==="
+          cat /tmp/release-notes.md
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create ${{ github.ref_name }} release/* \
             --title "cloudflared-fips ${{ github.ref_name }}" \
-            --notes "$(cat <<'EOF'
-          ## cloudflared-fips ${{ github.ref_name }}
-
-          FIPS 140-3 compliant Cloudflare Tunnel client with fleet management.
-
-          ### Install (Rocky/RHEL/Alma 9)
-
-          ```bash
-          sudo dnf install ./cloudflared-fips-*.el9.$(uname -m).rpm
-          ```
-
-          ### Install (Ubuntu/Debian)
-
-          ```bash
-          sudo dpkg -i ./cloudflared-fips_*_amd64.deb
-          ```
-
-          ### Configure
-
-          ```bash
-          # Interactive wizard
-          cloudflared-fips-tui setup
-
-          # Or non-interactive provisioning
-          sudo cloudflared-fips-provision --role controller
-          sudo cloudflared-fips-provision --role server --enrollment-token <T> --controller-url <URL>
-          sudo cloudflared-fips-provision --role proxy  --enrollment-token <T> --controller-url <URL>
-          sudo cloudflared-fips-provision --role client --enrollment-token <T> --controller-url <URL>
-          ```
-
-          ### Included binaries
-
-          | Binary | Description |
-          |--------|-------------|
-          | `cloudflared-fips-selftest` | FIPS self-test suite (KATs, cipher validation) |
-          | `cloudflared-fips-dashboard` | Compliance dashboard + fleet controller API |
-          | `cloudflared-fips-tui` | Interactive setup wizard + live status monitor |
-          | `cloudflared-fips-proxy` | Tier 3 self-hosted FIPS edge proxy |
-          | `cloudflared-fips-agent` | Lightweight endpoint FIPS posture agent |
-          | `cloudflared-fips-provision` | Multi-role provisioning script |
-
-          ### Crypto modules
-
-          - **Linux:** BoringCrypto (CMVP #4735, FIPS 140-3) via `GOEXPERIMENT=boringcrypto`
-          - **macOS/Windows:** Go native FIPS 140-3 module (CAVP A6650) via `GODEBUG=fips140=on`
-          EOF
-          )"
+            --notes-file /tmp/release-notes.md
