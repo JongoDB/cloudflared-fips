@@ -27,10 +27,19 @@ func NewFIPSOptionsPage() *FIPSOptionsPage {
 	output := common.NewTextInput("Self-Test Output Path", "/var/log/cloudflared/selftest.json", "")
 	output.Input.SetValue("/var/log/cloudflared/selftest.json")
 
+	selfTestOnStart := common.NewToggle("Run self-test on startup", "Validates FIPS crypto before accepting connections", true)
+	selfTestOnStart.HelpText = "Runs NIST CAVP known-answer tests (AES-GCM, SHA-256, ECDSA)\non startup. Takes <100ms. Required for FIPS compliance."
+
+	failOnSelfTest := common.NewToggle("Fail on self-test failure", "Refuse to start if crypto validation fails (recommended)", true)
+	failOnSelfTest.HelpText = "If disabled, the service starts even with failed crypto tests.\nNIST SP 800-140D requires fail-closed behavior.\nOnly disable for debugging in non-production."
+
+	verifySignature := common.NewToggle("Verify binary signature", "Check GPG signature at startup (requires public key)", false)
+	verifySignature.HelpText = "Verifies the binary's GPG detached signature against\nthe bundled public key. Requires gpg on PATH.\nPublic key: /etc/cloudflared-fips/public-key.asc"
+
 	return &FIPSOptionsPage{
-		selfTestOnStart: common.NewToggle("Run self-test on startup", "Validates FIPS crypto before accepting connections", true),
-		failOnSelfTest:  common.NewToggle("Fail on self-test failure", "Refuse to start if crypto validation fails (recommended)", true),
-		verifySignature: common.NewToggle("Verify binary signature", "Check GPG signature at startup (requires public key)", false),
+		selfTestOnStart: selfTestOnStart,
+		failOnSelfTest:  failOnSelfTest,
+		verifySignature: verifySignature,
 		selfTestOutput:  output,
 	}
 }

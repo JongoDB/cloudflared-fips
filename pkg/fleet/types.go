@@ -6,6 +6,7 @@
 package fleet
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/cloudflared-fips/cloudflared-fips/internal/compliance"
@@ -153,3 +154,24 @@ type CreateTokenRequest struct {
 	MaxUses   int      `json:"max_uses,omitempty"`
 	ExpiresIn int      `json:"expires_in,omitempty"` // seconds, default 3600
 }
+
+// RemediationRequest represents a controller-initiated remediation for a node.
+type RemediationRequest struct {
+	ID          string          `json:"id"`
+	NodeID      string          `json:"node_id"`
+	Actions     []string        `json:"actions"`
+	DryRun      bool            `json:"dry_run"`
+	Status      RemediationStatus `json:"status"`
+	CreatedAt   time.Time       `json:"created_at"`
+	CompletedAt *time.Time      `json:"completed_at,omitempty"`
+	Result      json.RawMessage `json:"result,omitempty"`
+}
+
+// RemediationStatus represents the status of a remediation request.
+type RemediationStatus string
+
+const (
+	RemediationPending   RemediationStatus = "pending"
+	RemediationCompleted RemediationStatus = "completed"
+	RemediationFailed    RemediationStatus = "failed"
+)

@@ -41,12 +41,15 @@ func NewProxyConfigPage() *ProxyConfigPage {
 
 	cert := common.NewTextInput("TLS Certificate File", "/etc/pki/tls/certs/proxy.pem", "")
 	cert.Validate = config.ValidateNonEmpty
+	cert.HelpText = "PEM-encoded certificate for client-facing FIPS TLS.\nMust use FIPS-approved key (RSA-2048+, ECDSA P-256/P-384).\nLet's Encrypt: certbot certonly --standalone -d proxy.example.com"
 
 	key := common.NewTextInput("TLS Private Key File", "/etc/pki/tls/private/proxy-key.pem", "")
 	key.Validate = config.ValidateNonEmpty
+	key.HelpText = "PEM-encoded private key matching the certificate above.\nMust be stored with restricted permissions (chmod 600)."
 
 	tunnelToken := common.NewTextInput("Tunnel Token", "eyJ...", "(proxy's own tunnel for FIPS egress)")
 	tunnelToken.Validate = config.ValidateNonEmpty
+	tunnelToken.HelpText = "Get from Cloudflare Zero Trust dashboard:\n  Networks → Tunnels → Create → Cloudflared → copy token\nOr CLI: cloudflared tunnel token <tunnel-name>"
 
 	proto := common.NewSelector("Protocol", []common.SelectorOption{
 		{Value: "quic", Label: "QUIC", Description: "UDP 7844 — preferred, lower latency"},
@@ -55,9 +58,11 @@ func NewProxyConfigPage() *ProxyConfigPage {
 
 	ctrlURL := common.NewTextInput("Controller URL", "https://controller.example.com:8080", "(REQUIRED)")
 	ctrlURL.Validate = config.ValidateNonEmpty
+	ctrlURL.HelpText = "The controller's dashboard URL (includes fleet API endpoints).\nExample: https://controller.internal:8080\nMust be reachable from this node over the network."
 
 	enrollToken := common.NewTextInput("Enrollment Token", "tok-...", "(REQUIRED — from controller)")
 	enrollToken.Validate = config.ValidateNonEmpty
+	enrollToken.HelpText = "One-time token from the controller admin.\nGenerate on controller:\n  curl -H 'Authorization: Bearer <admin-key>' \\\n    -X POST https://<controller>:8080/api/v1/fleet/tokens"
 
 	return &ProxyConfigPage{
 		nodeName:      nodeName,

@@ -16,10 +16,11 @@ type SelectorOption struct {
 
 // Selector is a vertical radio-select component with descriptions.
 type Selector struct {
-	Label   string
-	Options []SelectorOption
-	Cursor  int
-	Focused bool
+	Label    string
+	HelpText string // Contextual help shown when focused
+	Options  []SelectorOption
+	Cursor   int
+	Focused  bool
 }
 
 // NewSelector creates a new radio-select.
@@ -121,6 +122,10 @@ func (s *Selector) View() string {
 			desc := descStyle.Render("    " + opt.Description)
 			b.WriteString(desc + "\n")
 		}
+	}
+	if s.HelpText != "" && s.Focused {
+		b.WriteString(HelpTextStyle.Render(s.HelpText))
+		b.WriteString("\n")
 	}
 	return b.String()
 }

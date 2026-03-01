@@ -7,10 +7,11 @@ import (
 
 // Toggle is a boolean [x]/[ ] toggle component.
 type Toggle struct {
-	Label   string
-	Hint    string
-	Enabled bool
-	Focused bool
+	Label    string
+	Hint     string
+	HelpText string // Contextual help shown when focused
+	Enabled  bool
+	Focused  bool
 }
 
 // NewToggle creates a new toggle component.
@@ -69,5 +70,9 @@ func (t *Toggle) View() string {
 		cursor = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render("▸ ")
 	}
 
-	return cursor + check + " " + label + hint
+	result := cursor + check + " " + label + hint
+	if t.HelpText != "" && t.Focused {
+		result += "\n" + HelpTextStyle.Render(t.HelpText)
+	}
+	return result
 }

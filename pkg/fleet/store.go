@@ -33,6 +33,12 @@ type Store interface {
 	// Fleet summary
 	GetSummary(ctx context.Context) (*FleetSummary, error)
 
+	// Remediation
+	CreateRemediationRequest(ctx context.Context, req *RemediationRequest) error
+	GetPendingRemediations(ctx context.Context, nodeID string) ([]RemediationRequest, error)
+	CompleteRemediation(ctx context.Context, reqID string, result []byte) error
+	GetRemediationRequest(ctx context.Context, id string) (*RemediationRequest, error)
+
 	// Lifecycle
 	Close() error
 }

@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -70,6 +71,11 @@ func RegisterFleetRoutes(mux *http.ServeMux, fh *FleetHandler) {
 	mux.HandleFunc("GET /api/v1/fleet/policy", fh.HandleGetPolicy)
 	mux.HandleFunc("PUT /api/v1/fleet/policy", fh.HandleUpdatePolicy)
 	mux.HandleFunc("GET /api/v1/fleet/routes", fh.HandleGetRoutes)
+	// Remediation endpoints
+	mux.HandleFunc("POST /api/v1/fleet/nodes/{id}/remediate", fh.HandleRequestRemediation)
+	mux.HandleFunc("GET /api/v1/fleet/nodes/{id}/remediate", fh.HandlePollRemediations)
+	mux.HandleFunc("POST /api/v1/fleet/nodes/{id}/remediate/result", fh.HandlePostRemediationResult)
+	mux.HandleFunc("GET /api/v1/fleet/remediate/plan/{id}", fh.HandleGetRemediationPlan)
 }
 
 // BroadcastEvents fans out fleet events from the event channel to all SSE clients.
@@ -572,4 +578,244 @@ func (fh *FleetHandler) FleetModeInfo() map[string]interface{} {
 	return map[string]interface{}{
 		"fleet_mode": true,
 	}
+}
+
+// HandleRequestRemediation creates a remediation request for a node (admin only).
+func (fh *FleetHandler) HandleRequestRemediation(w http.ResponseWriter, r *http.Request) {
+	if !fh.requireAdmin(w, r) {
+		return
+	}
+
+	nodeID := r.PathValue("id")
+	if nodeID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "node id required"})
+		return
+	}
+
+	// Verify node exists
+	if _, err := fh.store.GetNode(r.Context(), nodeID); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "node not found"})
+		return
+	}
+
+	var body struct {
+		Actions []string `json:"actions"`
+		DryRun  bool     `json:"dry_run"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if len(body.Actions) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "actions list required"})
+		return
+	}
+
+	reqID := generateID()
+	req := &fleet.RemediationRequest{
+		ID:        reqID,
+		NodeID:    nodeID,
+		Actions:   body.Actions,
+		DryRun:    body.DryRun,
+		Status:    fleet.RemediationPending,
+		CreatedAt: time.Now().UTC(),
+	}
+
+	if err := fh.store.CreateRemediationRequest(r.Context(), req); err != nil {
+		fh.logger.Printf("fleet: create remediation request error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create remediation request"})
+		return
+	}
+
+	fh.logger.Printf("fleet: remediation requested for node %s: %v (dry_run=%v)", nodeID, body.Actions, body.DryRun)
+
+	// Emit SSE event
+	if fh.eventCh != nil {
+		node, _ := fh.store.GetNode(r.Context(), nodeID)
+		if node != nil {
+			select {
+			case fh.eventCh <- fleet.FleetEvent{
+				Type: "remediation_requested",
+				Node: *node,
+				Time: time.Now().UTC(),
+			}:
+			default:
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusCreated, req)
+}
+
+// HandlePollRemediations returns pending remediation requests for a node (node auth).
+func (fh *FleetHandler) HandlePollRemediations(w http.ResponseWriter, r *http.Request) {
+	node, ok := fh.authenticateNode(w, r)
+	if !ok {
+		return
+	}
+
+	nodeID := r.PathValue("id")
+	if nodeID != node.ID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "node id mismatch"})
+		return
+	}
+
+	reqs, err := fh.store.GetPendingRemediations(r.Context(), nodeID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get pending remediations"})
+		return
+	}
+	if reqs == nil {
+		reqs = []fleet.RemediationRequest{}
+	}
+	writeJSON(w, http.StatusOK, reqs)
+}
+
+// HandlePostRemediationResult receives a remediation result from a node (node auth).
+func (fh *FleetHandler) HandlePostRemediationResult(w http.ResponseWriter, r *http.Request) {
+	node, ok := fh.authenticateNode(w, r)
+	if !ok {
+		return
+	}
+
+	nodeID := r.PathValue("id")
+	if nodeID != node.ID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "node id mismatch"})
+		return
+	}
+
+	var body struct {
+		RequestID string          `json:"request_id"`
+		Result    json.RawMessage `json:"result"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	// Verify the request belongs to this node
+	req, err := fh.store.GetRemediationRequest(r.Context(), body.RequestID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "remediation request not found"})
+		return
+	}
+	if req.NodeID != nodeID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "request does not belong to this node"})
+		return
+	}
+
+	if err := fh.store.CompleteRemediation(r.Context(), body.RequestID, body.Result); err != nil {
+		fh.logger.Printf("fleet: complete remediation error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to complete remediation"})
+		return
+	}
+
+	fh.logger.Printf("fleet: remediation completed for node %s (request %s)", nodeID, body.RequestID)
+
+	// Emit SSE event
+	if fh.eventCh != nil {
+		select {
+		case fh.eventCh <- fleet.FleetEvent{
+			Type: "remediation_completed",
+			Node: *node,
+			Time: time.Now().UTC(),
+		}:
+		default:
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "completed"})
+}
+
+// HandleGetRemediationPlan returns available remediation actions for a node
+// based on its latest compliance report (admin only).
+func (fh *FleetHandler) HandleGetRemediationPlan(w http.ResponseWriter, r *http.Request) {
+	if !fh.requireAdmin(w, r) {
+		return
+	}
+
+	nodeID := r.PathValue("id")
+	if nodeID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "node id required"})
+		return
+	}
+
+	report, err := fh.store.GetLatestReport(r.Context(), nodeID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no compliance report found"})
+		return
+	}
+
+	// Parse the report to identify failed items
+	var compReport struct {
+		Sections []struct {
+			Items []struct {
+				ID          string `json:"id"`
+				Name        string `json:"name"`
+				Status      string `json:"status"`
+				Remediation string `json:"remediation"`
+			} `json:"items"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(report, &compReport); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to parse compliance report"})
+		return
+	}
+
+	// Map failed items to available actions
+	type planAction struct {
+		ID           string `json:"id"`
+		Description  string `json:"description"`
+		AutoExec     bool   `json:"auto_exec"`
+		Instructions string `json:"instructions"`
+		FailedCheck  string `json:"failed_check"`
+	}
+
+	var actions []planAction
+	for _, section := range compReport.Sections {
+		for _, item := range section.Items {
+			if item.Status == "pass" {
+				continue
+			}
+			switch item.ID {
+			case "ag-fips":
+				actions = append(actions, planAction{
+					ID: "enable_os_fips", Description: "Enable OS FIPS mode",
+					AutoExec: true, Instructions: item.Remediation, FailedCheck: item.Name,
+				})
+			case "ag-warp":
+				if strings.Contains(item.Remediation, "not connected") || strings.Contains(item.Remediation, "not running") {
+					actions = append(actions, planAction{
+						ID: "connect_warp", Description: "Connect Cloudflare WARP",
+						AutoExec: true, Instructions: "warp-cli connect", FailedCheck: item.Name,
+					})
+				} else {
+					actions = append(actions, planAction{
+						ID: "install_warp", Description: "Install Cloudflare WARP",
+						AutoExec: true, Instructions: item.Remediation, FailedCheck: item.Name,
+					})
+				}
+			case "ag-disk":
+				actions = append(actions, planAction{
+					ID: "enable_disk_encryption", Description: "Enable full-disk encryption",
+					AutoExec: false, Instructions: item.Remediation, FailedCheck: item.Name,
+				})
+			case "ag-mdm":
+				actions = append(actions, planAction{
+					ID: "enroll_mdm", Description: "Enroll device in MDM",
+					AutoExec: false, Instructions: item.Remediation, FailedCheck: item.Name,
+				})
+			}
+		}
+	}
+
+	if actions == nil {
+		actions = []planAction{}
+	}
+	writeJSON(w, http.StatusOK, actions)
+}
+
+// generateID produces a simple unique ID for remediation requests.
+func generateID() string {
+	return fmt.Sprintf("rem-%d", time.Now().UnixNano())
 }

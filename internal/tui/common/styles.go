@@ -87,6 +87,14 @@ var (
 	BlurredPrompt = "  "
 )
 
+// HelpTextStyle is used for inline contextual help below focused fields.
+var HelpTextStyle = lipgloss.NewStyle().
+	Foreground(ColorDim).
+	PaddingLeft(4).
+	BorderStyle(lipgloss.ThickBorder()).
+	BorderLeft(true).
+	BorderForeground(ColorPrimary)
+
 // Badge styles.
 var (
 	PassBadge = lipgloss.NewStyle().

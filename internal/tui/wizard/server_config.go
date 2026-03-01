@@ -47,9 +47,11 @@ func NewServerConfigPage() *ServerConfigPage {
 
 	ctrlURL := common.NewTextInput("Controller URL", "https://controller.example.com:8080", "(REQUIRED)")
 	ctrlURL.Validate = config.ValidateNonEmpty
+	ctrlURL.HelpText = "The controller's dashboard URL (includes fleet API endpoints).\nExample: https://controller.internal:8080\nMust be reachable from this node over the network."
 
 	enrollToken := common.NewTextInput("Enrollment Token", "tok-...", "(REQUIRED — from controller)")
 	enrollToken.Validate = config.ValidateNonEmpty
+	enrollToken.HelpText = "One-time token from the controller admin.\nGenerate on controller:\n  curl -H 'Authorization: Bearer <admin-key>' \\\n    -X POST https://<controller>:8080/api/v1/fleet/tokens"
 
 	return &ServerConfigPage{
 		nodeName:      nodeName,

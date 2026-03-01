@@ -13,6 +13,7 @@ type ValidateFunc func(string) error
 type TextInput struct {
 	Label       string
 	Hint        string
+	HelpText    string // Contextual help shown when focused
 	Input       textinput.Model
 	Validate    ValidateFunc
 	Err         string
@@ -112,5 +113,9 @@ func (t *TextInput) View() string {
 		errLine = "\n  " + ErrorStyle.Render("! "+t.Err)
 	}
 	inputStyle := lipgloss.NewStyle().MarginLeft(2)
-	return label + hint + "\n" + inputStyle.Render(t.Input.View()) + errLine
+	helpBlock := ""
+	if t.HelpText != "" && t.Focused() {
+		helpBlock = "\n" + HelpTextStyle.Render(t.HelpText)
+	}
+	return label + hint + "\n" + inputStyle.Render(t.Input.View()) + errLine + helpBlock
 }

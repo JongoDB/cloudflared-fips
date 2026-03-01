@@ -85,9 +85,21 @@ func (s *SQLiteStore) migrate() error {
 		report    TEXT NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS remediation_requests (
+		id           TEXT PRIMARY KEY,
+		node_id      TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+		actions      TEXT NOT NULL DEFAULT '[]',
+		dry_run      INTEGER NOT NULL DEFAULT 0,
+		status       TEXT NOT NULL DEFAULT 'pending',
+		created_at   TEXT NOT NULL,
+		completed_at TEXT NOT NULL DEFAULT '',
+		result       TEXT NOT NULL DEFAULT ''
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_reports_node_time ON compliance_reports(node_id, timestamp DESC);
 	CREATE INDEX IF NOT EXISTS idx_nodes_status ON nodes(status);
 	CREATE INDEX IF NOT EXISTS idx_nodes_role ON nodes(role);
+	CREATE INDEX IF NOT EXISTS idx_remediation_node ON remediation_requests(node_id, status);
 	`
 	_, err := s.db.Exec(schema)
 	return err
@@ -474,4 +486,99 @@ func scanNodeRows(rows *sql.Rows) (*Node, error) {
 	json.Unmarshal([]byte(labelsStr), &n.Labels)
 	populateNodeExtras(&n, compStatus, serviceJSON, gracePeriodEnd)
 	return &n, nil
+}
+
+// CreateRemediationRequest stores a new remediation request for a node.
+func (s *SQLiteStore) CreateRemediationRequest(ctx context.Context, req *RemediationRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	actionsJSON, _ := json.Marshal(req.Actions)
+	dryRun := 0
+	if req.DryRun {
+		dryRun = 1
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO remediation_requests (id, node_id, actions, dry_run, status, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		req.ID, req.NodeID, string(actionsJSON), dryRun,
+		string(req.Status), req.CreatedAt.UTC().Format(time.RFC3339))
+	return err
+}
+
+// GetPendingRemediations returns pending remediation requests for a node.
+func (s *SQLiteStore) GetPendingRemediations(ctx context.Context, nodeID string) ([]RemediationRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, node_id, actions, dry_run, status, created_at, completed_at, result
+		 FROM remediation_requests WHERE node_id = ? AND status = 'pending'
+		 ORDER BY created_at ASC`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reqs []RemediationRequest
+	for rows.Next() {
+		var r RemediationRequest
+		var actionsStr, createdAt, completedAt, resultStr string
+		var dryRun int
+		if err := rows.Scan(&r.ID, &r.NodeID, &actionsStr, &dryRun, &r.Status,
+			&createdAt, &completedAt, &resultStr); err != nil {
+			return nil, err
+		}
+		r.DryRun = dryRun == 1
+		json.Unmarshal([]byte(actionsStr), &r.Actions)
+		r.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		if completedAt != "" {
+			t, _ := time.Parse(time.RFC3339, completedAt)
+			r.CompletedAt = &t
+		}
+		reqs = append(reqs, r)
+	}
+	return reqs, rows.Err()
+}
+
+// CompleteRemediation marks a remediation request as completed and stores the result.
+func (s *SQLiteStore) CompleteRemediation(ctx context.Context, reqID string, result []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE remediation_requests SET status = 'completed', completed_at = ?, result = ?
+		 WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), string(result), reqID)
+	return err
+}
+
+// GetRemediationRequest returns a specific remediation request.
+func (s *SQLiteStore) GetRemediationRequest(ctx context.Context, id string) (*RemediationRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, node_id, actions, dry_run, status, created_at, completed_at, result
+		 FROM remediation_requests WHERE id = ?`, id)
+
+	var r RemediationRequest
+	var actionsStr, createdAt, completedAt, resultStr string
+	var dryRun int
+	err := row.Scan(&r.ID, &r.NodeID, &actionsStr, &dryRun, &r.Status,
+		&createdAt, &completedAt, &resultStr)
+	if err != nil {
+		return nil, err
+	}
+	r.DryRun = dryRun == 1
+	json.Unmarshal([]byte(actionsStr), &r.Actions)
+	r.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	if completedAt != "" {
+		t, _ := time.Parse(time.RFC3339, completedAt)
+		r.CompletedAt = &t
+	}
+	if resultStr != "" {
+		r.Result = json.RawMessage(resultStr)
+	}
+	return &r, nil
 }

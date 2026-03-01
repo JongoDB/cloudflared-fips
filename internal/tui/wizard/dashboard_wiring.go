@@ -88,17 +88,21 @@ func (p *DashboardWiringPage) fieldCount() int {
 // NewDashboardWiringPage creates page 2.
 func NewDashboardWiringPage() *DashboardWiringPage {
 	apiToken := common.NewPasswordInput("Cloudflare API Token", "Bearer token", "(or set CF_API_TOKEN env var)")
+	apiToken.HelpText = "Create at: https://dash.cloudflare.com/profile/api-tokens\nRequired permissions: Zone:Read, Access:Read, SSL and Certificates:Read\nThe token is validated automatically when you leave this field."
 	if env := os.Getenv("CF_API_TOKEN"); env != "" {
 		apiToken.SetValue(env)
 	}
 
 	zoneID := common.NewTextInput("Zone ID", "32-character hex", "")
 	zoneID.Validate = config.ValidateOptionalHexID
+	zoneID.HelpText = "Find in Cloudflare dashboard: select your domain → Overview →\nright sidebar under 'API'. Will auto-populate if your token has\naccess to zones."
 
 	accountID := common.NewTextInput("Account ID", "32-character hex", "")
 	accountID.Validate = config.ValidateOptionalHexID
+	accountID.HelpText = "Find at: https://dash.cloudflare.com → select account →\nOverview sidebar. Auto-discovered from your API token."
 
 	tunnelID := common.NewTextInput("Tunnel ID", "(auto-populated from page 1)", "")
+	tunnelID.HelpText = "Run: cloudflared tunnel list\nOr create: cloudflared tunnel create <name>\nAuto-populated from the tunnel token on the previous page."
 
 	metricsAddr := common.NewTextInput("Metrics Address", "localhost:2000", "")
 	metricsAddr.Input.SetValue("localhost:2000")

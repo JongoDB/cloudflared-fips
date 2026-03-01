@@ -33,12 +33,15 @@ const controllerFieldCount = 10
 // NewControllerConfigPage creates the controller config page.
 func NewControllerConfigPage() *ControllerConfigPage {
 	adminKey := common.NewTextInput("Admin API Key", "auto-generated if empty", "(leave blank to auto-generate)")
+	adminKey.HelpText = "Used by fleet nodes to authenticate with this controller.\nLeave blank to auto-generate a random 32-char key.\nStore securely — needed for fleet admin operations."
+
 	nodeName := common.NewTextInput("Node Name", defaultHostname(), "")
 	nodeName.Input.SetValue(defaultHostname())
 	region := common.NewTextInput("Node Region", "us-east", "(optional label)")
 
 	tunnelToken := common.NewTextInput("Tunnel Token", "eyJ...", "(REQUIRED — controller owns the Cloudflare tunnel)")
 	tunnelToken.Validate = config.ValidateNonEmpty
+	tunnelToken.HelpText = "Get from Cloudflare Zero Trust dashboard:\n  Networks → Tunnels → Create → Cloudflared → copy token\nOr CLI: cloudflared tunnel token <tunnel-name>"
 
 	proto := common.NewSelector("Protocol", []common.SelectorOption{
 		{Value: "quic", Label: "QUIC", Description: "UDP 7844 — preferred, lower latency"},
@@ -52,6 +55,13 @@ func NewControllerConfigPage() *ControllerConfigPage {
 		{Value: "enforce", Label: "Enforce", Description: "Deny traffic from non-compliant nodes"},
 		{Value: "disabled", Label: "Disabled", Description: "No compliance checking"},
 	})
+	enforcement.HelpText = "Audit: log violations but allow traffic (start here).\nEnforce: block traffic from non-compliant nodes.\nDisabled: no compliance checking at all."
+
+	requireOSFIPS := common.NewToggle("Require OS FIPS mode", "All nodes must have OS-level FIPS enabled", false)
+	requireOSFIPS.HelpText = "Nodes without OS FIPS mode will be flagged non-compliant.\nLinux: requires fips-mode-setup --enable && reboot\nWindows: requires FIPS GPO policy\nmacOS: always passes (CommonCrypto is FIPS-validated)"
+
+	requireDiskEnc := common.NewToggle("Require disk encryption", "All nodes must have disk encryption enabled", false)
+	requireDiskEnc.HelpText = "Checks for full-disk encryption on each fleet node.\nLinux: LUKS/dm-crypt  |  Windows: BitLocker  |  macOS: FileVault\nThe agent detects but cannot auto-enable encryption."
 
 	return &ControllerConfigPage{
 		adminKey:        adminKey,
@@ -61,8 +71,8 @@ func NewControllerConfigPage() *ControllerConfigPage {
 		protocol:        proto,
 		ingress:         ing,
 		enforcementMode: enforcement,
-		requireOSFIPS:   common.NewToggle("Require OS FIPS mode", "All nodes must have OS-level FIPS enabled", false),
-		requireDiskEnc:  common.NewToggle("Require disk encryption", "All nodes must have disk encryption enabled", false),
+		requireOSFIPS:   requireOSFIPS,
+		requireDiskEnc:  requireDiskEnc,
 		withCF:          common.NewToggle("Enable Cloudflare API integration", "Wire dashboard to CF API for edge compliance checks", false),
 	}
 }
