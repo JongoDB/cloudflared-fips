@@ -15,6 +15,9 @@ env:
   # Go 1.23 for Linux BoringCrypto builds — upstream cloudflared's quic-go
   # uses tls.NewGCMTLS13 which was removed in Go 1.24.
   GO_VERSION_BORING: '1.23.6'
+  # Package version: strip leading 'v' from tag (e.g., v0.2.0 → 0.2.0).
+  # Falls back to 0.0.0-dev for PR builds where there's no tag.
+  RELEASE_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.0.0-dev' }}
 
 jobs:
   # ── Linux builds: RHEL UBI 9 container with GOEXPERIMENT=boringcrypto ──
@@ -74,7 +77,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CC: ${{ matrix.cc }}
         run: |
-          VERSION="${UPSTREAM_VERSION}-fips"
+          VERSION=$(echo "${RELEASE_VERSION}" | sed 's/^v//')
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           LDFLAGS="-s -w -buildid= \
             -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.Version=${VERSION} \
@@ -121,14 +124,15 @@ jobs:
       - name: Generate SBOM
         continue-on-error: true
         run: |
+          VERSION=$(echo "${RELEASE_VERSION}" | sed 's/^v//')
           bash scripts/generate-sbom.sh \
             upstream-cloudflared \
             /tmp \
-            "${UPSTREAM_VERSION}-fips"
+            "${VERSION}"
 
       - name: Generate build manifest
         run: |
-          VERSION="${UPSTREAM_VERSION}-fips"
+          VERSION=$(echo "${RELEASE_VERSION}" | sed 's/^v//')
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           BINARY_SHA256=""
           SBOM_SHA256=""
@@ -185,7 +189,7 @@ jobs:
           cp /tmp/build-manifest.json /root/rpmbuild/SOURCES/
 
           # RPM versions cannot contain hyphens — use dots
-          RPM_VERSION=$(echo "${UPSTREAM_VERSION}.fips" | sed 's/-/./g')
+          RPM_VERSION=$(echo "${RELEASE_VERSION}" | sed 's/^v//; s/-/./g')
           VERSION="${RPM_VERSION}" rpmbuild --define "_topdir /root/rpmbuild" -bb build/packaging/rpm/cloudflared-fips.spec
           cp /root/rpmbuild/RPMS/*/*.rpm /tmp/ 2>/dev/null || true
 
@@ -206,8 +210,9 @@ jobs:
           cp configs/cloudflared-fips.yaml /tmp/ 2>/dev/null || true
           cp /tmp/build-manifest.json /tmp/ 2>/dev/null || true
 
+          VERSION=$(echo "${RELEASE_VERSION}" | sed 's/^v//')
           bash build/packaging/deb/build-deb.sh \
-            "${UPSTREAM_VERSION}-fips" \
+            "${VERSION}" \
             "$DEB_ARCH" \
             /tmp \
             /tmp
@@ -218,10 +223,11 @@ jobs:
           # Build OCI image using the pre-compiled binary
           dnf install -y podman 2>/dev/null || true
           if command -v podman >/dev/null 2>&1; then
+            VERSION=$(echo "${RELEASE_VERSION}" | sed 's/^v//')
             podman build -f build/Dockerfile.fips \
-              --build-arg VERSION="${UPSTREAM_VERSION}-fips" \
+              --build-arg VERSION="${VERSION}" \
               --build-arg GIT_COMMIT="${{ github.sha }}" \
-              -t "cloudflared-fips:${UPSTREAM_VERSION}-fips" . || echo "Container build requires podman/docker"
+              -t "cloudflared-fips:${VERSION}" . || echo "Container build requires podman/docker"
           else
             echo "Container packaging skipped — podman/docker not available"
           fi
@@ -278,7 +284,7 @@ jobs:
           GOOS: darwin
           GOARCH: ${{ matrix.goarch }}
         run: |
-          VERSION="${UPSTREAM_VERSION}-fips"
+          VERSION=$(echo "${RELEASE_VERSION}" | sed 's/^v//')
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           LDFLAGS="-s -w -buildid= \
             -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.Version=${VERSION} \
@@ -300,7 +306,7 @@ jobs:
 
       - name: Generate build manifest
         run: |
-          VERSION="${UPSTREAM_VERSION}-fips"
+          VERSION=$(echo "${RELEASE_VERSION}" | sed 's/^v//')
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           BINARY_SHA256=$(shasum -a 256 /tmp/cloudflared-fips-selftest | awk '{print $1}')
 
@@ -329,8 +335,9 @@ jobs:
 
       - name: Package — macOS .pkg
         run: |
+          VERSION=$(echo "${RELEASE_VERSION}" | sed 's/^v//')
           bash build/packaging/macos/build-pkg.sh \
-            "${UPSTREAM_VERSION}-fips" \
+            "${VERSION}" \
             /tmp \
             /tmp
 
@@ -381,7 +388,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         shell: bash
         run: |
-          VERSION="${UPSTREAM_VERSION}-fips"
+          VERSION=$(echo "${RELEASE_VERSION}" | sed 's/^v//')
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           LDFLAGS="-s -w -buildid= \
             -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.Version=${VERSION} \
@@ -406,7 +413,7 @@ jobs:
       - name: Generate build manifest
         shell: bash
         run: |
-          VERSION="${UPSTREAM_VERSION}-fips"
+          VERSION=$(echo "${RELEASE_VERSION}" | sed 's/^v//')
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           BINARY_SHA256=$(sha256sum "${RUNNER_TEMP}/cloudflared-fips-selftest.exe" | awk '{print $1}')
 
@@ -439,7 +446,7 @@ jobs:
         run: |
           # WiX v4 is pre-installed on windows-latest runners
           # If not available, install: dotnet tool install --global wix
-          $version = "${{ env.UPSTREAM_VERSION }}-fips" -replace '[^0-9.]', ''
+          $version = "${{ env.RELEASE_VERSION }}" -replace '^v', '' -replace '[^0-9.]', ''
           if (-not $version) { $version = "1.0.0" }
           try {
             wix build `
