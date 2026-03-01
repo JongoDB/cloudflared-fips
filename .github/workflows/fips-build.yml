@@ -126,58 +126,6 @@ jobs:
             /tmp \
             "${UPSTREAM_VERSION}-fips"
 
-      - name: Package — RPM
-        if: contains(matrix.package, 'rpm')
-        run: |
-          dnf install -y rpm-build
-          mkdir -p /root/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
-
-          # Copy all fleet binaries into rpmbuild SOURCES
-          cp /tmp/cloudflared-fips-selftest /root/rpmbuild/SOURCES/
-          cp /tmp/cloudflared-fips-dashboard /root/rpmbuild/SOURCES/
-          cp /tmp/cloudflared-fips-tui /root/rpmbuild/SOURCES/
-          cp /tmp/cloudflared-fips-proxy /root/rpmbuild/SOURCES/
-          cp /tmp/cloudflared-fips-agent /root/rpmbuild/SOURCES/
-          cp /tmp/cloudflared-fips-provision /root/rpmbuild/SOURCES/
-
-          cp configs/cloudflared-fips.yaml /root/rpmbuild/SOURCES/ 2>/dev/null || true
-          cp /tmp/build-manifest.json /root/rpmbuild/SOURCES/ 2>/dev/null || true
-
-          # RPM versions cannot contain hyphens — use dots
-          RPM_VERSION=$(echo "${UPSTREAM_VERSION}.fips" | sed 's/-/./g')
-          VERSION="${RPM_VERSION}" rpmbuild --define "_topdir /root/rpmbuild" -bb build/packaging/rpm/cloudflared-fips.spec
-          cp /root/rpmbuild/RPMS/*/*.rpm /tmp/ 2>/dev/null || true
-
-      - name: Package — DEB
-        if: contains(matrix.package, 'deb')
-        run: |
-          # dpkg-deb may not be on RHEL; install if missing
-          dnf install -y dpkg 2>/dev/null || true
-          DEB_ARCH=${{ matrix.goarch }}
-
-          # Copy config and manifest alongside binaries for build-deb.sh
-          cp configs/cloudflared-fips.yaml /tmp/ 2>/dev/null || true
-
-          bash build/packaging/deb/build-deb.sh \
-            "${UPSTREAM_VERSION}-fips" \
-            "$DEB_ARCH" \
-            /tmp \
-            /tmp
-
-      - name: Package — Container (OCI)
-        if: contains(matrix.package, 'container')
-        run: |
-          # Build OCI image using the pre-compiled binary
-          dnf install -y podman 2>/dev/null || true
-          if command -v podman >/dev/null 2>&1; then
-            podman build -f build/Dockerfile.fips \
-              --build-arg VERSION="${UPSTREAM_VERSION}-fips" \
-              --build-arg GIT_COMMIT="${{ github.sha }}" \
-              -t "cloudflared-fips:${UPSTREAM_VERSION}-fips" . || echo "Container build requires podman/docker"
-          else
-            echo "Container packaging skipped — podman/docker not available"
-          fi
-
       - name: Generate build manifest
         run: |
           VERSION="${UPSTREAM_VERSION}-fips"
@@ -218,6 +166,58 @@ jobs:
             "binary_sha256": "${BINARY_SHA256}"
           }
           EOJSON
+
+      - name: Package — RPM
+        if: contains(matrix.package, 'rpm')
+        run: |
+          dnf install -y rpm-build
+          mkdir -p /root/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
+
+          # Copy all fleet binaries into rpmbuild SOURCES
+          cp /tmp/cloudflared-fips-selftest /root/rpmbuild/SOURCES/
+          cp /tmp/cloudflared-fips-dashboard /root/rpmbuild/SOURCES/
+          cp /tmp/cloudflared-fips-tui /root/rpmbuild/SOURCES/
+          cp /tmp/cloudflared-fips-proxy /root/rpmbuild/SOURCES/
+          cp /tmp/cloudflared-fips-agent /root/rpmbuild/SOURCES/
+          cp /tmp/cloudflared-fips-provision /root/rpmbuild/SOURCES/
+
+          cp configs/cloudflared-fips.yaml /root/rpmbuild/SOURCES/
+          cp /tmp/build-manifest.json /root/rpmbuild/SOURCES/
+
+          # RPM versions cannot contain hyphens — use dots
+          RPM_VERSION=$(echo "${UPSTREAM_VERSION}.fips" | sed 's/-/./g')
+          VERSION="${RPM_VERSION}" rpmbuild --define "_topdir /root/rpmbuild" -bb build/packaging/rpm/cloudflared-fips.spec
+          cp /root/rpmbuild/RPMS/*/*.rpm /tmp/ 2>/dev/null || true
+
+      - name: Package — DEB
+        if: contains(matrix.package, 'deb')
+        run: |
+          # dpkg-deb may not be on RHEL; install if missing
+          dnf install -y dpkg 2>/dev/null || true
+          DEB_ARCH=${{ matrix.goarch }}
+
+          # Copy config and manifest alongside binaries for build-deb.sh
+          cp configs/cloudflared-fips.yaml /tmp/ 2>/dev/null || true
+
+          bash build/packaging/deb/build-deb.sh \
+            "${UPSTREAM_VERSION}-fips" \
+            "$DEB_ARCH" \
+            /tmp \
+            /tmp
+
+      - name: Package — Container (OCI)
+        if: contains(matrix.package, 'container')
+        run: |
+          # Build OCI image using the pre-compiled binary
+          dnf install -y podman 2>/dev/null || true
+          if command -v podman >/dev/null 2>&1; then
+            podman build -f build/Dockerfile.fips \
+              --build-arg VERSION="${UPSTREAM_VERSION}-fips" \
+              --build-arg GIT_COMMIT="${{ github.sha }}" \
+              -t "cloudflared-fips:${UPSTREAM_VERSION}-fips" . || echo "Container build requires podman/docker"
+          else
+            echo "Container packaging skipped — podman/docker not available"
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

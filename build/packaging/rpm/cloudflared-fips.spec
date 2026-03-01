@@ -98,10 +98,10 @@ systemctl daemon-reload 2>/dev/null || true
 /usr/share/cloudflared-fips/build-manifest.json
 
 %changelog
-* Sat Mar 01 2026 cloudflared-fips maintainers
+* Sun Mar 01 2026 cloudflared-fips maintainers
 - Ship all fleet binaries (dashboard, tui, proxy, agent) in single RPM
 - Add provision script for role-based deployment
 - Remove hardcoded systemd unit (provisioning creates role-specific units)
 
-* Fri Feb 21 2026 cloudflared-fips maintainers
+* Sat Feb 21 2026 cloudflared-fips maintainers
 - Initial FIPS 140-2 compliant package
