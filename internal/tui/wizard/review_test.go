@@ -222,21 +222,14 @@ func TestRenderSummary_NilConfig(t *testing.T) {
 func TestRenderSummary_ServerRole(t *testing.T) {
 	p := NewReviewPage()
 	p.cfg = &config.Config{
-		Role:           "server",
-		TunnelToken:    "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QifQ",
-		Protocol:       "quic",
-		DeploymentTier: "standard",
-		Ingress: []config.IngressRule{
-			{Hostname: "app.example.com", Service: "https://localhost:8443"},
-		},
-		Dashboard: config.DashboardConfig{
-			CFAPIToken:     "secret-token-value",
-			ZoneID:         "zone-123",
-			AccountID:      "acc-456",
-			TunnelID:       "tun-789",
-			MetricsAddress: "localhost:9090",
-			MDM:            config.MDMConfig{Provider: "none"},
-		},
+		Role:            "server",
+		DeploymentTier:  "standard",
+		ServiceName:     "internal-api",
+		ServiceHost:     "0.0.0.0",
+		ServicePort:     8443,
+		ServiceTLS:      true,
+		ControllerURL:   "https://ctrl.example.com:8080",
+		EnrollmentToken: "tok-secret-enrollment",
 		FIPS: config.FIPSConfig{
 			SelfTestOnStart:       true,
 			FailOnSelfTestFailure: true,
@@ -255,30 +248,33 @@ func TestRenderSummary_ServerRole(t *testing.T) {
 		t.Error("should show role")
 	}
 
-	// Tunnel section
-	if !strings.Contains(got, "TUNNEL") {
-		t.Error("should contain TUNNEL section for server role")
+	// Origin Service section (replaces TUNNEL for server)
+	if !strings.Contains(got, "ORIGIN SERVICE") {
+		t.Error("should contain ORIGIN SERVICE section for server role")
 	}
-	// Tunnel token should be masked
-	if strings.Contains(got, "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QifQ") {
-		t.Error("tunnel token should be masked")
+	if !strings.Contains(got, "internal-api") {
+		t.Error("should show service name")
 	}
-	if !strings.Contains(got, "****") {
-		t.Error("tunnel token should show masked form ****")
-	}
-	if !strings.Contains(got, "quic") {
-		t.Error("should show protocol")
-	}
-	if !strings.Contains(got, "app.example.com") {
-		t.Error("should show ingress hostname")
+	if !strings.Contains(got, "8443") {
+		t.Error("should show service port")
 	}
 
-	// Dashboard section
-	if !strings.Contains(got, "DASHBOARD WIRING") {
-		t.Error("should contain DASHBOARD WIRING section for server role")
+	// Fleet enrollment section
+	if !strings.Contains(got, "FLEET ENROLLMENT") {
+		t.Error("should contain FLEET ENROLLMENT section for server role")
 	}
-	if strings.Contains(got, "secret-token-value") {
-		t.Error("API token should be masked")
+	if !strings.Contains(got, "ctrl.example.com") {
+		t.Error("should show controller URL")
+	}
+
+	// Server should NOT show TUNNEL section
+	if strings.Contains(got, "TUNNEL") {
+		t.Error("server role should not show TUNNEL section")
+	}
+
+	// Server should NOT show DASHBOARD WIRING (controller-only now)
+	if strings.Contains(got, "DASHBOARD WIRING") {
+		t.Error("server role should not show DASHBOARD WIRING section")
 	}
 
 	// FIPS options
@@ -303,9 +299,23 @@ func TestRenderSummary_ControllerRole(t *testing.T) {
 	p.cfg = &config.Config{
 		Role:           "controller",
 		AdminKey:       "super-secret-admin-key",
+		TunnelToken:    "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QifQ",
+		Protocol:       "quic",
 		DeploymentTier: "standard",
-		Dashboard:      config.DashboardConfig{MDM: config.MDMConfig{Provider: "none"}},
-		FIPS:           config.FIPSConfig{},
+		Ingress: []config.IngressRule{
+			{Hostname: "app.example.com", Service: "https://localhost:8443"},
+			{Service: "http_status:404"},
+		},
+		CompliancePolicy: config.CompliancePolicyConfig{
+			EnforcementMode: "enforce",
+			RequireOSFIPS:   true,
+			RequireDiskEnc:  true,
+		},
+		Dashboard: config.DashboardConfig{
+			CFAPIToken: "cf-api-token-secret",
+			MDM:        config.MDMConfig{Provider: "none"},
+		},
+		FIPS: config.FIPSConfig{},
 	}
 
 	got := p.renderSummary()
@@ -317,6 +327,30 @@ func TestRenderSummary_ControllerRole(t *testing.T) {
 	}
 	if !strings.Contains(got, "****") {
 		t.Error("admin key should show masked form")
+	}
+
+	// Controller should have TUNNEL section
+	if !strings.Contains(got, "TUNNEL") {
+		t.Error("controller should contain TUNNEL section")
+	}
+	if !strings.Contains(got, "quic") {
+		t.Error("should show protocol")
+	}
+	if !strings.Contains(got, "app.example.com") {
+		t.Error("should show ingress hostname")
+	}
+
+	// Compliance policy
+	if !strings.Contains(got, "COMPLIANCE POLICY") {
+		t.Error("should contain COMPLIANCE POLICY section")
+	}
+	if !strings.Contains(got, "enforce") {
+		t.Error("should show enforcement mode")
+	}
+
+	// Dashboard wiring (controller-only)
+	if !strings.Contains(got, "DASHBOARD WIRING") {
+		t.Error("controller should show DASHBOARD WIRING section")
 	}
 }
 
@@ -351,13 +385,16 @@ func TestRenderSummary_ProxyRole(t *testing.T) {
 		ProxyListenAddr: "0.0.0.0:443",
 		ProxyCertFile:   "/etc/pki/tls/proxy.pem",
 		ProxyKeyFile:    "/etc/pki/tls/proxy-key.pem",
-		ProxyUpstream:   "https://app.internal:8443",
+		TunnelToken:     "eyJproxy-tunnel-token",
+		Protocol:        "quic",
+		ControllerURL:   "https://ctrl.example.com:8080",
+		EnrollmentToken: "tok-proxy-enroll",
 		FIPS:            config.FIPSConfig{},
 	}
 
 	got := p.renderSummary()
-	if !strings.Contains(got, "FIPS PROXY") {
-		t.Error("should contain FIPS PROXY section for proxy role")
+	if !strings.Contains(got, "FIPS FORWARD PROXY") {
+		t.Error("should contain FIPS FORWARD PROXY section for proxy role")
 	}
 	if !strings.Contains(got, "0.0.0.0:443") {
 		t.Error("should show proxy listen address")
@@ -365,16 +402,27 @@ func TestRenderSummary_ProxyRole(t *testing.T) {
 	if !strings.Contains(got, "proxy.pem") {
 		t.Error("should show proxy cert")
 	}
-	if !strings.Contains(got, "app.internal") {
-		t.Error("should show proxy upstream")
+
+	// Proxy should have its own PROXY TUNNEL section
+	if !strings.Contains(got, "PROXY TUNNEL") {
+		t.Error("proxy should contain PROXY TUNNEL section")
+	}
+
+	// Proxy should have FLEET ENROLLMENT
+	if !strings.Contains(got, "FLEET ENROLLMENT") {
+		t.Error("proxy should contain FLEET ENROLLMENT section")
+	}
+	if !strings.Contains(got, "ctrl.example.com") {
+		t.Error("should show controller URL")
 	}
 }
 
 func TestRenderSummary_Tier2Fields(t *testing.T) {
 	p := NewReviewPage()
 	p.cfg = &config.Config{
-		Role:             "server",
+		Role:             "controller",
 		DeploymentTier:   "regional_keyless",
+		TunnelToken:      "eyJ-tier2-token",
 		KeylessSSLHost:   "keyless.example.com",
 		KeylessSSLPort:   2407,
 		RegionalServices: true,
@@ -394,8 +442,9 @@ func TestRenderSummary_Tier2Fields(t *testing.T) {
 func TestRenderSummary_MDMIntune(t *testing.T) {
 	p := NewReviewPage()
 	p.cfg = &config.Config{
-		Role:           "server",
+		Role:           "controller",
 		DeploymentTier: "standard",
+		TunnelToken:    "eyJ-mdm-test",
 		Dashboard: config.DashboardConfig{
 			MDM: config.MDMConfig{
 				Provider:     "intune",
@@ -422,8 +471,9 @@ func TestRenderSummary_MDMIntune(t *testing.T) {
 func TestRenderSummary_MDMJamf(t *testing.T) {
 	p := NewReviewPage()
 	p.cfg = &config.Config{
-		Role:           "server",
+		Role:           "controller",
 		DeploymentTier: "standard",
+		TunnelToken:    "eyJ-jamf-test",
 		Dashboard: config.DashboardConfig{
 			MDM: config.MDMConfig{
 				Provider: "jamf",
@@ -449,7 +499,8 @@ func TestRenderSummary_MDMJamf(t *testing.T) {
 func TestRenderSummary_CatchAllIngress(t *testing.T) {
 	p := NewReviewPage()
 	p.cfg = &config.Config{
-		Role: "server",
+		Role:        "controller",
+		TunnelToken: "eyJ-ingress-test",
 		Ingress: []config.IngressRule{
 			{Hostname: "", Service: "http_status:404"},
 		},
@@ -469,9 +520,9 @@ func TestRenderSummary_CatchAllIngress(t *testing.T) {
 
 func TestNewWizardModel(t *testing.T) {
 	m := NewWizardModel()
-	// Default role is "server" → pages: RoleTier, ServerConfig, DashboardWiring, FIPS, Review = 5
+	// Default role is now "controller" → pages: RoleTier, ControllerConfig, DashboardWiring, FIPS, Review = 5
 	if len(m.pages) != 5 {
-		t.Errorf("expected 5 pages for default server role, got %d", len(m.pages))
+		t.Errorf("expected 5 pages for default controller role, got %d", len(m.pages))
 	}
 	if m.pageIndex != 0 {
 		t.Errorf("pageIndex = %d, want 0", m.pageIndex)
@@ -483,8 +534,8 @@ func TestNewWizardModel(t *testing.T) {
 		t.Error("should not be done initially")
 	}
 
-	// Verify page titles for default server role
-	expectedTitles := []string{"Role & Tier", "Server Config", "Dashboard Wiring", "FIPS Options", "Review & Provision"}
+	// Verify page titles for default controller role
+	expectedTitles := []string{"Role & Tier", "Controller & Tunnel", "Dashboard Wiring", "FIPS Options", "Review & Provision"}
 	for i, want := range expectedTitles {
 		if i >= len(m.pages) {
 			break
@@ -521,9 +572,14 @@ func TestNewWizardModel_View(t *testing.T) {
 
 func TestBuildProvisionCommand_ServerDefaults(t *testing.T) {
 	cfg := &config.Config{
-		Role:           "server",
-		DeploymentTier: "standard",
-		TunnelToken:    "eyJtest",
+		Role:            "server",
+		DeploymentTier:  "standard",
+		ServiceName:     "my-api",
+		ServiceHost:     "0.0.0.0",
+		ServicePort:     8443,
+		ServiceTLS:      true,
+		ControllerURL:   "https://ctrl.example.com:8080",
+		EnrollmentToken: "tok-abc",
 	}
 
 	script, args := BuildProvisionCommand(cfg)
@@ -545,8 +601,127 @@ func TestBuildProvisionCommand_ServerDefaults(t *testing.T) {
 	if !strings.Contains(argStr, "--tier 1") {
 		t.Error("should include --tier 1 for standard tier")
 	}
-	if !strings.Contains(argStr, "--tunnel-token eyJtest") {
-		t.Error("should include --tunnel-token")
+	// Server should NOT have --tunnel-token
+	if strings.Contains(argStr, "--tunnel-token") {
+		t.Error("server should NOT include --tunnel-token")
+	}
+	// Server should have service flags
+	if !strings.Contains(argStr, "--service-name my-api") {
+		t.Error("should include --service-name")
+	}
+	if !strings.Contains(argStr, "--service-host 0.0.0.0") {
+		t.Error("should include --service-host")
+	}
+	if !strings.Contains(argStr, "--service-port 8443") {
+		t.Error("should include --service-port")
+	}
+	if !strings.Contains(argStr, "--service-tls") {
+		t.Error("should include --service-tls")
+	}
+	// Server should have mandatory fleet enrollment
+	if !strings.Contains(argStr, "--controller-url https://ctrl.example.com:8080") {
+		t.Error("should include --controller-url")
+	}
+	if !strings.Contains(argStr, "--enrollment-token tok-abc") {
+		t.Error("should include --enrollment-token")
+	}
+}
+
+func TestBuildProvisionCommand_ControllerWithTunnel(t *testing.T) {
+	cfg := &config.Config{
+		Role:           "controller",
+		DeploymentTier: "standard",
+		TunnelToken:    "eyJ-controller-token",
+		Protocol:       "quic",
+		AdminKey:       "admin-key-123",
+		CompliancePolicy: config.CompliancePolicyConfig{
+			EnforcementMode: "enforce",
+			RequireOSFIPS:   true,
+			RequireDiskEnc:  true,
+		},
+		Dashboard: config.DashboardConfig{
+			CFAPIToken: "token-abc",
+			ZoneID:     "zone-123",
+			AccountID:  "acc-456",
+			TunnelID:   "tun-789",
+		},
+	}
+
+	_, args := BuildProvisionCommand(cfg)
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "--role controller") {
+		t.Error("should include --role controller")
+	}
+	if !strings.Contains(argStr, "--tunnel-token eyJ-controller-token") {
+		t.Error("controller should include --tunnel-token")
+	}
+	if !strings.Contains(argStr, "--protocol quic") {
+		t.Error("should include --protocol")
+	}
+	if !strings.Contains(argStr, "--admin-key admin-key-123") {
+		t.Error("should include --admin-key")
+	}
+	if !strings.Contains(argStr, "--enforcement-mode enforce") {
+		t.Error("should include --enforcement-mode")
+	}
+	if !strings.Contains(argStr, "--require-os-fips") {
+		t.Error("should include --require-os-fips")
+	}
+	if !strings.Contains(argStr, "--require-disk-enc") {
+		t.Error("should include --require-disk-enc")
+	}
+	if !strings.Contains(argStr, "--cf-api-token token-abc") {
+		t.Error("should include --cf-api-token")
+	}
+	if !strings.Contains(argStr, "--cf-zone-id zone-123") {
+		t.Error("should include --cf-zone-id")
+	}
+}
+
+func TestBuildProvisionCommand_ProxyWithTunnel(t *testing.T) {
+	cfg := &config.Config{
+		Role:            "proxy",
+		DeploymentTier:  "self_hosted",
+		TunnelToken:     "eyJ-proxy-tunnel",
+		Protocol:        "http2",
+		ProxyCertFile:   "/etc/pki/cert.pem",
+		ProxyKeyFile:    "/etc/pki/key.pem",
+		ControllerURL:   "https://ctrl.example.com:8080",
+		EnrollmentToken: "tok-proxy-enroll",
+	}
+
+	_, args := BuildProvisionCommand(cfg)
+	argStr := strings.Join(args, " ")
+
+	if !strings.Contains(argStr, "--role proxy") {
+		t.Error("should include --role proxy")
+	}
+	if !strings.Contains(argStr, "--tier 3") {
+		t.Error("should include --tier 3 for self_hosted")
+	}
+	if !strings.Contains(argStr, "--tunnel-token eyJ-proxy-tunnel") {
+		t.Error("proxy should include --tunnel-token (its own tunnel)")
+	}
+	if !strings.Contains(argStr, "--protocol http2") {
+		t.Error("should include --protocol")
+	}
+	if !strings.Contains(argStr, "--cert /etc/pki/cert.pem") {
+		t.Error("should include --cert")
+	}
+	if !strings.Contains(argStr, "--key /etc/pki/key.pem") {
+		t.Error("should include --key")
+	}
+	// Proxy should NOT have --upstream (removed)
+	if strings.Contains(argStr, "--upstream") {
+		t.Error("proxy should NOT include --upstream")
+	}
+	// Proxy should have mandatory fleet enrollment
+	if !strings.Contains(argStr, "--controller-url https://ctrl.example.com:8080") {
+		t.Error("should include --controller-url")
+	}
+	if !strings.Contains(argStr, "--enrollment-token tok-proxy-enroll") {
+		t.Error("should include --enrollment-token")
 	}
 }
 
@@ -580,39 +755,11 @@ func TestBuildProvisionCommand_ClientWithFleet(t *testing.T) {
 	}
 }
 
-func TestBuildProvisionCommand_Tier3Proxy(t *testing.T) {
-	cfg := &config.Config{
-		Role:            "proxy",
-		DeploymentTier:  "self_hosted",
-		ProxyCertFile:   "/etc/pki/cert.pem",
-		ProxyKeyFile:    "/etc/pki/key.pem",
-		ProxyUpstream:   "https://origin:8443",
-	}
-
-	_, args := BuildProvisionCommand(cfg)
-	argStr := strings.Join(args, " ")
-
-	if !strings.Contains(argStr, "--role proxy") {
-		t.Error("should include --role proxy")
-	}
-	if !strings.Contains(argStr, "--tier 3") {
-		t.Error("should include --tier 3 for self_hosted")
-	}
-	if !strings.Contains(argStr, "--cert /etc/pki/cert.pem") {
-		t.Error("should include --cert")
-	}
-	if !strings.Contains(argStr, "--key /etc/pki/key.pem") {
-		t.Error("should include --key")
-	}
-	if !strings.Contains(argStr, "--upstream https://origin:8443") {
-		t.Error("should include --upstream")
-	}
-}
-
 func TestBuildProvisionCommand_CFCredentials(t *testing.T) {
 	cfg := &config.Config{
 		Role:           "controller",
 		DeploymentTier: "standard",
+		TunnelToken:    "eyJ-cf-creds",
 		Dashboard: config.DashboardConfig{
 			CFAPIToken: "token-abc",
 			ZoneID:     "zone-123",
@@ -659,8 +806,8 @@ func TestBuildProvisionCommand_SkipFIPS(t *testing.T) {
 
 func TestRoleTierPage_Defaults(t *testing.T) {
 	p := NewRoleTierPage()
-	if p.SelectedRole() != "server" {
-		t.Errorf("default role = %q, want server", p.SelectedRole())
+	if p.SelectedRole() != "controller" {
+		t.Errorf("default role = %q, want controller", p.SelectedRole())
 	}
 	if p.SelectedTier() != "standard" {
 		t.Errorf("default tier = %q, want standard", p.SelectedTier())
@@ -671,8 +818,8 @@ func TestRoleTierPage_Apply(t *testing.T) {
 	p := NewRoleTierPage()
 	cfg := config.NewDefaultConfig()
 	p.Apply(cfg)
-	if cfg.Role != "server" {
-		t.Errorf("cfg.Role = %q, want server", cfg.Role)
+	if cfg.Role != "controller" {
+		t.Errorf("cfg.Role = %q, want controller", cfg.Role)
 	}
 	if cfg.DeploymentTier != "standard" {
 		t.Errorf("cfg.DeploymentTier = %q, want standard", cfg.DeploymentTier)

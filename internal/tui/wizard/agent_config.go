@@ -129,7 +129,13 @@ func (p *AgentConfigPage) Apply(cfg *config.Config) {
 
 func (p *AgentConfigPage) View() string {
 	var b strings.Builder
-	b.WriteString(common.LabelStyle.Render("Client Agent Settings"))
+	b.WriteString(common.LabelStyle.Render("Endpoint Agent Settings"))
+	b.WriteString("\n\n")
+	b.WriteString(common.WarningStyle.Render("  This device's FIPS compliance posture will be continuously"))
+	b.WriteString("\n")
+	b.WriteString(common.WarningStyle.Render("  reported to the fleet controller. Non-compliant devices"))
+	b.WriteString("\n")
+	b.WriteString(common.WarningStyle.Render("  will be denied access to protected services."))
 	b.WriteString("\n\n")
 	b.WriteString(p.controllerURL.View())
 	b.WriteString("\n\n")

@@ -200,7 +200,6 @@ func (p *TierSpecificPage) Apply(cfg *config.Config) {
 		cfg.ProxyListenAddr = strings.TrimSpace(p.proxyListenAddr.Value())
 		cfg.ProxyCertFile = strings.TrimSpace(p.proxyCertFile.Value())
 		cfg.ProxyKeyFile = strings.TrimSpace(p.proxyKeyFile.Value())
-		cfg.ProxyUpstream = strings.TrimSpace(p.proxyUpstream.Value())
 	}
 }
 

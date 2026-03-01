@@ -65,10 +65,6 @@ func (m *WizardModel) rebuildPages() {
 		}
 	case "server":
 		pages = append(pages, NewServerConfigPage())
-		pages = append(pages, NewDashboardWiringPage())
-		if tier == "regional_keyless" || tier == "self_hosted" {
-			pages = append(pages, NewTierSpecificPage(tier))
-		}
 	case "proxy":
 		pages = append(pages, NewProxyConfigPage())
 	case "client":

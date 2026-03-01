@@ -83,6 +83,25 @@ func ValidateNonEmpty(s string) error {
 	return nil
 }
 
+// ValidatePort checks that s is a valid port number (1-65535).
+func ValidatePort(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fmt.Errorf("port is required")
+	}
+	port := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return fmt.Errorf("port must be a number")
+		}
+		port = port*10 + int(c-'0')
+	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("port must be between 1 and 65535")
+	}
+	return nil
+}
+
 // ValidateOptionalHexID checks a hex ID only if non-empty.
 func ValidateOptionalHexID(s string) error {
 	if strings.TrimSpace(s) == "" {

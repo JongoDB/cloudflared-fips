@@ -1,16 +1,54 @@
 # cloudflared-fips
 
-FIPS 140-2/3 compliant build of Cloudflare Tunnel (`cloudflared`) with end-to-end cryptographic observability, a compliance dashboard, and an AO authorization toolkit.
+FIPS 140-2/3 compliant build of Cloudflare Tunnel (`cloudflared`) with end-to-end cryptographic observability, a compliance dashboard, fleet-wide compliance enforcement, and an AO authorization toolkit.
 
 ## Overview
 
 Cloudflare Tunnel (`cloudflared`) uses standard Go crypto by default — it is **not** FIPS-validated. This project rebuilds it with validated cryptographic modules and wraps it in tooling that makes every link in the TLS chain visible and auditable.
 
-Three core deliverables:
+Four core deliverables:
 
 1. **FIPS-compliant cloudflared binary** using validated cryptographic modules (BoringCrypto on Linux, Go native FIPS 140-3 on macOS/Windows)
 2. **Real-time compliance dashboard** — a 42-item checklist making every security property of the full connection chain transparently visible, with honest verification-method indicators (web GUI + terminal TUI)
-3. **AO authorization documentation toolkit** — templates and auto-generated artifacts supporting an Authorizing Official authorization path
+3. **Zero-trust fleet management** — four-role architecture (controller, server, proxy, client) with mandatory posture reporting and compliance enforcement
+4. **AO authorization documentation toolkit** — templates and auto-generated artifacts supporting an Authorizing Official authorization path
+
+### Fleet Architecture
+
+```
+                        +---------------------------+
+                        |       CONTROLLER          |
+                        |  Cloudflare Tunnel owner   |
+                        |  Fleet manager             |
+                        |  Compliance enforcer       |
+                        |  Reverse proxy -> servers  |
+                        +------+------------+-------+
+                               |            |
+              +----------------+            +----------------+
+              v                                              v
+    +------------------+                      +------------------+
+    |     SERVER(s)    |                      |     PROXY(ies)   |
+    |  Origin service  |                      |  Client-side     |
+    |  Posture agent   |                      |  FIPS fwd proxy  |
+    |  No tunnel       |                      |  Own CF tunnel   |
+    |  Registers w/    |                      |  Posture agent   |
+    |  controller      |                      |  Clients connect |
+    +------------------+                      |  through this    |
+                                              +--------+---------+
+                                                       |
+                                              +--------+---------+
+                                              |    CLIENT(s)     |
+                                              |  Endpoint device |
+                                              |  MANDATORY agent |
+                                              +------------------+
+```
+
+| Role | Description | Binaries | Key Responsibility |
+|------|-------------|----------|--------------------|
+| **Controller** | Central hub | dashboard, selftest, agent, cloudflared | Owns Cloudflare tunnel, routes traffic to compliant servers, enforces compliance policy |
+| **Server** | Origin service | selftest, agent | Registers service endpoint with controller, runs mandatory posture agent |
+| **Proxy** | Client-side forward proxy | fips-proxy, selftest, agent, cloudflared | Own Cloudflare tunnel for FIPS egress, TLS termination for client traffic |
+| **Client** | Endpoint device | selftest, agent | Mandatory FIPS posture reporting, non-compliant devices denied access |
 
 ## Three-Segment Architecture
 
@@ -133,8 +171,9 @@ The product detects client FIPS capability through:
 │   └── packaging/                   # RPM, DEB, macOS .pkg, Windows MSI (WiX)
 ├── cmd/
 │   ├── selftest/                    # Standalone self-test CLI
-│   ├── dashboard/                   # Compliance dashboard server (localhost-only)
-│   ├── fips-proxy/                  # Tier 3 FIPS reverse proxy
+│   ├── dashboard/                   # Compliance dashboard + fleet controller
+│   ├── fips-proxy/                  # Client-side FIPS forward proxy
+│   ├── agent/                       # Lightweight FIPS posture agent (~11 MB)
 │   └── tui/                         # TUI: setup wizard + status monitor
 ├── internal/
 │   ├── selftest/                    # KATs, cipher validation, BoringCrypto detection
@@ -201,7 +240,16 @@ The product detects client FIPS capability through:
 make setup
 ```
 
-Walks through 5 pages: tunnel config, dashboard wiring, deployment tier, FIPS options, review — then writes `configs/cloudflared-fips.yaml`. After writing, an interactive menu lets you run the self-test, launch the dashboard, or exit.
+The setup wizard adapts to the selected role:
+
+| Role | Pages |
+|------|-------|
+| **Controller** | Role & Tier → Controller & Tunnel (token, ingress, compliance policy) → Dashboard Wiring → FIPS Options → Review |
+| **Server** | Role & Tier → Origin Service (service endpoint, fleet enrollment) → FIPS Options → Review |
+| **Proxy** | Role & Tier → FIPS Forward Proxy (TLS, tunnel, fleet enrollment) → FIPS Options → Review |
+| **Client** | Role & Tier → Agent Config (controller URL, enrollment token) → FIPS Options → Review |
+
+After writing `configs/cloudflared-fips.yaml`, an interactive menu lets you provision, run the self-test, launch the dashboard, or exit.
 
 The Makefile auto-selects the right FIPS backend per platform:
 - **Linux:** `GOEXPERIMENT=boringcrypto` (BoringCrypto, CMVP #4735)
@@ -369,6 +417,24 @@ Sunset banner with progress bar, deployment tier badge, compliance summary (80%)
 | `GET /api/v1/mdm/summary` | MDM fleet compliance summary |
 | `GET /health` | Health check |
 
+#### Fleet API (controller only, `--fleet-mode`)
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/v1/fleet/tokens` | Create enrollment token (admin) |
+| `GET /api/v1/fleet/tokens` | List enrollment tokens (admin) |
+| `POST /api/v1/fleet/enroll` | Node enrollment (token auth) |
+| `POST /api/v1/fleet/report` | Submit compliance report (node auth) |
+| `POST /api/v1/fleet/heartbeat` | Node keepalive (node auth) |
+| `GET /api/v1/fleet/nodes` | List nodes (filterable by role/region/status) |
+| `GET /api/v1/fleet/nodes/{id}` | Get node details |
+| `GET /api/v1/fleet/nodes/{id}/report` | Get node's latest compliance report |
+| `GET /api/v1/fleet/summary` | Fleet-wide aggregate statistics |
+| `GET /api/v1/fleet/events` | SSE stream for fleet changes |
+| `GET /api/v1/fleet/policy` | Get compliance enforcement policy |
+| `PUT /api/v1/fleet/policy` | Update compliance policy (admin) |
+| `GET /api/v1/fleet/routes` | Effective routing table (compliant servers only) |
+
 ## Terminal UI (TUI)
 
 A lightweight alternative to the web dashboard for headless and SSH environments, built with [Bubbletea](https://github.com/charmbracelet/bubbletea).
@@ -379,15 +445,16 @@ A lightweight alternative to the web dashboard for headless and SSH environments
 make setup
 ```
 
-Interactive 5-page wizard:
+Interactive wizard with role-specific pages:
 
-| Page | Fields |
-|------|--------|
-| **1. Tunnel** | Select existing / create new / enter manually, protocol (QUIC/HTTP2), ingress rules (add/remove) |
-| **2. Dashboard Wiring** | CF API token (auto-discovers accounts + zones), zone/account/tunnel IDs, metrics address, MDM provider (None/Intune/Jamf) |
-| **3. Deployment Tier** | Tier 1 (standard), Tier 2 (Keyless SSL + HSM), or Tier 3 (self-hosted proxy) with conditional fields |
-| **4. FIPS Options** | Self-test on start, fail-on-failure, binary signature verification, output path |
-| **5. Review & Write** | Scrollable summary (secrets masked), Enter writes `configs/cloudflared-fips.yaml` |
+| Page | Controller | Server | Proxy | Client |
+|------|-----------|--------|-------|--------|
+| **Role & Tier** | Select role + deployment tier | Select role | Select role | Select role |
+| **Config** | Tunnel token, ingress, protocol, compliance policy, admin key | Service endpoint (name, host, port), fleet enrollment | Listen addr, TLS cert/key, tunnel token, fleet enrollment | Controller URL, enrollment token |
+| **Dashboard Wiring** | CF API, MDM, metrics | - | - | - |
+| **Tier Specific** | Keyless SSL / proxy settings (tier 2/3 only) | - | - | - |
+| **FIPS Options** | Self-test, fail-on-failure, signature verification | Same | Same | Same |
+| **Review** | Scrollable summary, provision command | Same | Same | Same |
 
 Navigation: `Tab`/`Enter` = next, `Shift+Tab` = back, `Ctrl+C` = quit.
 

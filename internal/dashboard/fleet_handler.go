@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -20,6 +21,7 @@ type FleetHandler struct {
 	eventCh    chan fleet.FleetEvent
 	sseClients map[chan fleet.FleetEvent]struct{}
 	sseMu      sync.Mutex
+	policy     *fleet.CompliancePolicy
 }
 
 // FleetHandlerConfig holds configuration for the fleet handler.
@@ -28,12 +30,17 @@ type FleetHandlerConfig struct {
 	AdminKey string // API key for admin operations (token management, node deletion)
 	Logger   *log.Logger
 	EventCh  chan fleet.FleetEvent
+	Policy   *fleet.CompliancePolicy // Compliance enforcement policy
 }
 
 // NewFleetHandler creates a new fleet handler.
 func NewFleetHandler(cfg FleetHandlerConfig) *FleetHandler {
 	if cfg.Logger == nil {
 		cfg.Logger = log.Default()
+	}
+	policy := cfg.Policy
+	if policy == nil {
+		policy = &fleet.CompliancePolicy{EnforcementMode: "audit"}
 	}
 	return &FleetHandler{
 		store:      cfg.Store,
@@ -42,6 +49,7 @@ func NewFleetHandler(cfg FleetHandlerConfig) *FleetHandler {
 		logger:     cfg.Logger,
 		eventCh:    cfg.EventCh,
 		sseClients: make(map[chan fleet.FleetEvent]struct{}),
+		policy:     policy,
 	}
 }
 
@@ -59,6 +67,9 @@ func RegisterFleetRoutes(mux *http.ServeMux, fh *FleetHandler) {
 	mux.HandleFunc("GET /api/v1/fleet/summary", fh.HandleSummary)
 	mux.HandleFunc("GET /api/v1/fleet/events", fh.HandleFleetSSE)
 	mux.HandleFunc("GET /api/v1/fleet/nodes/{id}/report", fh.HandleGetNodeReport)
+	mux.HandleFunc("GET /api/v1/fleet/policy", fh.HandleGetPolicy)
+	mux.HandleFunc("PUT /api/v1/fleet/policy", fh.HandleUpdatePolicy)
+	mux.HandleFunc("GET /api/v1/fleet/routes", fh.HandleGetRoutes)
 }
 
 // BroadcastEvents fans out fleet events from the event channel to all SSE clients.
@@ -223,7 +234,46 @@ func (fh *FleetHandler) HandleReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Evaluate compliance against policy
+	fh.evaluateNodeCompliance(r.Context(), node.ID, payload)
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "accepted"})
+}
+
+// evaluateNodeCompliance checks a node's report against the current policy
+// and updates its compliance status.
+func (fh *FleetHandler) evaluateNodeCompliance(ctx context.Context, nodeID string, payload fleet.ComplianceReportPayload) {
+	if fh.policy == nil || fh.policy.EnforcementMode == "disabled" {
+		return
+	}
+
+	compliant := true
+
+	// Check each policy requirement against report items across all sections
+	for _, section := range payload.Report.Sections {
+		for _, item := range section.Items {
+			if fh.policy.RequireOSFIPS && item.Name == "OS FIPS mode" && item.Status != "pass" {
+				compliant = false
+			}
+			if fh.policy.RequireDiskEnc && item.Name == "Disk encryption" && item.Status != "pass" {
+				compliant = false
+			}
+			if item.Name == "FIPS backend active" && item.Status != "pass" {
+				compliant = false
+			}
+		}
+	}
+
+	status := fleet.ComplianceCompliant
+	if !compliant {
+		status = fleet.ComplianceNonCompliant
+	}
+
+	_ = fh.store.UpdateNodeComplianceStatus(ctx, nodeID, string(status))
+
+	if fh.policy.EnforcementMode == "enforce" && !compliant {
+		fh.logger.Printf("fleet: node %s is non-compliant (enforcement mode: enforce)", nodeID)
+	}
 }
 
 // HandleHeartbeat processes a lightweight heartbeat from a node.
@@ -442,6 +492,74 @@ func (fh *FleetHandler) authenticateNode(w http.ResponseWriter, r *http.Request)
 	}
 
 	return node, true
+}
+
+// HandleGetPolicy returns the current compliance policy.
+func (fh *FleetHandler) HandleGetPolicy(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, fh.policy)
+}
+
+// HandleUpdatePolicy updates the compliance policy (admin only).
+func (fh *FleetHandler) HandleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
+	if !fh.requireAdmin(w, r) {
+		return
+	}
+
+	var policy fleet.CompliancePolicy
+	if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	switch policy.EnforcementMode {
+	case "enforce", "audit", "disabled":
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "enforcement_mode must be enforce, audit, or disabled"})
+		return
+	}
+
+	fh.policy = &policy
+	fh.logger.Printf("fleet: compliance policy updated: mode=%s", policy.EnforcementMode)
+	writeJSON(w, http.StatusOK, fh.policy)
+}
+
+// HandleGetRoutes returns the effective routing table: only compliant server nodes.
+func (fh *FleetHandler) HandleGetRoutes(w http.ResponseWriter, r *http.Request) {
+	nodes, err := fh.store.ListNodes(r.Context(), fleet.NodeFilter{Role: fleet.RoleServer})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list nodes"})
+		return
+	}
+
+	type route struct {
+		NodeID           string                      `json:"node_id"`
+		NodeName         string                      `json:"node_name"`
+		Service          *fleet.ServiceRegistration  `json:"service,omitempty"`
+		Status           fleet.NodeStatus            `json:"status"`
+		ComplianceStatus fleet.NodeComplianceStatus  `json:"compliance_status"`
+		Routable         bool                        `json:"routable"`
+	}
+
+	var routes []route
+	for _, n := range nodes {
+		routable := n.Status == fleet.StatusOnline
+		if fh.policy != nil && fh.policy.EnforcementMode == "enforce" {
+			routable = routable && n.ComplianceStatus == fleet.ComplianceCompliant
+		}
+		routes = append(routes, route{
+			NodeID:           n.ID,
+			NodeName:         n.Name,
+			Service:          n.Service,
+			Status:           n.Status,
+			ComplianceStatus: n.ComplianceStatus,
+			Routable:         routable,
+		})
+	}
+
+	if routes == nil {
+		routes = []route{}
+	}
+	writeJSON(w, http.StatusOK, routes)
 }
 
 // FleetMode returns true if the handler is initialized for fleet mode.

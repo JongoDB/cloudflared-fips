@@ -30,21 +30,51 @@ const (
 	StatusOffline  NodeStatus = "offline"
 )
 
+// NodeComplianceStatus represents the compliance enforcement status of a node.
+type NodeComplianceStatus string
+
+const (
+	ComplianceCompliant    NodeComplianceStatus = "compliant"
+	ComplianceNonCompliant NodeComplianceStatus = "non_compliant"
+	ComplianceGracePeriod  NodeComplianceStatus = "grace_period"
+	ComplianceUnknown      NodeComplianceStatus = "unknown"
+)
+
+// CompliancePolicy defines the enforcement rules applied by the controller.
+type CompliancePolicy struct {
+	EnforcementMode string `json:"enforcement_mode"` // "enforce", "audit", "disabled"
+	RequireOSFIPS   bool   `json:"require_os_fips"`
+	RequireDiskEnc  bool   `json:"require_disk_encryption"`
+	RequireMDM      bool   `json:"require_mdm"`
+	GracePeriodSec  int    `json:"grace_period_sec"`
+}
+
+// ServiceRegistration describes the origin service a server node exposes.
+type ServiceRegistration struct {
+	Name string `json:"name"`
+	Host string `json:"host"`
+	Port int    `json:"port"`
+	TLS  bool   `json:"tls"`
+}
+
 // Node represents a registered fleet node.
 type Node struct {
-	ID             string            `json:"id"`
-	Name           string            `json:"name"`
-	Role           NodeRole          `json:"role"`
-	Region         string            `json:"region"`
-	Labels         map[string]string `json:"labels,omitempty"`
-	EnrolledAt     time.Time         `json:"enrolled_at"`
-	LastHeartbeat  time.Time         `json:"last_heartbeat"`
-	Status         NodeStatus        `json:"status"`
-	Version        string            `json:"version"`
-	FIPSBackend    string            `json:"fips_backend"`
-	CompliancePass int               `json:"compliance_pass"`
-	ComplianceFail int               `json:"compliance_fail"`
-	ComplianceWarn int               `json:"compliance_warn"`
+	ID               string               `json:"id"`
+	Name             string               `json:"name"`
+	Role             NodeRole             `json:"role"`
+	Region           string               `json:"region"`
+	Labels           map[string]string    `json:"labels,omitempty"`
+	EnrolledAt       time.Time            `json:"enrolled_at"`
+	LastHeartbeat    time.Time            `json:"last_heartbeat"`
+	Status           NodeStatus           `json:"status"`
+	Version          string               `json:"version"`
+	FIPSBackend      string               `json:"fips_backend"`
+	CompliancePass   int                  `json:"compliance_pass"`
+	ComplianceFail   int                  `json:"compliance_fail"`
+	ComplianceWarn   int                  `json:"compliance_warn"`
+	ComplianceStatus NodeComplianceStatus `json:"compliance_status"`
+	Service          *ServiceRegistration `json:"service,omitempty"`
+	GracePeriodEnd   *time.Time           `json:"grace_period_end,omitempty"`
 }
 
 // EnrollmentToken is used for zero-trust node enrollment.
@@ -61,12 +91,13 @@ type EnrollmentToken struct {
 
 // EnrollmentRequest is sent by a new node to join the fleet.
 type EnrollmentRequest struct {
-	Token       string            `json:"token"`
-	Name        string            `json:"name"`
-	Region      string            `json:"region,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
-	Version     string            `json:"version"`
-	FIPSBackend string            `json:"fips_backend"`
+	Token       string               `json:"token"`
+	Name        string               `json:"name"`
+	Region      string               `json:"region,omitempty"`
+	Labels      map[string]string    `json:"labels,omitempty"`
+	Version     string               `json:"version"`
+	FIPSBackend string               `json:"fips_backend"`
+	Service     *ServiceRegistration `json:"service,omitempty"`
 }
 
 // EnrollmentResponse is returned after successful enrollment.

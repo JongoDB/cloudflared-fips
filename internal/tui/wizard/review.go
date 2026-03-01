@@ -228,20 +228,68 @@ func BuildProvisionCommand(cfg *config.Config) (script string, args []string) {
 	args = append(args, "--role", cfg.Role)
 	args = append(args, "--tier", tierNumber(cfg.DeploymentTier))
 
-	// Tunnel token (server role)
-	if cfg.TunnelToken != "" {
-		args = append(args, "--tunnel-token", cfg.TunnelToken)
+	// Controller: tunnel + compliance policy
+	if cfg.Role == "controller" {
+		if cfg.TunnelToken != "" {
+			args = append(args, "--tunnel-token", cfg.TunnelToken)
+		}
+		if cfg.Protocol != "" {
+			args = append(args, "--protocol", cfg.Protocol)
+		}
+		if cfg.AdminKey != "" {
+			args = append(args, "--admin-key", cfg.AdminKey)
+		}
+		if cfg.CompliancePolicy.EnforcementMode != "" {
+			args = append(args, "--enforcement-mode", cfg.CompliancePolicy.EnforcementMode)
+		}
+		if cfg.CompliancePolicy.RequireOSFIPS {
+			args = append(args, "--require-os-fips")
+		}
+		if cfg.CompliancePolicy.RequireDiskEnc {
+			args = append(args, "--require-disk-enc")
+		}
 	}
 
-	// Fleet enrollment
-	if cfg.EnrollmentToken != "" {
-		args = append(args, "--enrollment-token", cfg.EnrollmentToken)
+	// Server: service endpoint + mandatory enrollment
+	if cfg.Role == "server" {
+		if cfg.ServiceName != "" {
+			args = append(args, "--service-name", cfg.ServiceName)
+		}
+		if cfg.ServiceHost != "" {
+			args = append(args, "--service-host", cfg.ServiceHost)
+		}
+		if cfg.ServicePort > 0 {
+			args = append(args, "--service-port", fmt.Sprintf("%d", cfg.ServicePort))
+		}
+		if cfg.ServiceTLS {
+			args = append(args, "--service-tls")
+		}
 	}
-	if cfg.ControllerURL != "" {
-		args = append(args, "--controller-url", cfg.ControllerURL)
+
+	// Proxy: tunnel + TLS termination
+	if cfg.Role == "proxy" {
+		if cfg.TunnelToken != "" {
+			args = append(args, "--tunnel-token", cfg.TunnelToken)
+		}
+		if cfg.Protocol != "" {
+			args = append(args, "--protocol", cfg.Protocol)
+		}
+		if cfg.ProxyCertFile != "" {
+			args = append(args, "--cert", cfg.ProxyCertFile)
+		}
+		if cfg.ProxyKeyFile != "" {
+			args = append(args, "--key", cfg.ProxyKeyFile)
+		}
 	}
-	if cfg.AdminKey != "" {
-		args = append(args, "--admin-key", cfg.AdminKey)
+
+	// Fleet enrollment (server, proxy, client — all mandatory)
+	if cfg.Role != "controller" {
+		if cfg.ControllerURL != "" {
+			args = append(args, "--controller-url", cfg.ControllerURL)
+		}
+		if cfg.EnrollmentToken != "" {
+			args = append(args, "--enrollment-token", cfg.EnrollmentToken)
+		}
 	}
 
 	// Node identity
@@ -252,29 +300,20 @@ func BuildProvisionCommand(cfg *config.Config) (script string, args []string) {
 		args = append(args, "--node-region", cfg.NodeRegion)
 	}
 
-	// TLS cert/key (tier 3 / proxy)
-	if cfg.ProxyCertFile != "" {
-		args = append(args, "--cert", cfg.ProxyCertFile)
-	}
-	if cfg.ProxyKeyFile != "" {
-		args = append(args, "--key", cfg.ProxyKeyFile)
-	}
-	if cfg.ProxyUpstream != "" {
-		args = append(args, "--upstream", cfg.ProxyUpstream)
-	}
-
-	// Cloudflare API credentials (non-interactive)
-	if cfg.Dashboard.CFAPIToken != "" {
-		args = append(args, "--cf-api-token", cfg.Dashboard.CFAPIToken)
-	}
-	if cfg.Dashboard.ZoneID != "" {
-		args = append(args, "--cf-zone-id", cfg.Dashboard.ZoneID)
-	}
-	if cfg.Dashboard.AccountID != "" {
-		args = append(args, "--cf-account-id", cfg.Dashboard.AccountID)
-	}
-	if cfg.Dashboard.TunnelID != "" {
-		args = append(args, "--cf-tunnel-id", cfg.Dashboard.TunnelID)
+	// Cloudflare API credentials (controller only)
+	if cfg.Role == "controller" {
+		if cfg.Dashboard.CFAPIToken != "" {
+			args = append(args, "--cf-api-token", cfg.Dashboard.CFAPIToken)
+		}
+		if cfg.Dashboard.ZoneID != "" {
+			args = append(args, "--cf-zone-id", cfg.Dashboard.ZoneID)
+		}
+		if cfg.Dashboard.AccountID != "" {
+			args = append(args, "--cf-account-id", cfg.Dashboard.AccountID)
+		}
+		if cfg.Dashboard.TunnelID != "" {
+			args = append(args, "--cf-tunnel-id", cfg.Dashboard.TunnelID)
+		}
 	}
 
 	// Skip FIPS
@@ -446,12 +485,8 @@ func (p *ReviewPage) renderSummary() string {
 		b.WriteString(sectionStyle.Render("CONTROLLER"))
 		b.WriteString("\n")
 		masked("Admin Key:", cfg.AdminKey)
-		if cfg.WithCF {
-			field("CF API Integration:", "enabled")
-		}
 		b.WriteString("\n")
 
-	case "server":
 		b.WriteString(sectionStyle.Render("TUNNEL"))
 		b.WriteString("\n")
 		masked("Tunnel Token:", cfg.TunnelToken)
@@ -464,23 +499,51 @@ func (p *ReviewPage) renderSummary() string {
 				b.WriteString("    * → " + rule.Service + "\n")
 			}
 		}
-		if cfg.ControllerURL != "" {
-			field("Controller URL:", cfg.ControllerURL)
-			masked("Enrollment Token:", cfg.EnrollmentToken)
+		b.WriteString("\n")
+
+		b.WriteString(sectionStyle.Render("COMPLIANCE POLICY"))
+		b.WriteString("\n")
+		field("Enforcement Mode:", cfg.CompliancePolicy.EnforcementMode)
+		field("Require OS FIPS:", fmt.Sprintf("%v", cfg.CompliancePolicy.RequireOSFIPS))
+		field("Require Disk Enc:", fmt.Sprintf("%v", cfg.CompliancePolicy.RequireDiskEnc))
+		if cfg.WithCF {
+			field("CF API Integration:", "enabled")
 		}
 		b.WriteString("\n")
 
+	case "server":
+		b.WriteString(sectionStyle.Render("ORIGIN SERVICE"))
+		b.WriteString("\n")
+		field("Service Name:", cfg.ServiceName)
+		field("Service Host:", cfg.ServiceHost)
+		field("Service Port:", fmt.Sprintf("%d", cfg.ServicePort))
+		field("Service TLS:", fmt.Sprintf("%v", cfg.ServiceTLS))
+		b.WriteString("\n")
+
+		b.WriteString(sectionStyle.Render("FLEET ENROLLMENT"))
+		b.WriteString("\n")
+		field("Controller URL:", cfg.ControllerURL)
+		masked("Enrollment Token:", cfg.EnrollmentToken)
+		b.WriteString("\n")
+
 	case "proxy":
-		b.WriteString(sectionStyle.Render("FIPS PROXY"))
+		b.WriteString(sectionStyle.Render("FIPS FORWARD PROXY"))
 		b.WriteString("\n")
 		field("Listen:", cfg.ProxyListenAddr)
 		field("TLS Cert:", cfg.ProxyCertFile)
 		field("TLS Key:", cfg.ProxyKeyFile)
-		field("Upstream:", cfg.ProxyUpstream)
-		if cfg.ControllerURL != "" {
-			field("Controller URL:", cfg.ControllerURL)
-			masked("Enrollment Token:", cfg.EnrollmentToken)
-		}
+		b.WriteString("\n")
+
+		b.WriteString(sectionStyle.Render("PROXY TUNNEL"))
+		b.WriteString("\n")
+		masked("Tunnel Token:", cfg.TunnelToken)
+		field("Protocol:", cfg.Protocol)
+		b.WriteString("\n")
+
+		b.WriteString(sectionStyle.Render("FLEET ENROLLMENT"))
+		b.WriteString("\n")
+		field("Controller URL:", cfg.ControllerURL)
+		masked("Enrollment Token:", cfg.EnrollmentToken)
 		b.WriteString("\n")
 
 	case "client":
@@ -491,8 +554,8 @@ func (p *ReviewPage) renderSummary() string {
 		b.WriteString("\n")
 	}
 
-	// Dashboard Wiring (controller + server only)
-	if cfg.Role == "controller" || cfg.Role == "server" {
+	// Dashboard Wiring (controller only)
+	if cfg.Role == "controller" {
 		b.WriteString(sectionStyle.Render("DASHBOARD WIRING"))
 		b.WriteString("\n")
 		masked("CF API Token:", cfg.Dashboard.CFAPIToken)
@@ -513,23 +576,22 @@ func (p *ReviewPage) renderSummary() string {
 		b.WriteString("\n")
 	}
 
-	// Tier-specific
-	switch cfg.DeploymentTier {
-	case "regional_keyless":
-		b.WriteString(sectionStyle.Render("TIER 2 — KEYLESS SSL"))
-		b.WriteString("\n")
-		field("Keyless SSL Host:", cfg.KeylessSSLHost)
-		field("Keyless SSL Port:", fmt.Sprintf("%d", cfg.KeylessSSLPort))
-		field("Regional Services:", fmt.Sprintf("%v", cfg.RegionalServices))
-		b.WriteString("\n")
-	case "self_hosted":
-		if cfg.Role != "proxy" { // proxy already shows these above
+	// Tier-specific (controller only)
+	if cfg.Role == "controller" {
+		switch cfg.DeploymentTier {
+		case "regional_keyless":
+			b.WriteString(sectionStyle.Render("TIER 2 — KEYLESS SSL"))
+			b.WriteString("\n")
+			field("Keyless SSL Host:", cfg.KeylessSSLHost)
+			field("Keyless SSL Port:", fmt.Sprintf("%d", cfg.KeylessSSLPort))
+			field("Regional Services:", fmt.Sprintf("%v", cfg.RegionalServices))
+			b.WriteString("\n")
+		case "self_hosted":
 			b.WriteString(sectionStyle.Render("TIER 3 — FIPS PROXY"))
 			b.WriteString("\n")
 			field("Proxy Listen:", cfg.ProxyListenAddr)
 			field("Proxy Cert:", cfg.ProxyCertFile)
 			field("Proxy Key:", cfg.ProxyKeyFile)
-			field("Proxy Upstream:", cfg.ProxyUpstream)
 			b.WriteString("\n")
 		}
 	}

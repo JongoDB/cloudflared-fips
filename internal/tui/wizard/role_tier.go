@@ -24,12 +24,12 @@ type RoleTierPage struct {
 // NewRoleTierPage creates page 1.
 func NewRoleTierPage() *RoleTierPage {
 	role := common.NewSelector("Node Role", []common.SelectorOption{
-		{Value: "controller", Label: "Controller", Description: "Fleet controller — manages dashboard, fleet registry, enrollment tokens"},
-		{Value: "server", Label: "Server", Description: "Tunnel server — runs cloudflared with FIPS tunnel to Cloudflare edge"},
-		{Value: "proxy", Label: "Proxy", Description: "FIPS edge proxy — TLS termination with validated crypto (Tier 3)"},
-		{Value: "client", Label: "Client", Description: "Endpoint agent — reports FIPS posture to fleet controller"},
+		{Value: "controller", Label: "Controller", Description: "Central hub — Cloudflare tunnel, fleet management, compliance enforcement, traffic routing"},
+		{Value: "server", Label: "Server", Description: "Origin server — registers service endpoint with controller, runs mandatory posture agent"},
+		{Value: "proxy", Label: "Proxy", Description: "Client-side forward proxy — own Cloudflare tunnel, FIPS TLS termination, posture agent"},
+		{Value: "client", Label: "Client", Description: "Endpoint device — mandatory FIPS posture agent, non-compliant devices denied access"},
 	})
-	role.Cursor = 1 // default: server
+	role.Cursor = 0 // default: controller (provisioned first)
 
 	t1 := deployment.GetTierInfo(deployment.TierStandard)
 	t2 := deployment.GetTierInfo(deployment.TierRegionalKeyless)
@@ -81,8 +81,7 @@ func (p *RoleTierPage) fieldCount() int {
 }
 
 func (p *RoleTierPage) showsTier() bool {
-	role := p.SelectedRole()
-	return role != "client" && role != "proxy"
+	return p.SelectedRole() == "controller"
 }
 
 func (p *RoleTierPage) updateFocus() {
@@ -158,11 +157,12 @@ func (p *RoleTierPage) Validate() bool { return true }
 
 func (p *RoleTierPage) Apply(cfg *config.Config) {
 	cfg.Role = p.SelectedRole()
-	if p.showsTier() {
+	switch cfg.Role {
+	case "controller":
 		cfg.DeploymentTier = p.SelectedTier()
-	} else if cfg.Role == "proxy" {
+	case "proxy":
 		cfg.DeploymentTier = string(deployment.TierSelfHosted)
-	} else {
+	default: // server, client
 		cfg.DeploymentTier = string(deployment.TierStandard)
 	}
 	cfg.SkipFIPS = p.skipFIPS.Enabled
@@ -190,26 +190,25 @@ func (p *RoleTierPage) View() string {
 
 func (p *RoleTierPage) roleDescription() string {
 	role := p.SelectedRole()
-	tier := p.SelectedTier()
 
 	var desc string
 	switch role {
 	case "controller":
-		desc = "Installs: dashboard, selftest"
-		if tier == string(deployment.TierSelfHosted) {
-			desc += ", fips-proxy"
-		}
-		desc += "\nServices: dashboard (fleet mode + enrollment API)"
+		desc = "Installs: dashboard, selftest, agent, cloudflared"
+		desc += "\nServices: cloudflared tunnel, dashboard (fleet mode), agent"
+		desc += "\nOwns the Cloudflare tunnel and routes traffic to compliant servers"
 	case "server":
-		desc = "Installs: dashboard, selftest"
-		if tier == string(deployment.TierSelfHosted) {
-			desc += ", fips-proxy"
-		}
-		desc += "\nServices: dashboard (local compliance monitor)"
+		desc = "Installs: selftest, agent"
+		desc += "\nServices: agent (mandatory posture reporting)"
+		desc += "\nRegisters origin service with controller — no tunnel needed"
 	case "proxy":
-		desc = "Installs: selftest, fips-proxy\nServices: fips-proxy (TLS termination with FIPS crypto)"
+		desc = "Installs: selftest, fips-proxy, agent, cloudflared"
+		desc += "\nServices: fips-proxy (FIPS TLS termination), cloudflared tunnel, agent"
+		desc += "\nClients connect through this proxy for FIPS-compliant egress"
 	case "client":
-		desc = "Installs: selftest, agent (~11 MB)\nServices: agent (reports FIPS posture to controller)"
+		desc = "Installs: selftest, agent (~11 MB)"
+		desc += "\nServices: agent (mandatory FIPS posture reporting)"
+		desc += "\nNon-compliant devices will be denied access to protected services"
 	}
 
 	return common.HintStyle.Render(desc)

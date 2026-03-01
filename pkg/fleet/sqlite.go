@@ -59,9 +59,12 @@ func (s *SQLiteStore) migrate() error {
 		version        TEXT NOT NULL DEFAULT '',
 		fips_backend   TEXT NOT NULL DEFAULT '',
 		api_key_hash   TEXT NOT NULL UNIQUE,
-		compliance_pass INTEGER NOT NULL DEFAULT 0,
-		compliance_fail INTEGER NOT NULL DEFAULT 0,
-		compliance_warn INTEGER NOT NULL DEFAULT 0
+		compliance_pass   INTEGER NOT NULL DEFAULT 0,
+		compliance_fail   INTEGER NOT NULL DEFAULT 0,
+		compliance_warn   INTEGER NOT NULL DEFAULT 0,
+		compliance_status TEXT NOT NULL DEFAULT 'unknown',
+		service_json      TEXT NOT NULL DEFAULT '',
+		grace_period_end  TEXT NOT NULL DEFAULT ''
 	);
 
 	CREATE TABLE IF NOT EXISTS enrollment_tokens (
@@ -122,7 +125,7 @@ func (s *SQLiteStore) GetNode(ctx context.Context, id string) (*Node, error) {
 
 func (s *SQLiteStore) getNodeLocked(ctx context.Context, id string) (*Node, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, name, role, region, labels, enrolled_at, last_heartbeat, status, version, fips_backend, compliance_pass, compliance_fail, compliance_warn
+		`SELECT id, name, role, region, labels, enrolled_at, last_heartbeat, status, version, fips_backend, compliance_pass, compliance_fail, compliance_warn, compliance_status, service_json, grace_period_end
 		 FROM nodes WHERE id = ?`, id)
 	return scanNode(row)
 }
@@ -132,7 +135,7 @@ func (s *SQLiteStore) ListNodes(ctx context.Context, filter NodeFilter) ([]Node,
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := "SELECT id, name, role, region, labels, enrolled_at, last_heartbeat, status, version, fips_backend, compliance_pass, compliance_fail, compliance_warn FROM nodes WHERE 1=1"
+	query := "SELECT id, name, role, region, labels, enrolled_at, last_heartbeat, status, version, fips_backend, compliance_pass, compliance_fail, compliance_warn, compliance_status, service_json, grace_period_end FROM nodes WHERE 1=1"
 	var args []interface{}
 
 	if filter.Role != "" {
@@ -198,6 +201,16 @@ func (s *SQLiteStore) UpdateNodeCompliance(ctx context.Context, id string, pass,
 	return err
 }
 
+// UpdateNodeComplianceStatus updates the compliance enforcement status of a node.
+func (s *SQLiteStore) UpdateNodeComplianceStatus(ctx context.Context, id string, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE nodes SET compliance_status = ? WHERE id = ?`, status, id)
+	return err
+}
+
 // DeleteNode removes a node from the registry.
 func (s *SQLiteStore) DeleteNode(ctx context.Context, id string) error {
 	s.mu.Lock()
@@ -213,7 +226,7 @@ func (s *SQLiteStore) GetNodeByAPIKey(ctx context.Context, apiKeyHash string) (*
 	defer s.mu.RUnlock()
 
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, name, role, region, labels, enrolled_at, last_heartbeat, status, version, fips_backend, compliance_pass, compliance_fail, compliance_warn
+		`SELECT id, name, role, region, labels, enrolled_at, last_heartbeat, status, version, fips_backend, compliance_pass, compliance_fail, compliance_warn, compliance_status, service_json, grace_period_end
 		 FROM nodes WHERE api_key_hash = ?`, apiKeyHash)
 	return scanNode(row)
 }
@@ -400,13 +413,36 @@ func (s *SQLiteStore) GetSummary(ctx context.Context) (*FleetSummary, error) {
 	return summary, nil
 }
 
+// populateNodeExtras fills in the extended node fields from their stored
+// string representations after the core fields have been scanned.
+func populateNodeExtras(n *Node, compStatus, serviceJSON, gracePeriodEnd string) {
+	if compStatus != "" {
+		n.ComplianceStatus = NodeComplianceStatus(compStatus)
+	} else {
+		n.ComplianceStatus = ComplianceUnknown
+	}
+	if serviceJSON != "" {
+		var svc ServiceRegistration
+		if json.Unmarshal([]byte(serviceJSON), &svc) == nil && svc.Name != "" {
+			n.Service = &svc
+		}
+	}
+	if gracePeriodEnd != "" {
+		if t, err := time.Parse(time.RFC3339, gracePeriodEnd); err == nil {
+			n.GracePeriodEnd = &t
+		}
+	}
+}
+
 // scanNode scans a single node from a *sql.Row.
 func scanNode(row *sql.Row) (*Node, error) {
 	var n Node
 	var roleStr, statusStr, labelsStr, enrolledAt, lastHB string
+	var compStatus, serviceJSON, gracePeriodEnd string
 	err := row.Scan(&n.ID, &n.Name, &roleStr, &n.Region, &labelsStr,
 		&enrolledAt, &lastHB, &statusStr, &n.Version, &n.FIPSBackend,
-		&n.CompliancePass, &n.ComplianceFail, &n.ComplianceWarn)
+		&n.CompliancePass, &n.ComplianceFail, &n.ComplianceWarn,
+		&compStatus, &serviceJSON, &gracePeriodEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -415,6 +451,7 @@ func scanNode(row *sql.Row) (*Node, error) {
 	n.EnrolledAt, _ = time.Parse(time.RFC3339, enrolledAt)
 	n.LastHeartbeat, _ = time.Parse(time.RFC3339, lastHB)
 	json.Unmarshal([]byte(labelsStr), &n.Labels)
+	populateNodeExtras(&n, compStatus, serviceJSON, gracePeriodEnd)
 	return &n, nil
 }
 
@@ -422,9 +459,11 @@ func scanNode(row *sql.Row) (*Node, error) {
 func scanNodeRows(rows *sql.Rows) (*Node, error) {
 	var n Node
 	var roleStr, statusStr, labelsStr, enrolledAt, lastHB string
+	var compStatus, serviceJSON, gracePeriodEnd string
 	err := rows.Scan(&n.ID, &n.Name, &roleStr, &n.Region, &labelsStr,
 		&enrolledAt, &lastHB, &statusStr, &n.Version, &n.FIPSBackend,
-		&n.CompliancePass, &n.ComplianceFail, &n.ComplianceWarn)
+		&n.CompliancePass, &n.ComplianceFail, &n.ComplianceWarn,
+		&compStatus, &serviceJSON, &gracePeriodEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -433,5 +472,6 @@ func scanNodeRows(rows *sql.Rows) (*Node, error) {
 	n.EnrolledAt, _ = time.Parse(time.RFC3339, enrolledAt)
 	n.LastHeartbeat, _ = time.Parse(time.RFC3339, lastHB)
 	json.Unmarshal([]byte(labelsStr), &n.Labels)
+	populateNodeExtras(&n, compStatus, serviceJSON, gracePeriodEnd)
 	return &n, nil
 }

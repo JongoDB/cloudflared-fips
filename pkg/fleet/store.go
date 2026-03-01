@@ -15,6 +15,7 @@ type Store interface {
 	UpdateNodeHeartbeat(ctx context.Context, id string, t time.Time) error
 	UpdateNodeStatus(ctx context.Context, id string, status NodeStatus) error
 	UpdateNodeCompliance(ctx context.Context, id string, pass, fail, warn int) error
+	UpdateNodeComplianceStatus(ctx context.Context, id string, status string) error
 	DeleteNode(ctx context.Context, id string) error
 	GetNodeByAPIKey(ctx context.Context, apiKeyHash string) (*Node, error)
 

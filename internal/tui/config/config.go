@@ -39,11 +39,28 @@ type Config struct {
 	KeylessSSLHost   string `yaml:"keyless_ssl_host,omitempty"`
 	KeylessSSLPort   int    `yaml:"keyless_ssl_port,omitempty"`
 
-	// Tier 3 settings
+	// Tier 3 / proxy settings
 	ProxyListenAddr string `yaml:"proxy_listen_addr,omitempty"`
 	ProxyCertFile   string `yaml:"proxy_cert_file,omitempty"`
 	ProxyKeyFile    string `yaml:"proxy_key_file,omitempty"`
-	ProxyUpstream   string `yaml:"proxy_upstream,omitempty"`
+
+	// Server origin service registration
+	ServiceName string `yaml:"service_name,omitempty"`
+	ServiceHost string `yaml:"service_host,omitempty"`
+	ServicePort int    `yaml:"service_port,omitempty"`
+	ServiceTLS  bool   `yaml:"service_tls,omitempty"`
+
+	// Compliance enforcement policy (controller-only)
+	CompliancePolicy CompliancePolicyConfig `yaml:"compliance_policy,omitempty"`
+}
+
+// CompliancePolicyConfig holds compliance enforcement settings (controller-only).
+type CompliancePolicyConfig struct {
+	EnforcementMode string `yaml:"enforcement_mode,omitempty"` // "enforce", "audit", "disabled"
+	RequireOSFIPS   bool   `yaml:"require_os_fips,omitempty"`
+	RequireDiskEnc  bool   `yaml:"require_disk_encryption,omitempty"`
+	RequireMDM      bool   `yaml:"require_mdm,omitempty"`
+	GracePeriodSec  int    `yaml:"grace_period_sec,omitempty"`
 }
 
 // FIPSConfig holds FIPS self-test settings.
@@ -100,6 +117,9 @@ func NewDefaultConfig() *Config {
 	return &Config{
 		Role:            "server",
 		CredentialsFile: "/etc/cloudflared/credentials.json",
+		CompliancePolicy: CompliancePolicyConfig{
+			EnforcementMode: "audit",
+		},
 		Protocol:        "quic",
 		GracePeriod:     "30s",
 		DeploymentTier:  "standard",

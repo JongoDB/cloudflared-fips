@@ -9,14 +9,16 @@ import (
 	"github.com/cloudflared-fips/cloudflared-fips/internal/tui/config"
 )
 
-// ProxyConfigPage collects FIPS edge proxy settings.
+// ProxyConfigPage collects client-side FIPS forward proxy settings:
+// TLS termination, own Cloudflare tunnel, and fleet enrollment.
 type ProxyConfigPage struct {
+	nodeName      common.TextInput
+	region        common.TextInput
 	listenAddr    common.TextInput
 	certFile      common.TextInput
 	keyFile       common.TextInput
-	upstream      common.TextInput
-	nodeName      common.TextInput
-	region        common.TextInput
+	tunnelToken   common.TextInput
+	protocol      common.Selector
 	controllerURL common.TextInput
 	enrollToken   common.TextInput
 
@@ -25,11 +27,15 @@ type ProxyConfigPage struct {
 	height int
 }
 
-const proxyFieldCount = 8
+const proxyFieldCount = 9
 
 // NewProxyConfigPage creates the proxy config page.
 func NewProxyConfigPage() *ProxyConfigPage {
-	listen := common.NewTextInput("Listen Address", ":443", "")
+	nodeName := common.NewTextInput("Node Name", defaultHostname(), "")
+	nodeName.Input.SetValue(defaultHostname())
+	region := common.NewTextInput("Node Region", "us-east", "(optional)")
+
+	listen := common.NewTextInput("Listen Address", ":443", "(client-facing)")
 	listen.Input.SetValue(":443")
 	listen.Validate = config.ValidateNonEmpty
 
@@ -39,35 +45,40 @@ func NewProxyConfigPage() *ProxyConfigPage {
 	key := common.NewTextInput("TLS Private Key File", "/etc/pki/tls/private/proxy-key.pem", "")
 	key.Validate = config.ValidateNonEmpty
 
-	upstream := common.NewTextInput("Upstream URL", "https://your-app.example.com", "")
-	upstream.Validate = config.ValidateNonEmpty
+	tunnelToken := common.NewTextInput("Tunnel Token", "eyJ...", "(proxy's own tunnel for FIPS egress)")
+	tunnelToken.Validate = config.ValidateNonEmpty
 
-	nodeName := common.NewTextInput("Node Name", defaultHostname(), "")
-	nodeName.Input.SetValue(defaultHostname())
-	region := common.NewTextInput("Node Region", "us-east", "(optional)")
+	proto := common.NewSelector("Protocol", []common.SelectorOption{
+		{Value: "quic", Label: "QUIC", Description: "UDP 7844 — preferred, lower latency"},
+		{Value: "http2", Label: "HTTP/2", Description: "TCP 443 — fallback when UDP is blocked"},
+	})
 
-	ctrlURL := common.NewTextInput("Fleet Controller URL", "https://controller.example.com:8080", "(required for fleet enrollment)")
-	enrollToken := common.NewTextInput("Enrollment Token", "tok-...", "(from controller)")
+	ctrlURL := common.NewTextInput("Controller URL", "https://controller.example.com:8080", "(REQUIRED)")
+	ctrlURL.Validate = config.ValidateNonEmpty
+
+	enrollToken := common.NewTextInput("Enrollment Token", "tok-...", "(REQUIRED — from controller)")
+	enrollToken.Validate = config.ValidateNonEmpty
 
 	return &ProxyConfigPage{
+		nodeName:      nodeName,
+		region:        region,
 		listenAddr:    listen,
 		certFile:      cert,
 		keyFile:       key,
-		upstream:      upstream,
-		nodeName:      nodeName,
-		region:        region,
+		tunnelToken:   tunnelToken,
+		protocol:      proto,
 		controllerURL: ctrlURL,
 		enrollToken:   enrollToken,
 	}
 }
 
-func (p *ProxyConfigPage) Title() string { return "Proxy Config" }
+func (p *ProxyConfigPage) Title() string { return "FIPS Forward Proxy" }
 func (p *ProxyConfigPage) Init() tea.Cmd { return nil }
 
 func (p *ProxyConfigPage) Focus() tea.Cmd {
 	p.focus = 0
 	p.updateFocus()
-	return p.listenAddr.Focus()
+	return p.nodeName.Focus()
 }
 
 func (p *ProxyConfigPage) SetSize(w, h int) {
@@ -76,31 +87,34 @@ func (p *ProxyConfigPage) SetSize(w, h int) {
 }
 
 func (p *ProxyConfigPage) updateFocus() {
+	p.nodeName.Blur()
+	p.region.Blur()
 	p.listenAddr.Blur()
 	p.certFile.Blur()
 	p.keyFile.Blur()
-	p.upstream.Blur()
-	p.nodeName.Blur()
-	p.region.Blur()
+	p.tunnelToken.Blur()
+	p.protocol.Blur()
 	p.controllerURL.Blur()
 	p.enrollToken.Blur()
 
 	switch p.focus {
 	case 0:
-		p.listenAddr.Input.Focus()
-	case 1:
-		p.certFile.Input.Focus()
-	case 2:
-		p.keyFile.Input.Focus()
-	case 3:
-		p.upstream.Input.Focus()
-	case 4:
 		p.nodeName.Input.Focus()
-	case 5:
+	case 1:
 		p.region.Input.Focus()
+	case 2:
+		p.listenAddr.Input.Focus()
+	case 3:
+		p.certFile.Input.Focus()
+	case 4:
+		p.keyFile.Input.Focus()
+	case 5:
+		p.tunnelToken.Input.Focus()
 	case 6:
-		p.controllerURL.Input.Focus()
+		p.protocol.Focus()
 	case 7:
+		p.controllerURL.Input.Focus()
+	case 8:
 		p.enrollToken.Input.Focus()
 	}
 }
@@ -109,6 +123,10 @@ func (p *ProxyConfigPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	if msg, ok := msg.(tea.KeyMsg); ok {
 		switch msg.String() {
 		case "tab", "enter":
+			// Protocol selector: enter selects within
+			if msg.String() == "enter" && p.focus == 6 {
+				return p, fieldNav
+			}
 			if p.focus < proxyFieldCount-1 {
 				p.focus++
 				p.updateFocus()
@@ -128,20 +146,22 @@ func (p *ProxyConfigPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	var cmd tea.Cmd
 	switch p.focus {
 	case 0:
-		cmd = p.listenAddr.Update(msg)
-	case 1:
-		cmd = p.certFile.Update(msg)
-	case 2:
-		cmd = p.keyFile.Update(msg)
-	case 3:
-		cmd = p.upstream.Update(msg)
-	case 4:
 		cmd = p.nodeName.Update(msg)
-	case 5:
+	case 1:
 		cmd = p.region.Update(msg)
+	case 2:
+		cmd = p.listenAddr.Update(msg)
+	case 3:
+		cmd = p.certFile.Update(msg)
+	case 4:
+		cmd = p.keyFile.Update(msg)
+	case 5:
+		cmd = p.tunnelToken.Update(msg)
 	case 6:
-		cmd = p.controllerURL.Update(msg)
+		p.protocol.Update(msg)
 	case 7:
+		cmd = p.controllerURL.Update(msg)
+	case 8:
 		cmd = p.enrollToken.Update(msg)
 	}
 	return p, cmd
@@ -158,26 +178,39 @@ func (p *ProxyConfigPage) Validate() bool {
 	if !p.keyFile.RunValidation() {
 		valid = false
 	}
-	if !p.upstream.RunValidation() {
+	if !p.tunnelToken.RunValidation() {
+		valid = false
+	}
+	if !p.controllerURL.RunValidation() {
+		valid = false
+	}
+	if !p.enrollToken.RunValidation() {
 		valid = false
 	}
 	return valid
 }
 
 func (p *ProxyConfigPage) Apply(cfg *config.Config) {
+	cfg.NodeName = strings.TrimSpace(p.nodeName.Value())
+	cfg.NodeRegion = strings.TrimSpace(p.region.Value())
 	cfg.ProxyListenAddr = strings.TrimSpace(p.listenAddr.Value())
 	cfg.ProxyCertFile = strings.TrimSpace(p.certFile.Value())
 	cfg.ProxyKeyFile = strings.TrimSpace(p.keyFile.Value())
-	cfg.ProxyUpstream = strings.TrimSpace(p.upstream.Value())
-	cfg.NodeName = strings.TrimSpace(p.nodeName.Value())
-	cfg.NodeRegion = strings.TrimSpace(p.region.Value())
+	cfg.TunnelToken = strings.TrimSpace(p.tunnelToken.Value())
+	cfg.Protocol = p.protocol.Selected()
 	cfg.ControllerURL = strings.TrimSpace(p.controllerURL.Value())
 	cfg.EnrollmentToken = strings.TrimSpace(p.enrollToken.Value())
 }
 
 func (p *ProxyConfigPage) View() string {
 	var b strings.Builder
-	b.WriteString(common.LabelStyle.Render("FIPS Edge Proxy Settings"))
+	b.WriteString(common.LabelStyle.Render("Client-Side FIPS Proxy Settings"))
+	b.WriteString("\n\n")
+	b.WriteString(p.nodeName.View())
+	b.WriteString("\n\n")
+	b.WriteString(p.region.View())
+	b.WriteString("\n\n")
+	b.WriteString(common.LabelStyle.Render("TLS Termination (client-facing)"))
 	b.WriteString("\n\n")
 	b.WriteString(p.listenAddr.View())
 	b.WriteString("\n\n")
@@ -185,13 +218,13 @@ func (p *ProxyConfigPage) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(p.keyFile.View())
 	b.WriteString("\n\n")
-	b.WriteString(p.upstream.View())
+	b.WriteString(common.LabelStyle.Render("Proxy Tunnel (FIPS egress)"))
 	b.WriteString("\n\n")
-	b.WriteString(p.nodeName.View())
+	b.WriteString(p.tunnelToken.View())
 	b.WriteString("\n\n")
-	b.WriteString(p.region.View())
+	b.WriteString(p.protocol.View())
 	b.WriteString("\n\n")
-	b.WriteString(common.LabelStyle.Render("Fleet Enrollment"))
+	b.WriteString(common.LabelStyle.Render("Fleet Enrollment (required)"))
 	b.WriteString("\n\n")
 	b.WriteString(p.controllerURL.View())
 	b.WriteString("\n\n")

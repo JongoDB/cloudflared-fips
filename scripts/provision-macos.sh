@@ -46,6 +46,15 @@ CF_API_TOKEN=""
 CF_ZONE_ID=""
 CF_ACCOUNT_ID=""
 CF_TUNNEL_ID=""
+TUNNEL_TOKEN=""
+SERVICE_HOST=""
+SERVICE_PORT=""
+SERVICE_NAME=""
+SERVICE_TLS=false
+ENFORCEMENT_MODE="audit"
+REQUIRE_OS_FIPS=false
+REQUIRE_DISK_ENC=false
+PROTOCOL="quic"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -64,6 +73,15 @@ while [[ $# -gt 0 ]]; do
         --cf-zone-id)      CF_ZONE_ID="$2"; shift 2 ;;
         --cf-account-id)   CF_ACCOUNT_ID="$2"; shift 2 ;;
         --cf-tunnel-id)    CF_TUNNEL_ID="$2"; shift 2 ;;
+        --tunnel-token)    TUNNEL_TOKEN="$2"; shift 2 ;;
+        --service-host)    SERVICE_HOST="$2"; shift 2 ;;
+        --service-port)    SERVICE_PORT="$2"; shift 2 ;;
+        --service-name)    SERVICE_NAME="$2"; shift 2 ;;
+        --service-tls)     SERVICE_TLS=true; shift ;;
+        --enforcement-mode) ENFORCEMENT_MODE="$2"; shift 2 ;;
+        --require-os-fips) REQUIRE_OS_FIPS=true; shift ;;
+        --require-disk-enc) REQUIRE_DISK_ENC=true; shift ;;
+        --protocol)        PROTOCOL="$2"; shift 2 ;;
         --check)           CHECK_ONLY=true; shift ;;
         --help|-h)
             echo "Usage: sudo $0 [OPTIONS]"
@@ -261,7 +279,7 @@ log "Go version: $(go version)"
 # ---------------------------------------------------------------------------
 # Install Node.js (controller/server only)
 # ---------------------------------------------------------------------------
-if [[ "$ROLE" == "controller" || "$ROLE" == "server" ]]; then
+if [[ "$ROLE" == "controller" ]]; then
     NODE_VERSION="20.19.0"
     if command -v node &>/dev/null && node --version 2>/dev/null | grep -qE '^v(2[0-9]|[3-9][0-9])\.'; then
         log "Node.js already installed: $(node --version)"
@@ -298,8 +316,8 @@ else
     cd "$INSTALL_DIR"
 fi
 
-# Build dashboard frontend (controller/server)
-if [[ "$ROLE" == "controller" || "$ROLE" == "server" ]]; then
+# Build dashboard frontend (controller only)
+if [[ "$ROLE" == "controller" ]]; then
     log "Building dashboard frontend..."
     cd dashboard && npm install && npm run build && cd ..
     mkdir -p internal/dashboard/static
@@ -312,16 +330,19 @@ export GODEBUG="fips140=on"
 export CGO_ENABLED=0
 
 case "$ROLE" in
-    controller|server)
+    controller)
         go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-selftest ./cmd/selftest/
         go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-dashboard ./cmd/dashboard/
-        if [[ "$TIER" == "3" || (-n "$TLS_CERT" && -n "$TLS_KEY") ]]; then
-            go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-proxy ./cmd/fips-proxy/
-        fi
+        go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-agent ./cmd/agent/
+        ;;
+    server)
+        go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-selftest ./cmd/selftest/
+        go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-agent ./cmd/agent/
         ;;
     proxy)
         go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-selftest ./cmd/selftest/
         go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-proxy ./cmd/fips-proxy/
+        go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-agent ./cmd/agent/
         ;;
     client)
         go build -trimpath -ldflags="-s -w" -o build-output/cloudflared-fips-selftest ./cmd/selftest/
@@ -340,14 +361,19 @@ log "Installing binaries..."
 install -m 0755 build-output/cloudflared-fips-selftest "${BIN_DIR}/"
 
 case "$ROLE" in
-    controller|server)
+    controller)
         install -m 0755 build-output/cloudflared-fips-dashboard "${BIN_DIR}/"
+        install -m 0755 build-output/cloudflared-fips-agent "${BIN_DIR}/"
         if [[ -f build-output/cloudflared-fips-proxy ]]; then
             install -m 0755 build-output/cloudflared-fips-proxy "${BIN_DIR}/"
         fi
         ;;
+    server)
+        install -m 0755 build-output/cloudflared-fips-agent "${BIN_DIR}/"
+        ;;
     proxy)
         install -m 0755 build-output/cloudflared-fips-proxy "${BIN_DIR}/"
+        install -m 0755 build-output/cloudflared-fips-agent "${BIN_DIR}/"
         ;;
     client)
         install -m 0755 build-output/cloudflared-fips-agent "${BIN_DIR}/"
@@ -421,6 +447,35 @@ ENREOF
     echo "CONTROLLER_URL=${CONTROLLER_URL}" >> "$ENV_FILE"
 
     log "Enrolled as node ${NODE_ID}"
+fi
+
+# Service and enforcement configuration
+if [[ -n "$SERVICE_HOST" ]]; then
+    echo "SERVICE_HOST=${SERVICE_HOST}" >> "$ENV_FILE"
+fi
+if [[ -n "$SERVICE_PORT" ]]; then
+    echo "SERVICE_PORT=${SERVICE_PORT}" >> "$ENV_FILE"
+fi
+if [[ -n "$SERVICE_NAME" ]]; then
+    echo "SERVICE_NAME=${SERVICE_NAME}" >> "$ENV_FILE"
+fi
+if [[ "$SERVICE_TLS" == "true" ]]; then
+    echo "SERVICE_TLS=true" >> "$ENV_FILE"
+fi
+if [[ "$ENFORCEMENT_MODE" != "audit" ]]; then
+    echo "ENFORCEMENT_MODE=${ENFORCEMENT_MODE}" >> "$ENV_FILE"
+fi
+if [[ "$REQUIRE_OS_FIPS" == "true" ]]; then
+    echo "REQUIRE_OS_FIPS=true" >> "$ENV_FILE"
+fi
+if [[ "$REQUIRE_DISK_ENC" == "true" ]]; then
+    echo "REQUIRE_DISK_ENC=true" >> "$ENV_FILE"
+fi
+if [[ -n "$TUNNEL_TOKEN" ]]; then
+    echo "TUNNEL_TOKEN=${TUNNEL_TOKEN}" >> "$ENV_FILE"
+fi
+if [[ "$PROTOCOL" != "quic" ]]; then
+    echo "PROTOCOL=${PROTOCOL}" >> "$ENV_FILE"
 fi
 
 # Controller admin key
@@ -497,6 +552,22 @@ case "$ROLE" in
             "${BIN_DIR}/cloudflared-fips-dashboard" \
             "${dash_args[@]}"
 
+        # Controller agent plist
+        local agent_args=()
+        if [[ -f "${CONFIG_DIR}/enrollment.json" ]]; then
+            agent_args+=("--config" "${CONFIG_DIR}/enrollment.json")
+        fi
+        create_plist "${SERVICE_PREFIX}.agent" \
+            "${BIN_DIR}/cloudflared-fips-agent" \
+            "${agent_args[@]}"
+
+        # Controller with tunnel token: run cloudflared tunnel
+        if [[ -n "$TUNNEL_TOKEN" ]]; then
+            create_plist "${SERVICE_PREFIX}.tunnel" \
+                "${BIN_DIR}/cloudflared" \
+                "tunnel" "--no-autoupdate" "run" "--token" "${TUNNEL_TOKEN}" "--protocol" "${PROTOCOL}"
+        fi
+
         # Controller with cert+key: also run FIPS proxy for origin-side TLS
         if [[ -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then
             create_plist "${SERVICE_PREFIX}.proxy" \
@@ -506,22 +577,14 @@ case "$ROLE" in
         fi
         ;;
     server)
-        local dash_args=("--addr" "127.0.0.1:8080" \
-            "--manifest" "${CONFIG_DIR}/build-manifest.json" \
-            "--config" "${CONFIG_DIR}/cloudflared-fips.yaml")
-        if [[ "$TIER" == "3" || (-n "$TLS_CERT" && -n "$TLS_KEY") ]]; then
-            dash_args+=("--proxy-addr" "localhost:8081" "--deployment-tier" "self_hosted")
+        # Server: agent only (no dashboard)
+        local agent_args=()
+        if [[ -f "${CONFIG_DIR}/enrollment.json" ]]; then
+            agent_args+=("--config" "${CONFIG_DIR}/enrollment.json")
         fi
-        create_plist "${SERVICE_PREFIX}.dashboard" \
-            "${BIN_DIR}/cloudflared-fips-dashboard" \
-            "${dash_args[@]}"
-
-        if [[ "$TIER" == "3" || (-n "$TLS_CERT" && -n "$TLS_KEY") ]]; then
-            create_plist "${SERVICE_PREFIX}.proxy" \
-                "${BIN_DIR}/cloudflared-fips-proxy" \
-                "--listen" ":443" "--upstream" "${UPSTREAM}" \
-                "--cert" "${CONFIG_DIR}/tls-cert.pem" "--key" "${CONFIG_DIR}/tls-key.pem"
-        fi
+        create_plist "${SERVICE_PREFIX}.agent" \
+            "${BIN_DIR}/cloudflared-fips-agent" \
+            "${agent_args[@]}"
         ;;
     proxy)
         local proxy_args=("--listen" ":443" "--upstream" "${UPSTREAM}")
@@ -531,6 +594,22 @@ case "$ROLE" in
         create_plist "${SERVICE_PREFIX}.proxy" \
             "${BIN_DIR}/cloudflared-fips-proxy" \
             "${proxy_args[@]}"
+
+        # Proxy agent plist
+        local agent_args=()
+        if [[ -f "${CONFIG_DIR}/enrollment.json" ]]; then
+            agent_args+=("--config" "${CONFIG_DIR}/enrollment.json")
+        fi
+        create_plist "${SERVICE_PREFIX}.agent" \
+            "${BIN_DIR}/cloudflared-fips-agent" \
+            "${agent_args[@]}"
+
+        # Proxy with tunnel token: run cloudflared tunnel
+        if [[ -n "$TUNNEL_TOKEN" ]]; then
+            create_plist "${SERVICE_PREFIX}.tunnel" \
+                "${BIN_DIR}/cloudflared" \
+                "tunnel" "--no-autoupdate" "run" "--token" "${TUNNEL_TOKEN}" "--protocol" "${PROTOCOL}"
+        fi
         ;;
     client)
         local agent_args=()
@@ -551,18 +630,23 @@ log "Loading launchd services..."
 case "$ROLE" in
     controller)
         launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.dashboard.plist"
+        launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.agent.plist"
+        if [[ -f "${PLIST_DIR}/${SERVICE_PREFIX}.tunnel.plist" ]]; then
+            launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.tunnel.plist"
+        fi
         if [[ -f "${PLIST_DIR}/${SERVICE_PREFIX}.proxy.plist" ]]; then
             launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.proxy.plist"
         fi
         ;;
     server)
-        launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.dashboard.plist"
-        if [[ -f "${PLIST_DIR}/${SERVICE_PREFIX}.proxy.plist" ]]; then
-            launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.proxy.plist"
-        fi
+        launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.agent.plist"
         ;;
     proxy)
         launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.proxy.plist"
+        launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.agent.plist"
+        if [[ -f "${PLIST_DIR}/${SERVICE_PREFIX}.tunnel.plist" ]]; then
+            launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.tunnel.plist"
+        fi
         ;;
     client)
         launchctl load -w "${PLIST_DIR}/${SERVICE_PREFIX}.agent.plist"
