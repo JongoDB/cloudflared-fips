@@ -59,26 +59,10 @@ jobs:
           /usr/local/go/bin/go list -deps ./cmd/cloudflared 2>/dev/null | grep -i crypto || true
           echo "GOEXPERIMENT=boringcrypto will replace all crypto/* with BoringCrypto"
 
-      - name: Build cloudflared with FIPS crypto
-        env:
-          GOEXPERIMENT: boringcrypto
-          CGO_ENABLED: '1'
-          GOOS: linux
-          GOARCH: ${{ matrix.goarch }}
-          CC: ${{ matrix.cc }}
-        working-directory: upstream-cloudflared
-        run: |
-          VERSION="${UPSTREAM_VERSION}-fips"
-          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          SOURCE_DATE_EPOCH=$(date +%s)
-
-          /usr/local/go/bin/go build -v -trimpath \
-            -ldflags "-s -w -X main.Version=${VERSION} \
-                      -X main.BuildDate=${BUILD_DATE} \
-                      -X main.GitCommit=${{ github.sha }} \
-                      -buildid=" \
-            -o /tmp/cloudflared \
-            ./cmd/cloudflared
+      # NOTE: Upstream cloudflared build is skipped — its vendored quic-go
+      # uses tls.NewGCMTLS13, a BoringCrypto internal removed in Go 1.23+.
+      # Users install official cloudflared separately (provision script handles this).
+      # Our RPM ships only fleet binaries; cloudflared is downloaded at provision time.
 
       - name: Build fleet binaries
         env:
@@ -113,7 +97,7 @@ jobs:
       - name: Verify BoringCrypto symbols
         if: matrix.goarch == 'amd64'
         run: |
-          BORING_COUNT=$(/usr/local/go/bin/go tool nm /tmp/cloudflared 2>/dev/null \
+          BORING_COUNT=$(/usr/local/go/bin/go tool nm /tmp/cloudflared-fips-selftest 2>/dev/null \
             | grep -c '_Cfunc__goboringcrypto_' || true)
           echo "BoringCrypto symbols found: ${BORING_COUNT}"
           if [ "${BORING_COUNT}" -lt 1 ]; then
@@ -189,8 +173,8 @@ jobs:
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           BINARY_SHA256=""
           SBOM_SHA256=""
-          if [ -f /tmp/cloudflared ]; then
-            BINARY_SHA256=$(sha256sum /tmp/cloudflared | awk '{print $1}')
+          if [ -f /tmp/cloudflared-fips-selftest ]; then
+            BINARY_SHA256=$(sha256sum /tmp/cloudflared-fips-selftest | awk '{print $1}')
           fi
           if [ -f /tmp/sbom.spdx.json ]; then
             SBOM_SHA256=$(sha256sum /tmp/sbom.spdx.json | awk '{print $1}')
@@ -229,7 +213,6 @@ jobs:
         with:
           name: cloudflared-fips-linux-${{ matrix.goarch }}
           path: |
-            /tmp/cloudflared
             /tmp/cloudflared-fips-selftest
             /tmp/cloudflared-fips-dashboard
             /tmp/cloudflared-fips-tui
@@ -270,29 +253,6 @@ jobs:
           echo "UPSTREAM_VERSION=$(git -C upstream-cloudflared describe --tags 2>/dev/null || echo 'main')" >> $GITHUB_ENV
           echo "UPSTREAM_COMMIT=$(git -C upstream-cloudflared rev-parse --short HEAD)" >> $GITHUB_ENV
 
-      - name: Build cloudflared with Go native FIPS
-        env:
-          # GOEXPERIMENT=boringcrypto is Linux-only.
-          # Go 1.24+ native FIPS 140-3 module (CAVP A6650, CMVP pending).
-          # When CMVP validation completes, this becomes the standard macOS path.
-          GODEBUG: fips140=on
-          CGO_ENABLED: '0'
-          GOOS: darwin
-          GOARCH: ${{ matrix.goarch }}
-        working-directory: upstream-cloudflared
-        run: |
-          VERSION="${UPSTREAM_VERSION}-fips"
-          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          SOURCE_DATE_EPOCH=$(date +%s)
-
-          go build -v -trimpath \
-            -ldflags "-s -w -X main.Version=${VERSION} \
-                      -X main.BuildDate=${BUILD_DATE} \
-                      -X main.GitCommit=${{ github.sha }} \
-                      -buildid=" \
-            -o /tmp/cloudflared \
-            ./cmd/cloudflared
-
       - name: Build fleet binaries
         env:
           GODEBUG: fips140=on
@@ -324,7 +284,7 @@ jobs:
         run: |
           VERSION="${UPSTREAM_VERSION}-fips"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          BINARY_SHA256=$(shasum -a 256 /tmp/cloudflared | awk '{print $1}')
+          BINARY_SHA256=$(shasum -a 256 /tmp/cloudflared-fips-selftest | awk '{print $1}')
 
           cat > /tmp/build-manifest.json <<EOJSON
           {
@@ -361,7 +321,6 @@ jobs:
         with:
           name: cloudflared-fips-darwin-${{ matrix.goarch }}
           path: |
-            /tmp/cloudflared
             /tmp/cloudflared-fips-selftest
             /tmp/cloudflared-fips-dashboard
             /tmp/cloudflared-fips-tui
@@ -395,31 +354,6 @@ jobs:
           git clone --depth 1 https://github.com/cloudflare/cloudflared.git upstream-cloudflared
           echo "UPSTREAM_VERSION=$(git -C upstream-cloudflared describe --tags 2>/dev/null || echo 'main')" >> $GITHUB_ENV
           echo "UPSTREAM_COMMIT=$(git -C upstream-cloudflared rev-parse --short HEAD)" >> $GITHUB_ENV
-
-      - name: Build cloudflared with Go native FIPS
-        env:
-          # GOEXPERIMENT=boringcrypto is Linux-only.
-          # Go 1.24+ native FIPS 140-3 module (CAVP A6650, CMVP pending).
-          # Alternative: Microsoft Build of Go with GOEXPERIMENT=systemcrypto
-          # uses Windows CNG (CMVP validated) — requires MSFT Go fork.
-          GODEBUG: fips140=on
-          CGO_ENABLED: '0'
-          GOOS: windows
-          GOARCH: ${{ matrix.goarch }}
-        working-directory: upstream-cloudflared
-        shell: bash
-        run: |
-          VERSION="${UPSTREAM_VERSION}-fips"
-          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          SOURCE_DATE_EPOCH=$(date +%s)
-
-          go build -v -trimpath \
-            -ldflags "-s -w -X main.Version=${VERSION} \
-                      -X main.BuildDate=${BUILD_DATE} \
-                      -X main.GitCommit=${{ github.sha }} \
-                      -buildid=" \
-            -o "${RUNNER_TEMP}/cloudflared.exe" \
-            ./cmd/cloudflared
 
       - name: Build fleet binaries
         env:
@@ -456,7 +390,7 @@ jobs:
         run: |
           VERSION="${UPSTREAM_VERSION}-fips"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          BINARY_SHA256=$(sha256sum "${RUNNER_TEMP}/cloudflared.exe" | awk '{print $1}')
+          BINARY_SHA256=$(sha256sum "${RUNNER_TEMP}/cloudflared-fips-selftest.exe" | awk '{print $1}')
 
           cat > "${RUNNER_TEMP}/build-manifest.json" <<EOJSON
           {
@@ -504,7 +438,6 @@ jobs:
         with:
           name: cloudflared-fips-windows-${{ matrix.goarch }}
           path: |
-            ${{ runner.temp }}/cloudflared.exe
             ${{ runner.temp }}/cloudflared-fips-selftest.exe
             ${{ runner.temp }}/cloudflared-fips-dashboard.exe
             ${{ runner.temp }}/cloudflared-fips-tui.exe
