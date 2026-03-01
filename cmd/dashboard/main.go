@@ -141,7 +141,7 @@ func main() {
 
 	mux.HandleFunc("GET /api/v1/clients", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"recent":  inspector.RecentClients(50),
 			"summary": inspector.FIPSStats(),
 		})
@@ -153,27 +153,27 @@ func main() {
 	mux.HandleFunc("GET /api/v1/backend", func(w http.ResponseWriter, r *http.Request) {
 		info := fipsbackend.DetectInfo()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(info)
+		_ = json.NewEncoder(w).Encode(info)
 	})
 
 	// Deployment tier info
 	mux.HandleFunc("GET /api/v1/deployment", func(w http.ResponseWriter, r *http.Request) {
 		tier := deployment.GetTier(*deployTier)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(tier)
+		_ = json.NewEncoder(w).Encode(tier)
 	})
 
 	// FIPS 140-3 migration status
 	mux.HandleFunc("GET /api/v1/migration", func(w http.ResponseWriter, r *http.Request) {
 		status := fipsbackend.GetMigrationStatus()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(status)
+		_ = json.NewEncoder(w).Encode(status)
 	})
 
 	// All backend migration info
 	mux.HandleFunc("GET /api/v1/migration/backends", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(fipsbackend.AllBackendMigrationInfo())
+		_ = json.NewEncoder(w).Encode(fipsbackend.AllBackendMigrationInfo())
 	})
 
 	// Signature manifest (if available)
@@ -188,13 +188,13 @@ func main() {
 		manifest, err := signing.ReadSignatureManifest(sigPath)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"status": "no signatures found",
 			})
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(manifest)
+		_ = json.NewEncoder(w).Encode(manifest)
 	})
 
 	// MDM integration
@@ -217,16 +217,16 @@ func main() {
 					logger.Printf("MDM device fetch error: %v", err)
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadGateway)
-					json.NewEncoder(w).Encode(map[string]string{"error": "unable to fetch MDM devices"})
+					_ = json.NewEncoder(w).Encode(map[string]string{"error": "unable to fetch MDM devices"})
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(devices)
+				_ = json.NewEncoder(w).Encode(devices)
 			})
 			mux.HandleFunc("GET /api/v1/mdm/summary", func(w http.ResponseWriter, r *http.Request) {
 				summary := mdmClient.ComplianceSummary()
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(summary)
+				_ = json.NewEncoder(w).Encode(summary)
 			})
 		} else {
 			logger.Printf("MDM provider %s configured but missing credentials", mdmProviderStr)

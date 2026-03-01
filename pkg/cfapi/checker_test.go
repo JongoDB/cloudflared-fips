@@ -18,7 +18,7 @@ func mockCFAPIRoutes(t *testing.T, handlers map[string]interface{}) *httptest.Se
 		// Verify auth header
 		if auth := r.Header.Get("Authorization"); auth != "Bearer test-token" {
 			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": false,
 				"errors":  []map[string]interface{}{{"code": 9109, "message": "Invalid access token"}},
 			})
@@ -28,7 +28,7 @@ func mockCFAPIRoutes(t *testing.T, handlers map[string]interface{}) *httptest.Se
 		handler, ok := handlers[r.URL.Path]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": false,
 				"errors":  []map[string]interface{}{{"code": 7003, "message": "Not found"}},
 			})
@@ -36,7 +36,7 @@ func mockCFAPIRoutes(t *testing.T, handlers map[string]interface{}) *httptest.Se
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"errors":  []interface{}{},
 			"result":  handler,

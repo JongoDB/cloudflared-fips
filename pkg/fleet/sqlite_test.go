@@ -126,7 +126,9 @@ func TestSQLiteStore_UpdateHeartbeat(t *testing.T) {
 	now := time.Now().UTC()
 
 	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusDegraded}
-	store.CreateNode(ctx, node, "h1")
+	if err := store.CreateNode(ctx, node, "h1"); err != nil {
+		t.Fatal(err)
+	}
 
 	later := now.Add(5 * time.Minute)
 	if err := store.UpdateNodeHeartbeat(ctx, "n1", later); err != nil {
@@ -145,7 +147,9 @@ func TestSQLiteStore_UpdateCompliance(t *testing.T) {
 	now := time.Now().UTC()
 
 	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
-	store.CreateNode(ctx, node, "h1")
+	if err := store.CreateNode(ctx, node, "h1"); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
 
 	if err := store.UpdateNodeCompliance(ctx, "n1", 38, 2, 1); err != nil {
 		t.Fatalf("UpdateNodeCompliance: %v", err)
@@ -163,7 +167,9 @@ func TestSQLiteStore_DeleteNode(t *testing.T) {
 	now := time.Now().UTC()
 
 	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
-	store.CreateNode(ctx, node, "h1")
+	if err := store.CreateNode(ctx, node, "h1"); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
 
 	if err := store.DeleteNode(ctx, "n1"); err != nil {
 		t.Fatalf("DeleteNode: %v", err)
@@ -181,7 +187,9 @@ func TestSQLiteStore_GetNodeByAPIKey(t *testing.T) {
 	now := time.Now().UTC()
 
 	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
-	store.CreateNode(ctx, node, "keyhash-123")
+	if err := store.CreateNode(ctx, node, "keyhash-123"); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
 
 	got, err := store.GetNodeByAPIKey(ctx, "keyhash-123")
 	if err != nil {
@@ -248,7 +256,9 @@ func TestSQLiteStore_Reports(t *testing.T) {
 	now := time.Now().UTC()
 
 	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
-	store.CreateNode(ctx, node, "h1")
+	if err := store.CreateNode(ctx, node, "h1"); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
 
 	report := []byte(`{"timestamp":"2026-02-28T00:00:00Z","sections":[],"summary":{"total":41,"passed":41}}`)
 	if err := store.StoreReport(ctx, "n1", report); err != nil {
@@ -276,12 +286,18 @@ func TestSQLiteStore_Summary(t *testing.T) {
 		{ID: "n4", Name: "c1", Role: RoleClient, Region: "eu-west", EnrolledAt: now, LastHeartbeat: now, Status: StatusOffline},
 	}
 	for i, n := range nodes {
-		store.CreateNode(ctx, n, "h"+n.ID)
+		if err := store.CreateNode(ctx, n, "h"+n.ID); err != nil {
+			t.Fatalf("CreateNode %s: %v", n.ID, err)
+		}
 		// Set compliance - n3 has failures
 		if i == 2 {
-			store.UpdateNodeCompliance(ctx, n.ID, 30, 5, 2)
+			if err := store.UpdateNodeCompliance(ctx, n.ID, 30, 5, 2); err != nil {
+				t.Fatalf("UpdateNodeCompliance %s: %v", n.ID, err)
+			}
 		} else {
-			store.UpdateNodeCompliance(ctx, n.ID, 41, 0, 0)
+			if err := store.UpdateNodeCompliance(ctx, n.ID, 41, 0, 0); err != nil {
+				t.Fatalf("UpdateNodeCompliance %s: %v", n.ID, err)
+			}
 		}
 	}
 
@@ -316,7 +332,9 @@ func TestSQLiteStore_UpdateNodeStatus(t *testing.T) {
 	now := time.Now().UTC()
 
 	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
-	store.CreateNode(ctx, node, "h1")
+	if err := store.CreateNode(ctx, node, "h1"); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
 
 	// Mark degraded
 	if err := store.UpdateNodeStatus(ctx, "n1", StatusDegraded); err != nil {
@@ -382,7 +400,9 @@ func TestSQLiteStore_MultipleReports_LatestReturned(t *testing.T) {
 	now := time.Now().UTC()
 
 	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
-	store.CreateNode(ctx, node, "h1")
+	if err := store.CreateNode(ctx, node, "h1"); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
 
 	// Store two reports with >1s gap to guarantee different RFC3339 timestamps
 	report1 := []byte(`{"version":"1"}`)
@@ -411,8 +431,12 @@ func TestSQLiteStore_DeleteNode_CascadesReports(t *testing.T) {
 	now := time.Now().UTC()
 
 	node := &Node{ID: "n1", Name: "test", Role: RoleServer, EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline}
-	store.CreateNode(ctx, node, "h1")
-	store.StoreReport(ctx, "n1", []byte(`{"report":true}`))
+	if err := store.CreateNode(ctx, node, "h1"); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if err := store.StoreReport(ctx, "n1", []byte(`{"report":true}`)); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := store.DeleteNode(ctx, "n1"); err != nil {
 		t.Fatalf("DeleteNode: %v", err)
@@ -501,10 +525,12 @@ func TestSQLiteStore_PersistReopen(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	now := time.Now().UTC()
-	store1.CreateNode(context.Background(), &Node{
+	if err := store1.CreateNode(context.Background(), &Node{
 		ID: "n1", Name: "test", Role: RoleServer,
 		EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline,
-	}, "h1")
+	}, "h1"); err != nil {
+		t.Fatal(err)
+	}
 	store1.Close()
 
 	// Reopen and verify

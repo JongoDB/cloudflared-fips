@@ -96,7 +96,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Set socket permissions (owner + group only)
-	os.Chmod(s.socketPath, 0660)
+	if err := os.Chmod(s.socketPath, 0660); err != nil {
+		fmt.Fprintf(os.Stderr, "ipc: warning: chmod socket: %v\n", err)
+	}
 
 	go func() {
 		<-ctx.Done()
@@ -210,5 +212,5 @@ func (s *Server) dispatch(req Request) Response {
 func writeResponse(conn net.Conn, resp Response) {
 	data, _ := json.Marshal(resp)
 	data = append(data, '\n')
-	conn.Write(data)
+	_, _ = conn.Write(data)
 }

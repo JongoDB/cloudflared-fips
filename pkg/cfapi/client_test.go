@@ -82,12 +82,12 @@ func TestGetBearerToken(t *testing.T) {
 	var gotAuth string
 	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		w.Write(cfResponse("ok"))
+		_, _ = w.Write(cfResponse("ok"))
 	})
 	defer srv.Close()
 
 	c := NewClient("my-secret-token", WithBaseURL(srv.URL))
-	c.get("/test")
+	_, _ = c.get("/test")
 
 	if gotAuth != "Bearer my-secret-token" {
 		t.Errorf("expected Bearer token header, got %q", gotAuth)
@@ -98,7 +98,7 @@ func TestGetCaching(t *testing.T) {
 	callCount := 0
 	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		w.Write(cfResponse("data"))
+		_, _ = w.Write(cfResponse("data"))
 	})
 	defer srv.Close()
 
@@ -127,15 +127,15 @@ func TestGetCacheExpiry(t *testing.T) {
 	callCount := 0
 	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		w.Write(cfResponse("data"))
+		_, _ = w.Write(cfResponse("data"))
 	})
 	defer srv.Close()
 
 	c := NewClient("tok", WithBaseURL(srv.URL), WithCacheTTL(1*time.Millisecond))
 
-	c.get("/path")
+	_, _ = c.get("/path")
 	time.Sleep(5 * time.Millisecond) // let cache expire
-	c.get("/path")
+	_, _ = c.get("/path")
 
 	if callCount != 2 {
 		t.Errorf("expected 2 calls after cache expiry, got %d", callCount)
@@ -144,7 +144,7 @@ func TestGetCacheExpiry(t *testing.T) {
 
 func TestGetAPIError(t *testing.T) {
 	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write(cfErrorResponse(9109, "Invalid access token"))
+		_, _ = w.Write(cfErrorResponse(9109, "Invalid access token"))
 	})
 	defer srv.Close()
 
@@ -161,7 +161,7 @@ func TestGetAPIError(t *testing.T) {
 func TestGetRateLimited(t *testing.T) {
 	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(429)
-		w.Write([]byte(`{"success":false,"errors":[{"code":429,"message":"rate limited"}]}`))
+		_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":429,"message":"rate limited"}]}`))
 	})
 	defer srv.Close()
 
@@ -181,7 +181,7 @@ func TestGetMinTLSVersion(t *testing.T) {
 			ID:    "min_tls_version",
 			Value: json.RawMessage(`"1.2"`),
 		}
-		w.Write(cfResponse(setting))
+		_, _ = w.Write(cfResponse(setting))
 	})
 	defer srv.Close()
 
@@ -201,7 +201,7 @@ func TestGetCiphers(t *testing.T) {
 			ID:    "ciphers",
 			Value: json.RawMessage(`["ECDHE-RSA-AES128-GCM-SHA256","ECDHE-RSA-AES256-GCM-SHA384"]`),
 		}
-		w.Write(cfResponse(setting))
+		_, _ = w.Write(cfResponse(setting))
 	})
 	defer srv.Close()
 
@@ -221,7 +221,7 @@ func TestGetSecurityHeader(t *testing.T) {
 			ID:    "security_header",
 			Value: json.RawMessage(`{"strict_transport_security":{"enabled":true,"max_age":31536000}}`),
 		}
-		w.Write(cfResponse(setting))
+		_, _ = w.Write(cfResponse(setting))
 	})
 	defer srv.Close()
 
@@ -246,7 +246,7 @@ func TestGetCertificatePacks(t *testing.T) {
 			Status: "active",
 			Hosts:  []string{"example.com"},
 		}}
-		w.Write(cfResponse(packs))
+		_, _ = w.Write(cfResponse(packs))
 	})
 	defer srv.Close()
 
@@ -270,7 +270,7 @@ func TestGetAccessApps(t *testing.T) {
 			Name: "Test App",
 			Type: "self_hosted",
 		}}
-		w.Write(cfResponse(apps))
+		_, _ = w.Write(cfResponse(apps))
 	})
 	defer srv.Close()
 
@@ -294,7 +294,7 @@ func TestGetTunnel(t *testing.T) {
 			Name:   "my-tunnel",
 			Status: "active",
 		}
-		w.Write(cfResponse(tunnel))
+		_, _ = w.Write(cfResponse(tunnel))
 	})
 	defer srv.Close()
 
@@ -317,7 +317,7 @@ func TestGetKeylessSSLConfigs(t *testing.T) {
 			Enabled: true,
 			Port:    2407,
 		}}
-		w.Write(cfResponse(configs))
+		_, _ = w.Write(cfResponse(configs))
 	})
 	defer srv.Close()
 
@@ -345,7 +345,7 @@ func TestGetRegionalTieredCache(t *testing.T) {
 
 	for _, tt := range tests {
 		srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
-			w.Write(cfResponse(RegionalTieredCache{ID: "regional", Value: tt.value}))
+			_, _ = w.Write(cfResponse(RegionalTieredCache{ID: "regional", Value: tt.value}))
 		})
 
 		c := NewClient("tok", WithBaseURL(srv.URL))
@@ -370,7 +370,7 @@ func TestGetNetworkError(t *testing.T) {
 
 func TestGetInvalidJSON(t *testing.T) {
 	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("not json"))
+		_, _ = w.Write([]byte("not json"))
 	})
 	defer srv.Close()
 

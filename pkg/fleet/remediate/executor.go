@@ -11,7 +11,6 @@ import (
 // Executor plans and executes remediation actions based on compliance failures.
 type Executor struct {
 	logger *log.Logger
-	dryRun bool
 }
 
 // NewExecutor creates a new remediation executor.

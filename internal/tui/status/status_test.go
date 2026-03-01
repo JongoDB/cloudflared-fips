@@ -384,9 +384,7 @@ func TestUpdate_PollMsg_Error(t *testing.T) {
 	if model.err == nil {
 		t.Error("err should be set after failed poll")
 	}
-	if !model.lastPoll.IsZero() == false {
-		// lastPoll is always set, even on error
-	}
+	// lastPoll is always set, even on error -- no assertion needed
 }
 
 func TestUpdate_PollMsg_ClearsError(t *testing.T) {

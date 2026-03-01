@@ -210,7 +210,9 @@ func TestValidateFileExists(t *testing.T) {
 	// Existing file
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("test"), 0644)
+	if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	if err := ValidateFileExists(path); err != nil {
 		t.Errorf("existing file should pass: %v", err)
 	}
@@ -228,7 +230,9 @@ func TestValidateFileExists(t *testing.T) {
 func TestReadConfig_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.yaml")
-	os.WriteFile(path, []byte("{{{{invalid yaml"), 0644)
+	if err := os.WriteFile(path, []byte("{{{{invalid yaml"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err := ReadConfig(path)
 	if err == nil {

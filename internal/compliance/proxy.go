@@ -82,7 +82,7 @@ func (p *ProxyStatsChecker) RunGatewayClientChecks() Section {
 
 	// Item 2: FIPS-capable clients
 	fipsStatus := StatusPass
-	fipsWhat := fmt.Sprintf("%d of %d clients are FIPS-capable (100%%)", stats.FIPSCapable, stats.Total)
+	var fipsWhat string
 	if stats.Total > 0 {
 		pct := float64(stats.FIPSCapable) / float64(stats.Total) * 100
 		fipsWhat = fmt.Sprintf("%d of %d clients are FIPS-capable (%.0f%%)", stats.FIPSCapable, stats.Total, pct)

@@ -274,7 +274,9 @@ func TestServerInvalidJSON(t *testing.T) {
 	defer conn.Close()
 
 	// Send invalid JSON
-	conn.Write([]byte("not-json\n"))
+	if _, err := conn.Write([]byte("not-json\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {

@@ -359,7 +359,9 @@ func TestCheckConfigDrift_ConfigPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.Remove(tmpFile.Name())
-	tmpFile.WriteString("deployment_tier: standard\n")
+	if _, err := tmpFile.WriteString("deployment_tier: standard\n"); err != nil {
+		t.Fatal(err)
+	}
 	tmpFile.Close()
 
 	lc := NewLiveChecker(WithConfigPath(tmpFile.Name()))
@@ -387,7 +389,9 @@ func TestCheckBinaryIntegrity_NoManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.Remove(tmpBin.Name())
-	tmpBin.WriteString("fake binary content")
+	if _, err := tmpBin.WriteString("fake binary content"); err != nil {
+		t.Fatal(err)
+	}
 	tmpBin.Close()
 
 	lc := &LiveChecker{manifestPath: "/nonexistent/manifest.json", binaryPath: tmpBin.Name()}
@@ -405,7 +409,9 @@ func TestCheckBinaryIntegrity_HashMatch(t *testing.T) {
 	}
 	defer os.Remove(tmpBin.Name())
 	content := []byte("deterministic binary content for test")
-	tmpBin.Write(content)
+	if _, err := tmpBin.Write(content); err != nil {
+		t.Fatal(err)
+	}
 	tmpBin.Close()
 
 	// Compute expected hash
@@ -436,7 +442,9 @@ func TestCheckBinaryIntegrity_HashMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.Remove(tmpBin.Name())
-	tmpBin.WriteString("actual binary content")
+	if _, err := tmpBin.WriteString("actual binary content"); err != nil {
+		t.Fatal(err)
+	}
 	tmpBin.Close()
 
 	m := manifest.BuildManifest{
@@ -462,7 +470,9 @@ func TestCheckBinaryIntegrity_EmptyManifestHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.Remove(tmpBin.Name())
-	tmpBin.WriteString("content")
+	if _, err := tmpBin.WriteString("content"); err != nil {
+		t.Fatal(err)
+	}
 	tmpBin.Close()
 
 	m := manifest.BuildManifest{Version: "1.0.0-test", BinarySHA256: ""}
@@ -601,7 +611,9 @@ func TestCheckSignatureValid_WithSigFile(t *testing.T) {
 
 	// Create a .sig file next to the binary
 	sigPath := tmpBin.Name() + ".sig"
-	os.WriteFile(sigPath, []byte("fake sig"), 0644)
+	if err := os.WriteFile(sigPath, []byte("fake sig"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	defer os.Remove(sigPath)
 
 	lc := &LiveChecker{binaryPath: tmpBin.Name()}
@@ -829,7 +841,9 @@ func writeManifest(t *testing.T, m manifest.BuildManifest) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpFile.Write(data)
+	if _, err := tmpFile.Write(data); err != nil {
+		t.Fatal(err)
+	}
 	tmpFile.Close()
 	return tmpFile.Name()
 }

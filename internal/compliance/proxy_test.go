@@ -14,7 +14,7 @@ func TestProxyStatsChecker_AllFIPSClients(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"summary": map[string]int{
 				"total":        25,
 				"fips_capable": 25,
@@ -50,7 +50,7 @@ func TestProxyStatsChecker_AllFIPSClients(t *testing.T) {
 
 func TestProxyStatsChecker_NonFIPSClients(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"summary": map[string]int{
 				"total":        10,
 				"fips_capable": 7,
@@ -84,7 +84,7 @@ func TestProxyStatsChecker_NonFIPSClients(t *testing.T) {
 
 func TestProxyStatsChecker_NoClients(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"summary": map[string]int{
 				"total":        0,
 				"fips_capable": 0,
@@ -144,7 +144,7 @@ func TestProxyStatsChecker_ProxyBadResponse(t *testing.T) {
 
 func TestProxyStatsChecker_InvalidJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("not json"))
+		_, _ = w.Write([]byte("not json"))
 	}))
 	defer srv.Close()
 

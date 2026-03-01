@@ -71,7 +71,7 @@ func (pc *PostureCollector) HandlePostureReport(w http.ResponseWriter, r *http.R
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 }
 
 // HandlePostureList is an HTTP handler that returns all known device postures.
@@ -84,7 +84,7 @@ func (pc *PostureCollector) HandlePostureList(w http.ResponseWriter, r *http.Req
 	pc.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(devices)
+	_ = json.NewEncoder(w).Encode(devices)
 }
 
 // GetDevice returns the posture for a specific device, if known.

@@ -170,7 +170,9 @@ func TestPrintReport_ValidJSON(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("ReadFrom: %v", err)
+	}
 	output := buf.String()
 
 	// Verify it's valid JSON

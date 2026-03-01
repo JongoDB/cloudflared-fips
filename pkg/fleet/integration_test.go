@@ -87,9 +87,13 @@ func TestIntegration_FullEnrollmentAndReportFlow(t *testing.T) {
 			t.Fatalf("store report %d: %v", i, err)
 		}
 		// Update compliance counts
-		store.UpdateNodeCompliance(ctx, nodeID, report.Summary.Passed, report.Summary.Failed, report.Summary.Warnings)
+		if err := store.UpdateNodeCompliance(ctx, nodeID, report.Summary.Passed, report.Summary.Failed, report.Summary.Warnings); err != nil {
+			t.Fatalf("UpdateNodeCompliance %d: %v", i, err)
+		}
 		if report.Summary.Failed > 0 {
-			store.UpdateNodeStatus(ctx, nodeID, StatusDegraded)
+			if err := store.UpdateNodeStatus(ctx, nodeID, StatusDegraded); err != nil {
+				t.Fatalf("UpdateNodeStatus %d: %v", i, err)
+			}
 		}
 	}
 
@@ -166,7 +170,9 @@ func TestIntegration_MonitorMarksStaleNodes(t *testing.T) {
 		ID: "stale-1", Name: "stale", Role: RoleServer,
 		EnrolledAt: staleTime, LastHeartbeat: staleTime, Status: StatusOnline,
 	}
-	store.CreateNode(ctx, node, "h-stale")
+	if err := store.CreateNode(ctx, node, "h-stale"); err != nil {
+		t.Fatal(err)
+	}
 
 	eventCh := make(chan FleetEvent, 10)
 	monitor := NewMonitor(MonitorConfig{
@@ -202,13 +208,13 @@ func TestIntegration_ReporterHTTP(t *testing.T) {
 		received++
 		if r.URL.Path == "/api/v1/fleet/report" {
 			var payload ComplianceReportPayload
-			json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewDecoder(r.Body).Decode(&payload)
 			if payload.NodeID != "test-node" {
 				t.Errorf("unexpected node ID: %s", payload.NodeID)
 			}
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}))
 	defer ts.Close()
 
@@ -253,10 +259,12 @@ func TestIntegration_ComplianceReportFormat(t *testing.T) {
 	ctx := context.Background()
 
 	now := time.Now().UTC()
-	store.CreateNode(ctx, &Node{
+	if err := store.CreateNode(ctx, &Node{
 		ID: "n1", Name: "test", Role: RoleServer,
 		EnrolledAt: now, LastHeartbeat: now, Status: StatusOnline,
-	}, "h1")
+	}, "h1"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Build a realistic compliance report
 	report := compliance.ComplianceReport{
@@ -277,12 +285,19 @@ func TestIntegration_ComplianceReportFormat(t *testing.T) {
 	}
 
 	reportJSON, _ := json.Marshal(report)
-	store.StoreReport(ctx, "n1", reportJSON)
+	if err := store.StoreReport(ctx, "n1", reportJSON); err != nil {
+		t.Fatal(err)
+	}
 
 	// Retrieve and verify
-	got, _ := store.GetLatestReport(ctx, "n1")
+	got, err := store.GetLatestReport(ctx, "n1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var parsed compliance.ComplianceReport
-	json.Unmarshal(got, &parsed)
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatal(err)
+	}
 
 	if parsed.Summary.Total != 3 || parsed.Summary.Passed != 3 {
 		t.Errorf("summary = %+v", parsed.Summary)

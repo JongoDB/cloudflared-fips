@@ -462,7 +462,7 @@ func scanNode(row *sql.Row) (*Node, error) {
 	n.Status = NodeStatus(statusStr)
 	n.EnrolledAt, _ = time.Parse(time.RFC3339, enrolledAt)
 	n.LastHeartbeat, _ = time.Parse(time.RFC3339, lastHB)
-	json.Unmarshal([]byte(labelsStr), &n.Labels)
+	_ = json.Unmarshal([]byte(labelsStr), &n.Labels)
 	populateNodeExtras(&n, compStatus, serviceJSON, gracePeriodEnd)
 	return &n, nil
 }
@@ -483,7 +483,7 @@ func scanNodeRows(rows *sql.Rows) (*Node, error) {
 	n.Status = NodeStatus(statusStr)
 	n.EnrolledAt, _ = time.Parse(time.RFC3339, enrolledAt)
 	n.LastHeartbeat, _ = time.Parse(time.RFC3339, lastHB)
-	json.Unmarshal([]byte(labelsStr), &n.Labels)
+	_ = json.Unmarshal([]byte(labelsStr), &n.Labels)
 	populateNodeExtras(&n, compStatus, serviceJSON, gracePeriodEnd)
 	return &n, nil
 }
@@ -530,7 +530,7 @@ func (s *SQLiteStore) GetPendingRemediations(ctx context.Context, nodeID string)
 			return nil, err
 		}
 		r.DryRun = dryRun == 1
-		json.Unmarshal([]byte(actionsStr), &r.Actions)
+		_ = json.Unmarshal([]byte(actionsStr), &r.Actions)
 		r.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		if completedAt != "" {
 			t, _ := time.Parse(time.RFC3339, completedAt)
@@ -571,7 +571,7 @@ func (s *SQLiteStore) GetRemediationRequest(ctx context.Context, id string) (*Re
 		return nil, err
 	}
 	r.DryRun = dryRun == 1
-	json.Unmarshal([]byte(actionsStr), &r.Actions)
+	_ = json.Unmarshal([]byte(actionsStr), &r.Actions)
 	r.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	if completedAt != "" {
 		t, _ := time.Parse(time.RFC3339, completedAt)

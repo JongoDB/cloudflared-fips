@@ -59,7 +59,7 @@ func main() {
 		if *jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			enc.Encode(section)
+			_ = enc.Encode(section)
 		} else {
 			printSection(section)
 		}
@@ -133,7 +133,7 @@ func main() {
 		if *jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			enc.Encode(result)
+			_ = enc.Encode(result)
 		}
 
 		os.Exit(exitCode)
@@ -222,7 +222,11 @@ func pollRemediations(ctx context.Context, logger *log.Logger, ctrlURL, nodeID, 
 				Actions []string `json:"actions"`
 				DryRun  bool     `json:"dry_run"`
 			}
-			json.NewDecoder(resp.Body).Decode(&pending)
+			if err := json.NewDecoder(resp.Body).Decode(&pending); err != nil {
+				logger.Printf("Failed to decode pending remediations: %v", err)
+				resp.Body.Close()
+				continue
+			}
 			resp.Body.Close()
 
 			if len(pending) == 0 {

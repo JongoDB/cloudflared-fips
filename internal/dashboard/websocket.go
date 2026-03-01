@@ -90,7 +90,7 @@ func (hub *WSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		// Fall back to long-poll: send one compliance snapshot and close
 		report := hub.handler.Checker.GenerateReport()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"type":     "compliance",
 			"data":     report,
 			"fallback": true,
@@ -104,7 +104,7 @@ func (hub *WSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	// we return a helpful error.
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotImplemented)
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"error":       "WebSocket upgrade requires nhooyr.io/websocket dependency",
 		"install":     "go get nhooyr.io/websocket",
 		"alternative": "/api/v1/events (SSE)",

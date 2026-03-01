@@ -47,7 +47,9 @@ func TestFleetHandler_CreateToken(t *testing.T) {
 	}
 
 	var token fleet.EnrollmentToken
-	json.Unmarshal(w.Body.Bytes(), &token)
+	if err := json.Unmarshal(w.Body.Bytes(), &token); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
 	if token.Token == "" {
 		t.Error("token string should be returned")
 	}
@@ -116,7 +118,9 @@ func TestFleetHandler_EnrollAndReport(t *testing.T) {
 	}
 
 	var enrollResp fleet.EnrollmentResponse
-	json.Unmarshal(w.Body.Bytes(), &enrollResp)
+	if err := json.Unmarshal(w.Body.Bytes(), &enrollResp); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
 	if enrollResp.NodeID == "" {
 		t.Fatal("node ID empty")
 	}
@@ -143,9 +147,11 @@ func TestFleetHandler_ListNodes(t *testing.T) {
 	})
 
 	for _, name := range []string{"server-1", "server-2"} {
-		enrollment.Enroll(context.Background(), fleet.EnrollmentRequest{
+		if _, err := enrollment.Enroll(context.Background(), fleet.EnrollmentRequest{
 			Token: tok.Token, Name: name,
-		})
+		}); err != nil {
+			t.Fatalf("Enroll %s: %v", name, err)
+		}
 	}
 
 	req := httptest.NewRequest("GET", "/api/v1/fleet/nodes", nil)
@@ -157,7 +163,9 @@ func TestFleetHandler_ListNodes(t *testing.T) {
 	}
 
 	var nodes []fleet.Node
-	json.Unmarshal(w.Body.Bytes(), &nodes)
+	if err := json.Unmarshal(w.Body.Bytes(), &nodes); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
 	if len(nodes) != 2 {
 		t.Errorf("node count = %d, want 2", len(nodes))
 	}
@@ -170,9 +178,11 @@ func TestFleetHandler_Summary(t *testing.T) {
 	tok, _ := enrollment.CreateToken(context.Background(), fleet.CreateTokenRequest{
 		Role: fleet.RoleServer, MaxUses: 5, ExpiresIn: 3600,
 	})
-	enrollment.Enroll(context.Background(), fleet.EnrollmentRequest{
+	if _, err := enrollment.Enroll(context.Background(), fleet.EnrollmentRequest{
 		Token: tok.Token, Name: "s1",
-	})
+	}); err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
 
 	req := httptest.NewRequest("GET", "/api/v1/fleet/summary", nil)
 	w := httptest.NewRecorder()
@@ -183,7 +193,9 @@ func TestFleetHandler_Summary(t *testing.T) {
 	}
 
 	var summary fleet.FleetSummary
-	json.Unmarshal(w.Body.Bytes(), &summary)
+	if err := json.Unmarshal(w.Body.Bytes(), &summary); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
 	if summary.TotalNodes != 1 {
 		t.Errorf("TotalNodes = %d, want 1", summary.TotalNodes)
 	}
@@ -218,12 +230,16 @@ func TestFleetHandler_ListTokens(t *testing.T) {
 	fh, store := testFleetHandler(t)
 
 	enrollment := fleet.NewEnrollment(store)
-	enrollment.CreateToken(context.Background(), fleet.CreateTokenRequest{
+	if _, err := enrollment.CreateToken(context.Background(), fleet.CreateTokenRequest{
 		Role: fleet.RoleServer, ExpiresIn: 3600,
-	})
-	enrollment.CreateToken(context.Background(), fleet.CreateTokenRequest{
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enrollment.CreateToken(context.Background(), fleet.CreateTokenRequest{
 		Role: fleet.RoleClient, ExpiresIn: 3600,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest("GET", "/api/v1/fleet/tokens", nil)
 	req.Header.Set("Authorization", "Bearer admin-secret")
@@ -235,7 +251,9 @@ func TestFleetHandler_ListTokens(t *testing.T) {
 	}
 
 	var tokens []fleet.EnrollmentToken
-	json.Unmarshal(w.Body.Bytes(), &tokens)
+	if err := json.Unmarshal(w.Body.Bytes(), &tokens); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
 	if len(tokens) != 2 {
 		t.Errorf("token count = %d, want 2", len(tokens))
 	}

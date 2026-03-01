@@ -22,7 +22,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -154,11 +153,6 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
-		ConnState: func(conn net.Conn, state http.ConnState) {
-			if state == http.StateNew {
-				// logged by inspector via GetConfigForClient
-			}
-		},
 	}
 
 	// Start server in background
@@ -202,7 +196,7 @@ func startDashboard(addr string, inspector *clientdetect.Inspector, logger *log.
 	// Health check
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "ok",
 			"version": buildinfo.Version,
 			"mode":    "fips-proxy-tier3",
@@ -212,7 +206,7 @@ func startDashboard(addr string, inspector *clientdetect.Inspector, logger *log.
 	// Client TLS inspection results
 	mux.HandleFunc("GET /api/v1/clients", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"recent":  inspector.RecentClients(100),
 			"summary": inspector.FIPSStats(),
 		})
@@ -237,7 +231,7 @@ func startDashboard(addr string, inspector *clientdetect.Inspector, logger *log.
 	mux.HandleFunc("GET /api/v1/selftest", func(w http.ResponseWriter, r *http.Request) {
 		report, _ := selftest.GenerateReport(buildinfo.Version)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(report)
+		_ = json.NewEncoder(w).Encode(report)
 	})
 
 	server := &http.Server{

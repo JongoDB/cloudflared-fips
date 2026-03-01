@@ -336,7 +336,7 @@ func TestProxyToDashboardIntegration(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"summary": map[string]interface{}{
 				"total":        42,
 				"fips_capable": 38,
@@ -493,7 +493,7 @@ func TestProxyToDashboardIntegration_ProxyDown(t *testing.T) {
 // 100% FIPS clients → all items pass.
 func TestProxyToDashboardIntegration_AllFIPS(t *testing.T) {
 	mockProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"summary": map[string]interface{}{
 				"total":        100,
 				"fips_capable": 100,
@@ -534,7 +534,7 @@ func TestProxyToDashboardIntegration_AllFIPS(t *testing.T) {
 // TestProxyToDashboardIntegration_SSE verifies gateway data flows through SSE.
 func TestProxyToDashboardIntegration_SSE(t *testing.T) {
 	mockProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"summary": map[string]interface{}{
 				"total":        10,
 				"fips_capable": 8,

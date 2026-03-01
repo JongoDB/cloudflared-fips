@@ -348,7 +348,7 @@ func (fh *FleetHandler) HandleGetNodeReport(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write(report)
+	_, _ = w.Write(report)
 }
 
 // HandleDeleteNode removes a node from the fleet (admin only).
@@ -417,13 +417,13 @@ func (fh *FleetHandler) HandleFleetSSE(w http.ResponseWriter, r *http.Request) {
 	// Send initial fleet summary
 	summary, _ := fh.store.GetSummary(r.Context())
 	if summary != nil {
-		writeSSEEvent(w, flusher, "fleet_summary", summary)
+		_ = writeSSEEvent(w, flusher, "fleet_summary", summary)
 	}
 
 	// Send initial node list
 	nodes, _ := fh.store.ListNodes(r.Context(), fleet.NodeFilter{})
 	if nodes != nil {
-		writeSSEEvent(w, flusher, "fleet_nodes", nodes)
+		_ = writeSSEEvent(w, flusher, "fleet_nodes", nodes)
 	}
 
 	// Register for events

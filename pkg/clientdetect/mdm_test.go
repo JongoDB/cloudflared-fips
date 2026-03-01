@@ -115,7 +115,7 @@ func TestMDMClient_FetchJamfDevices(t *testing.T) {
 			return
 		}
 
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"results": []map[string]interface{}{
 				{
 					"id": "jamf-1",
@@ -198,7 +198,7 @@ func TestMDMClient_FetchDevices_Caching(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		// Return at least one device so the cache stores a non-nil slice
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"results": []map[string]interface{}{
 				{
 					"id":              "cache-test-1",
@@ -232,7 +232,7 @@ func TestMDMClient_FetchDevices_Caching(t *testing.T) {
 
 func TestMDMClient_ComplianceSummary(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"results": []map[string]interface{}{
 				{
 					"id":              "1",
