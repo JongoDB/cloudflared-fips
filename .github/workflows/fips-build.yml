@@ -11,7 +11,7 @@ permissions:
   id-token: write
 
 env:
-  GO_VERSION: '1.24.0'
+  GO_VERSION: '1.24'
   # Go 1.23 for Linux BoringCrypto builds — upstream cloudflared's quic-go
   # uses tls.NewGCMTLS13 which was removed in Go 1.24.
   GO_VERSION_BORING: '1.23.6'
