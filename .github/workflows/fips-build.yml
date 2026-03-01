@@ -145,7 +145,7 @@ jobs:
 
           # RPM versions cannot contain hyphens — use dots
           RPM_VERSION=$(echo "${UPSTREAM_VERSION}.fips" | sed 's/-/./g')
-          VERSION="${RPM_VERSION}" rpmbuild -bb build/packaging/rpm/cloudflared-fips.spec
+          VERSION="${RPM_VERSION}" rpmbuild --define "_topdir /root/rpmbuild" -bb build/packaging/rpm/cloudflared-fips.spec
           cp /root/rpmbuild/RPMS/*/*.rpm /tmp/ 2>/dev/null || true
 
       - name: Package — DEB
