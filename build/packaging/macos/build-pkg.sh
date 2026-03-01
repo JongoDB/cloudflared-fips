@@ -26,13 +26,14 @@ mkdir -p "$STAGING_DIR/bin"
 mkdir -p "$STAGING_DIR/share/cloudflared-fips"
 mkdir -p "$STAGING_DIR/etc/cloudflared"
 
-cp "$BINARY_DIR/cloudflared" "$STAGING_DIR/bin/cloudflared"
-chmod 755 "$STAGING_DIR/bin/cloudflared"
-
-if [ -f "$BINARY_DIR/selftest" ]; then
-    cp "$BINARY_DIR/selftest" "$STAGING_DIR/bin/cloudflared-selftest"
-    chmod 755 "$STAGING_DIR/bin/cloudflared-selftest"
-fi
+# Install fleet binaries
+for bin in cloudflared-fips-selftest cloudflared-fips-dashboard cloudflared-fips-tui \
+           cloudflared-fips-proxy cloudflared-fips-agent; do
+    if [ -f "$BINARY_DIR/$bin" ]; then
+        cp "$BINARY_DIR/$bin" "$STAGING_DIR/bin/$bin"
+        chmod 755 "$STAGING_DIR/bin/$bin"
+    fi
+done
 
 if [ -f "$BINARY_DIR/build-manifest.json" ]; then
     cp "$BINARY_DIR/build-manifest.json" "$STAGING_DIR/share/cloudflared-fips/"
@@ -46,11 +47,13 @@ fi
 cat > "$SCRIPTS_DIR/postinstall" <<'POSTINST'
 #!/bin/bash
 echo "Running FIPS self-test..."
-/usr/local/bin/cloudflared-selftest 2>&1 || {
+/usr/local/bin/cloudflared-fips-selftest 2>&1 || {
     echo "WARNING: FIPS self-test failed."
     echo "The binary may not be FIPS-compliant on this system."
 }
-echo "cloudflared-fips installed to /usr/local/bin/cloudflared"
+echo ""
+echo "cloudflared-fips installed to /usr/local/bin/"
+echo "  Run: cloudflared-fips-tui setup"
 POSTINST
 chmod 755 "$SCRIPTS_DIR/postinstall"
 
@@ -82,7 +85,7 @@ cat > "$STAGING_DIR/Distribution.xml" <<DIST
     <choice id="cloudflared-fips"
             visible="false"
             title="cloudflared-fips"
-            description="FIPS 140-2 compliant Cloudflare Tunnel">
+            description="FIPS 140-3 compliant Cloudflare Tunnel fleet">
         <pkg-ref id="${PKG_ID}" />
     </choice>
     <pkg-ref id="${PKG_ID}"
