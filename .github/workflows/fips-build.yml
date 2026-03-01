@@ -117,6 +117,7 @@ jobs:
           echo "$(/usr/local/go/bin/go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Generate SBOM
+        continue-on-error: true
         run: |
           bash scripts/generate-sbom.sh \
             upstream-cloudflared \
