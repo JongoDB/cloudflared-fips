@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -307,5 +308,283 @@ func TestUUIDRegex(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("uuidFromOutput(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TextInput
+// ---------------------------------------------------------------------------
+
+func TestNewTextInput(t *testing.T) {
+	ti := NewTextInput("API Token", "paste-token-here", "From Cloudflare dashboard")
+	if ti.Label != "API Token" {
+		t.Errorf("Label = %q, want 'API Token'", ti.Label)
+	}
+	if ti.Hint != "From Cloudflare dashboard" {
+		t.Errorf("Hint = %q, want 'From Cloudflare dashboard'", ti.Hint)
+	}
+	if ti.Input.Placeholder != "paste-token-here" {
+		t.Errorf("Placeholder = %q, want 'paste-token-here'", ti.Input.Placeholder)
+	}
+	if ti.IsMasked {
+		t.Error("should not be masked by default")
+	}
+	if ti.Input.CharLimit != 256 {
+		t.Errorf("CharLimit = %d, want 256", ti.Input.CharLimit)
+	}
+}
+
+func TestNewPasswordInput(t *testing.T) {
+	ti := NewPasswordInput("Secret", "enter-secret", "will be masked")
+	if ti.Label != "Secret" {
+		t.Errorf("Label = %q, want 'Secret'", ti.Label)
+	}
+	if !ti.IsMasked {
+		t.Error("password input should be masked")
+	}
+	if ti.Input.EchoCharacter != '*' {
+		t.Errorf("EchoCharacter = %c, want *", ti.Input.EchoCharacter)
+	}
+}
+
+func TestTextInput_ValueSetValue(t *testing.T) {
+	ti := NewTextInput("Test", "", "")
+	ti.SetValue("hello world")
+	if ti.Value() != "hello world" {
+		t.Errorf("Value() = %q, want 'hello world'", ti.Value())
+	}
+	ti.SetValue("")
+	if ti.Value() != "" {
+		t.Errorf("Value() = %q, want empty", ti.Value())
+	}
+}
+
+func TestTextInput_FocusBlur(t *testing.T) {
+	ti := NewTextInput("Test", "", "")
+	ti.Focus()
+	// Blur should not panic
+	ti.Blur()
+}
+
+func TestTextInput_RunValidation_NoValidator(t *testing.T) {
+	ti := NewTextInput("Test", "", "")
+	if !ti.RunValidation() {
+		t.Error("should return true when no validator is set")
+	}
+	if ti.Err != "" {
+		t.Errorf("Err should be empty, got %q", ti.Err)
+	}
+}
+
+func TestTextInput_RunValidation_Pass(t *testing.T) {
+	ti := NewTextInput("Test", "", "")
+	ti.Validate = func(s string) error { return nil }
+	ti.SetValue("valid")
+	if !ti.RunValidation() {
+		t.Error("should return true for valid input")
+	}
+	if ti.Err != "" {
+		t.Errorf("Err should be empty, got %q", ti.Err)
+	}
+}
+
+func TestTextInput_RunValidation_Fail(t *testing.T) {
+	ti := NewTextInput("Test", "", "")
+	ti.Validate = func(s string) error {
+		if s == "" {
+			return fmt.Errorf("required")
+		}
+		return nil
+	}
+	if ti.RunValidation() {
+		t.Error("should return false for empty value with required validator")
+	}
+	if ti.Err != "required" {
+		t.Errorf("Err = %q, want 'required'", ti.Err)
+	}
+}
+
+func TestTextInput_RunValidation_ClearsErr(t *testing.T) {
+	ti := NewTextInput("Test", "", "")
+	ti.Err = "old error"
+	ti.Validate = func(s string) error { return nil }
+	ti.RunValidation()
+	if ti.Err != "" {
+		t.Errorf("validation pass should clear Err, got %q", ti.Err)
+	}
+}
+
+func TestTextInput_View_NonEmpty(t *testing.T) {
+	ti := NewTextInput("Token", "placeholder", "hint text")
+	view := ti.View()
+	if view == "" {
+		t.Error("View() should not be empty")
+	}
+}
+
+func TestTextInput_View_ShowsError(t *testing.T) {
+	ti := NewTextInput("Token", "", "")
+	ti.Err = "field is required"
+	view := ti.View()
+	if view == "" {
+		t.Error("View() should not be empty")
+	}
+}
+
+func TestTextInput_View_ShowsHint(t *testing.T) {
+	ti := NewTextInput("Token", "", "helpful hint")
+	view := ti.View()
+	if view == "" {
+		t.Error("View() should not be empty")
+	}
+}
+
+func TestTextInput_Update_ClearsError(t *testing.T) {
+	ti := NewTextInput("Test", "", "")
+	ti.Err = "some error"
+	ti.Focus()
+	ti.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if ti.Err != "" {
+		t.Errorf("Update should clear Err, got %q", ti.Err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// IngressEditor
+// ---------------------------------------------------------------------------
+
+func TestNewIngressEditor(t *testing.T) {
+	ed := NewIngressEditor("Ingress Rules")
+	if ed.Label != "Ingress Rules" {
+		t.Errorf("Label = %q, want 'Ingress Rules'", ed.Label)
+	}
+	if len(ed.Entries) != 0 {
+		t.Errorf("Entries should be empty, got %d", len(ed.Entries))
+	}
+	if ed.Focused {
+		t.Error("should not be focused initially")
+	}
+	if ed.Adding {
+		t.Error("should not be in add mode initially")
+	}
+}
+
+func TestIngressEditor_FocusBlur(t *testing.T) {
+	ed := NewIngressEditor("Rules")
+	ed.Focus()
+	if !ed.Focused {
+		t.Error("should be focused after Focus()")
+	}
+	ed.Blur()
+	if ed.Focused {
+		t.Error("should not be focused after Blur()")
+	}
+	if ed.Adding {
+		t.Error("Blur should cancel adding mode")
+	}
+}
+
+func TestIngressEditor_Update_IgnoresWhenBlurred(t *testing.T) {
+	ed := NewIngressEditor("Rules")
+	// Not focused — key 'a' should not trigger add mode
+	ed.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if ed.Adding {
+		t.Error("blurred editor should ignore keys")
+	}
+}
+
+func TestIngressEditor_Update_AddMode(t *testing.T) {
+	ed := NewIngressEditor("Rules")
+	ed.Focus()
+
+	// Press 'a' to enter add mode
+	ed.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if !ed.Adding {
+		t.Error("pressing 'a' should enter add mode")
+	}
+	if ed.Field != 0 {
+		t.Errorf("Field = %d, want 0 (hostname)", ed.Field)
+	}
+}
+
+func TestIngressEditor_Update_CursorNavigation(t *testing.T) {
+	ed := NewIngressEditor("Rules")
+	ed.Entries = []IngressEntry{
+		{Hostname: "a.com", Service: "http://localhost:80"},
+		{Hostname: "b.com", Service: "http://localhost:81"},
+		{Hostname: "c.com", Service: "http://localhost:82"},
+	}
+	ed.Focus()
+
+	// Move down
+	ed.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if ed.Cursor != 1 {
+		t.Errorf("after j: Cursor = %d, want 1", ed.Cursor)
+	}
+
+	// Move up
+	ed.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if ed.Cursor != 0 {
+		t.Errorf("after k: Cursor = %d, want 0", ed.Cursor)
+	}
+
+	// Can't go above 0
+	ed.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if ed.Cursor != 0 {
+		t.Errorf("at top after k: Cursor = %d, want 0", ed.Cursor)
+	}
+}
+
+func TestIngressEditor_Update_Delete(t *testing.T) {
+	ed := NewIngressEditor("Rules")
+	ed.Entries = []IngressEntry{
+		{Hostname: "a.com", Service: "svc-a"},
+		{Hostname: "b.com", Service: "svc-b"},
+	}
+	ed.Focus()
+	ed.Cursor = 0
+
+	ed.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if len(ed.Entries) != 1 {
+		t.Fatalf("after delete: entries = %d, want 1", len(ed.Entries))
+	}
+	if ed.Entries[0].Hostname != "b.com" {
+		t.Errorf("remaining entry = %q, want b.com", ed.Entries[0].Hostname)
+	}
+}
+
+func TestIngressEditor_Update_DeleteLastEntry(t *testing.T) {
+	ed := NewIngressEditor("Rules")
+	ed.Entries = []IngressEntry{
+		{Hostname: "only.com", Service: "svc"},
+	}
+	ed.Focus()
+	ed.Cursor = 0
+
+	ed.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if len(ed.Entries) != 0 {
+		t.Errorf("after deleting last: entries = %d, want 0", len(ed.Entries))
+	}
+	if ed.Cursor != 0 {
+		t.Errorf("cursor should be 0, got %d", ed.Cursor)
+	}
+}
+
+func TestIngressEditor_View_Empty(t *testing.T) {
+	ed := NewIngressEditor("Rules")
+	view := ed.View()
+	if view == "" {
+		t.Error("View() should not be empty even with no entries")
+	}
+}
+
+func TestIngressEditor_View_WithEntries(t *testing.T) {
+	ed := NewIngressEditor("Rules")
+	ed.Entries = []IngressEntry{
+		{Hostname: "app.example.com", Service: "https://localhost:8443"},
+	}
+	view := ed.View()
+	if view == "" {
+		t.Error("View() should not be empty")
 	}
 }
