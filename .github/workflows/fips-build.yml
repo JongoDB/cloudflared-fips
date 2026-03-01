@@ -38,7 +38,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          dnf install -y gcc gcc-c++ make git openssl-devel curl jq
+          dnf install -y --allowerasing gcc gcc-c++ make git curl jq
           dnf clean all
 
       - name: Install cross-compiler (arm64)
@@ -257,7 +257,7 @@ jobs:
       matrix:
         include:
           - goarch: amd64
-            runner: macos-13
+            runner: macos-14
           - goarch: arm64
             runner: macos-14
 
