@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -570,7 +571,69 @@ func TestNewWizardModel_View(t *testing.T) {
 // BuildProvisionCommand
 // ---------------------------------------------------------------------------
 
+func TestFindProvisionScript_InstalledPath(t *testing.T) {
+	// Create a temp dir with the provision script to simulate RPM install
+	tmpDir := t.TempDir()
+	fakeBin := tmpDir + "/cloudflared-fips-provision"
+	if err := os.WriteFile(fakeBin, []byte("#!/bin/bash\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Override the installed paths to point to our temp location
+	orig := provisionInstalledPaths
+	provisionInstalledPaths = []string{fakeBin}
+	defer func() { provisionInstalledPaths = orig }()
+
+	got := findProvisionScript()
+	if got != fakeBin {
+		t.Errorf("findProvisionScript() = %q, want %q (installed path)", got, fakeBin)
+	}
+}
+
+func TestFindProvisionScript_FallbackWhenNotInstalled(t *testing.T) {
+	// Override with a path that doesn't exist
+	orig := provisionInstalledPaths
+	provisionInstalledPaths = []string{"/nonexistent/cloudflared-fips-provision"}
+	defer func() { provisionInstalledPaths = orig }()
+
+	got := findProvisionScript()
+	// Should fall back to dev script (LookPath also won't find it)
+	if runtime.GOOS == "darwin" {
+		if got != "./scripts/provision-macos.sh" {
+			t.Errorf("findProvisionScript() = %q, want macOS fallback", got)
+		}
+	} else {
+		if got != "./scripts/provision-linux.sh" {
+			t.Errorf("findProvisionScript() = %q, want Linux fallback", got)
+		}
+	}
+}
+
+func TestFindProvisionScript_UsedByBuildProvisionCommand(t *testing.T) {
+	// Verify BuildProvisionCommand picks up the installed path
+	tmpDir := t.TempDir()
+	fakeBin := tmpDir + "/cloudflared-fips-provision"
+	if err := os.WriteFile(fakeBin, []byte("#!/bin/bash\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := provisionInstalledPaths
+	provisionInstalledPaths = []string{fakeBin}
+	defer func() { provisionInstalledPaths = orig }()
+
+	cfg := &config.Config{Role: "controller", DeploymentTier: "standard"}
+	script, _ := BuildProvisionCommand(cfg)
+	if script != fakeBin {
+		t.Errorf("BuildProvisionCommand script = %q, want %q", script, fakeBin)
+	}
+}
+
 func TestBuildProvisionCommand_ServerDefaults(t *testing.T) {
+	// Force dev fallback so test works regardless of host
+	orig := provisionInstalledPaths
+	provisionInstalledPaths = []string{"/nonexistent/cloudflared-fips-provision"}
+	defer func() { provisionInstalledPaths = orig }()
+
 	cfg := &config.Config{
 		Role:            "server",
 		DeploymentTier:  "standard",

@@ -215,13 +215,26 @@ func (p *ReviewPage) buildProvisionExec() *exec.Cmd {
 	return exec.Command("sh", "-c", shellScript)
 }
 
+// provisionInstalledPaths lists where packages install the provision script.
+// Checked in order; first match wins.
+var provisionInstalledPaths = []string{
+	"/usr/local/bin/cloudflared-fips-provision",
+}
+
 // findProvisionScript returns the path to the provision script, checking
 // installed locations first (RPM/DEB install to /usr/local/bin), then
-// falling back to relative paths for development.
+// exec.LookPath for PATH-discoverable installs, then falling back to
+// relative paths for development.
 func findProvisionScript() string {
-	// Installed location (RPM, DEB, pkg all install here)
-	if _, err := os.Stat("/usr/local/bin/cloudflared-fips-provision"); err == nil {
-		return "/usr/local/bin/cloudflared-fips-provision"
+	// Check well-known installed locations
+	for _, p := range provisionInstalledPaths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	// Check PATH (covers custom install locations)
+	if p, err := exec.LookPath("cloudflared-fips-provision"); err == nil {
+		return p
 	}
 	// Development fallback
 	switch runtime.GOOS {
