@@ -35,6 +35,11 @@ type tunnelCreatedMsg struct {
 	err    error
 }
 
+type tunnelTokenMsg struct {
+	token string
+	err   error
+}
+
 // DashboardWiringPage collects CF API token, zone/account/tunnel selection,
 // tunnel creation, public hostname, and MDM config.
 type DashboardWiringPage struct {
@@ -434,6 +439,15 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		p.createdTunnelName = msg.tunnel.Name
 		p.tunnelCreateErr = ""
 		return p, nil
+
+	case tunnelTokenMsg:
+		if msg.err != nil {
+			// Non-fatal: user can still proceed without the token (they'll need to add it manually)
+			p.tunnelCreateErr = fmt.Sprintf("Could not fetch tunnel token: %s", msg.err.Error())
+			return p, nil
+		}
+		p.createdTunnelToken = msg.token
+		return p, nil
 	}
 
 	if msg, ok := msg.(tea.KeyMsg); ok {
@@ -499,9 +513,19 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 				return p, fieldNav
 			}
 
-			// Tunnel picker: enter selects within the selector
-			if p.focus == 3 && p.hasTunnels() && !p.isCreatingNewTunnel() && msg.String() == "enter" {
-				return p, fieldNav
+			// Tunnel picker: when an existing tunnel is selected and user presses
+			// tab or enter, fetch its token and advance focus
+			if p.focus == 3 && p.hasTunnels() && !p.isCreatingNewTunnel() {
+				selected := p.tunnelPicker.Selected()
+				if selected != "" && selected != "__create_new__" {
+					accountID := strings.TrimSpace(p.accountID.Value())
+					p.focus++
+					p.updateFocus()
+					if accountID != "" && p.createdTunnelToken == "" {
+						return p, tea.Batch(fieldNav, p.fetchTunnelToken(accountID, selected))
+					}
+					return p, fieldNav
+				}
 			}
 
 			// mdmProvider selector: enter selects within, tab advances
@@ -548,10 +572,26 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 			cmd = p.accountID.Update(msg)
 		}
 	case 3:
-		if p.isCreatingNewTunnel() {
-			cmd = p.tunnelNameInput.Update(msg)
-		} else if p.hasTunnels() {
-			p.tunnelPicker.Update(msg)
+		if p.hasTunnels() {
+			// Always let the picker handle navigation keys so user can scroll
+			// away from "Create New Tunnel" — otherwise they get stuck.
+			if keyMsg, ok := msg.(tea.KeyMsg); ok {
+				prevSelected := p.tunnelPicker.Selected()
+				switch keyMsg.String() {
+				case "up", "down", "j", "k":
+					p.tunnelPicker.Update(msg)
+					// Clear fetched token when user switches to a different tunnel
+					if p.tunnelPicker.Selected() != prevSelected && !p.tunnelCreated {
+						p.createdTunnelToken = ""
+					}
+				default:
+					if p.isCreatingNewTunnel() {
+						cmd = p.tunnelNameInput.Update(msg)
+					}
+				}
+			} else if p.isCreatingNewTunnel() {
+				cmd = p.tunnelNameInput.Update(msg)
+			}
 		} else {
 			cmd = p.tunnelNameInput.Update(msg)
 		}
@@ -647,6 +687,16 @@ func (p *DashboardWiringPage) createTunnel(accountID, name string) tea.Cmd {
 		client := cfapi.NewClient(token)
 		tunnel, err := client.CreateTunnel(accountID, name)
 		return tunnelCreatedMsg{tunnel: tunnel, err: err}
+	}
+}
+
+// fetchTunnelToken fetches the connector token for an existing tunnel.
+func (p *DashboardWiringPage) fetchTunnelToken(accountID, tunnelID string) tea.Cmd {
+	token := strings.TrimSpace(p.apiToken.Value())
+	return func() tea.Msg {
+		client := cfapi.NewClient(token)
+		t, err := client.GetTunnelToken(accountID, tunnelID)
+		return tunnelTokenMsg{token: t, err: err}
 	}
 }
 
@@ -768,7 +818,7 @@ func (p *DashboardWiringPage) Apply(cfg *config.Config) {
 		cfg.Dashboard.AccountID = strings.TrimSpace(p.accountID.Value())
 	}
 
-	// Tunnel: from created tunnel or picker selection
+	// Tunnel: from created tunnel, fetched token for existing, or picker selection
 	if p.tunnelCreated {
 		cfg.TunnelToken = p.createdTunnelToken
 		cfg.Dashboard.TunnelID = p.createdTunnelID
@@ -776,6 +826,10 @@ func (p *DashboardWiringPage) Apply(cfg *config.Config) {
 		selected := p.tunnelPicker.Selected()
 		if selected != "__create_new__" {
 			cfg.Dashboard.TunnelID = selected
+			// Use fetched token for existing tunnel
+			if p.createdTunnelToken != "" {
+				cfg.TunnelToken = p.createdTunnelToken
+			}
 		}
 	}
 

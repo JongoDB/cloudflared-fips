@@ -97,6 +97,22 @@ func (c *Client) CreateTunnel(accountID, name string) (*TunnelWithToken, error) 
 	}, nil
 }
 
+// GetTunnelToken retrieves the connector token for an existing tunnel.
+// API: GET /accounts/{accountID}/cfd_tunnel/{tunnelID}/token
+func (c *Client) GetTunnelToken(accountID, tunnelID string) (string, error) {
+	path := fmt.Sprintf("/accounts/%s/cfd_tunnel/%s/token", accountID, tunnelID)
+	data, err := c.get(path)
+	if err != nil {
+		return "", fmt.Errorf("get tunnel token: %w", err)
+	}
+	// The API returns the token as a JSON string
+	var token string
+	if err := json.Unmarshal(data, &token); err != nil {
+		return "", fmt.Errorf("parse tunnel token: %w", err)
+	}
+	return token, nil
+}
+
 // ConfigureTunnelIngress sets the public hostname → service mapping for a tunnel.
 // This replaces the entire tunnel configuration.
 func (c *Client) ConfigureTunnelIngress(accountID, tunnelID string, ingress []TunnelIngressRule) error {
