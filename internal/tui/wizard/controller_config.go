@@ -21,6 +21,7 @@ type ControllerConfigPage struct {
 	enforcementMode common.Selector
 	requireOSFIPS   common.Toggle
 	requireDiskEnc  common.Toggle
+	requireMDM      common.Toggle
 
 	// Pre-populated from dashboard wiring page (read-only display)
 	tunnelTokenSet bool
@@ -30,7 +31,7 @@ type ControllerConfigPage struct {
 	height int
 }
 
-const controllerFieldCount = 7
+const controllerFieldCount = 8
 
 // NewControllerConfigPage creates the controller config page.
 func NewControllerConfigPage() *ControllerConfigPage {
@@ -56,6 +57,9 @@ func NewControllerConfigPage() *ControllerConfigPage {
 	requireDiskEnc := common.NewToggle("Require disk encryption", "All nodes must have disk encryption enabled", false)
 	requireDiskEnc.HelpText = "Checks for full-disk encryption on each fleet node.\nLinux: LUKS/dm-crypt  |  Windows: BitLocker  |  macOS: FileVault\nThe agent detects but cannot auto-enable encryption."
 
+	requireMDM := common.NewToggle("Require MDM enrollment", "All nodes must be enrolled in an MDM provider", false)
+	requireMDM.HelpText = "Nodes must be enrolled in a managed device platform.\nSupported: Microsoft Intune (Azure AD) or Jamf Pro (Apple).\nConfigure the MDM provider on the Dashboard & Tunnel page."
+
 	return &ControllerConfigPage{
 		adminKey:        adminKey,
 		nodeName:        nodeName,
@@ -64,6 +68,7 @@ func NewControllerConfigPage() *ControllerConfigPage {
 		enforcementMode: enforcement,
 		requireOSFIPS:   requireOSFIPS,
 		requireDiskEnc:  requireDiskEnc,
+		requireMDM:      requireMDM,
 	}
 }
 
@@ -98,6 +103,7 @@ func (p *ControllerConfigPage) updateFocus() {
 	p.enforcementMode.Blur()
 	p.requireOSFIPS.Blur()
 	p.requireDiskEnc.Blur()
+	p.requireMDM.Blur()
 
 	switch p.focus {
 	case 0:
@@ -114,6 +120,8 @@ func (p *ControllerConfigPage) updateFocus() {
 		p.requireOSFIPS.Focus()
 	case 6:
 		p.requireDiskEnc.Focus()
+	case 7:
+		p.requireMDM.Focus()
 	}
 }
 
@@ -161,12 +169,14 @@ func (p *ControllerConfigPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		p.requireOSFIPS.Update(msg)
 	case 6:
 		p.requireDiskEnc.Update(msg)
+	case 7:
+		p.requireMDM.Update(msg)
 	}
 	return p, cmd
 }
 
 func (p *ControllerConfigPage) ScrollOffset() int {
-	offsets := []int{0, 5, 8, 13, 19, 26, 29}
+	offsets := []int{0, 5, 8, 13, 19, 26, 29, 32}
 	if p.focus < len(offsets) {
 		return offsets[p.focus]
 	}
@@ -201,6 +211,7 @@ func (p *ControllerConfigPage) Apply(cfg *config.Config) {
 		EnforcementMode: p.enforcementMode.Selected(),
 		RequireOSFIPS:   p.requireOSFIPS.Enabled,
 		RequireDiskEnc:  p.requireDiskEnc.Enabled,
+		RequireMDM:      p.requireMDM.Enabled,
 	}
 }
 
@@ -230,5 +241,7 @@ func (p *ControllerConfigPage) View() string {
 	b.WriteString(p.requireOSFIPS.View())
 	b.WriteString("\n\n")
 	b.WriteString(p.requireDiskEnc.View())
+	b.WriteString("\n\n")
+	b.WriteString(p.requireMDM.View())
 	return b.String()
 }

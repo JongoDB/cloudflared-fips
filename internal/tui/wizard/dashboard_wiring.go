@@ -162,8 +162,8 @@ func NewDashboardWiringPage() *DashboardWiringPage {
 	tunnelName.Validate = config.ValidateNonEmpty
 	tunnelName.HelpText = "Name for the new Cloudflare Tunnel.\nThe tunnel will be created via the API — no dashboard visit required."
 
-	hostnameSubdomain := common.NewTextInput("Public Hostname", "dashboard", "(subdomain for your domain)")
-	hostnameSubdomain.HelpText = "Public subdomain for the dashboard. Combined with your zone domain.\nExample: 'dashboard' + 'jondevs.com' → dashboard.jondevs.com\nA CNAME record and tunnel ingress rule will be created automatically."
+	hostnameSubdomain := common.NewTextInput("Subdomain", "dashboard", "(combined with your zone domain)")
+	hostnameSubdomain.HelpText = "Type just the subdomain — the domain comes from your zone selection above.\nExample: type 'dashboard' → becomes dashboard.yourdomain.com\nA CNAME record and tunnel ingress rule will be created automatically."
 
 	hostnameService := common.NewTextInput("Backend Service URL", "http://localhost:8080", "")
 	hostnameService.Input.SetValue("http://localhost:8080")
@@ -213,7 +213,12 @@ func (p *DashboardWiringPage) Init() tea.Cmd { return nil }
 func (p *DashboardWiringPage) Focus() tea.Cmd {
 	p.focus = 0
 	p.updateFocus()
-	return p.apiToken.Focus()
+	cmds := []tea.Cmd{p.apiToken.Focus()}
+	// Auto-trigger discovery if token is pre-populated (e.g. from CF_API_TOKEN env var)
+	if strings.TrimSpace(p.apiToken.Value()) != "" && !p.accountsLoaded && !p.fetching {
+		cmds = append(cmds, p.startDiscovery())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (p *DashboardWiringPage) SetSize(w, h int) {
@@ -442,7 +447,7 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 					p.zoneID.SetValue(selectedID)
 					// Update hostname subdomain hint with zone name
 					if zoneName := p.selectedZoneName(); zoneName != "" {
-						p.hostnameSubdomain.Hint = fmt.Sprintf("(→ subdomain.%s)", zoneName)
+						p.hostnameSubdomain.Hint = fmt.Sprintf("(.%s)", zoneName)
 					}
 				}
 			}
@@ -758,7 +763,14 @@ func (p *DashboardWiringPage) View() string {
 	// Public hostname
 	b.WriteString(common.LabelStyle.Render("Public Hostname"))
 	if zoneName := p.selectedZoneName(); zoneName != "" {
-		b.WriteString(common.HintStyle.Render(fmt.Sprintf(" (domain: %s)", zoneName)))
+		subdomain := strings.TrimSpace(p.hostnameSubdomain.Value())
+		if subdomain != "" {
+			b.WriteString(common.SuccessStyle.Render(fmt.Sprintf("  → %s.%s", subdomain, zoneName)))
+		} else {
+			b.WriteString(common.HintStyle.Render(fmt.Sprintf("  (type subdomain for .%s)", zoneName)))
+		}
+		// Update the input hint to show the domain suffix
+		p.hostnameSubdomain.Hint = fmt.Sprintf("(.%s)", zoneName)
 	}
 	b.WriteString("\n")
 	b.WriteString(p.hostnameSubdomain.View())
