@@ -151,7 +151,10 @@ discover() {
         FOUND_SERVICES+=("target")
     fi
 
-    # Check binaries
+    # Check binaries (unified CLI + individual binaries)
+    if [[ -f "${BIN_DIR}/cloudflared-fips" ]]; then
+        FOUND_BINARIES+=("unified")
+    fi
     for bin in selftest dashboard agent proxy tui provision unprovision; do
         if [[ -f "${BIN_DIR}/cloudflared-fips-${bin}" ]]; then
             FOUND_BINARIES+=("$bin")
@@ -159,16 +162,18 @@ discover() {
     done
 
     # Check directories and user
-    [[ -d "$CONFIG_DIR" ]] && FOUND_CONFIG=true
-    [[ -d "$DATA_DIR" ]] && FOUND_DATA=true
-    id "$SERVICE_USER" &>/dev/null 2>&1 && FOUND_USER=true
-    command -v firewall-cmd &>/dev/null && FOUND_FIREWALL_CMD=true
-    command -v ufw &>/dev/null && FOUND_UFW=true
-    [[ -f "/etc/profile.d/cloudflared-fips-resume.sh" ]] && FOUND_PROFILE=true
-    [[ -f "$MARKER" ]] && FOUND_MARKER=true
-    [[ -d "$INSTALL_DIR" ]] && FOUND_INSTALL_DIR=true
-    [[ -d "/usr/local/go" ]] && FOUND_GO=true
-    [[ -d "/usr/local/node" || -f "/usr/local/bin/node" ]] && FOUND_NODE=true
+    # Note: use `|| true` to prevent set -e from killing the script when
+    # a test returns false (the && expression returns non-zero).
+    [[ -d "$CONFIG_DIR" ]] && FOUND_CONFIG=true || true
+    [[ -d "$DATA_DIR" ]] && FOUND_DATA=true || true
+    id "$SERVICE_USER" &>/dev/null 2>&1 && FOUND_USER=true || true
+    command -v firewall-cmd &>/dev/null && FOUND_FIREWALL_CMD=true || true
+    command -v ufw &>/dev/null && FOUND_UFW=true || true
+    [[ -f "/etc/profile.d/cloudflared-fips-resume.sh" ]] && FOUND_PROFILE=true || true
+    [[ -f "$MARKER" ]] && FOUND_MARKER=true || true
+    [[ -d "$INSTALL_DIR" ]] && FOUND_INSTALL_DIR=true || true
+    [[ -d "/usr/local/go" ]] && FOUND_GO=true || true
+    [[ -d "/usr/local/node" || -f "/usr/local/bin/node" ]] && FOUND_NODE=true || true
 }
 
 # ---------------------------------------------------------------------------
@@ -325,6 +330,12 @@ remove_binaries() {
 
     log "Removing binaries..."
 
+    # Unified CLI binary
+    if [[ -f "${BIN_DIR}/cloudflared-fips" ]]; then
+        run rm -f "${BIN_DIR}/cloudflared-fips"
+    fi
+
+    # Individual binaries
     for bin in selftest dashboard agent proxy tui provision unprovision; do
         local path="${BIN_DIR}/cloudflared-fips-${bin}"
         if [[ -f "$path" ]]; then
