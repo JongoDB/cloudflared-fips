@@ -680,11 +680,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
-          if gh release view "$TAG" &>/dev/null; then
-            echo "Release $TAG already exists — uploading assets"
-            gh release upload "$TAG" release/* --clobber
-          else
-            gh release create "$TAG" release/* \
-              --title "cloudflared-fips $TAG" \
-              --notes-file /tmp/release-notes.md
-          fi
+          # Remove any existing release (draft or published) so we create a clean one
+          gh release delete "$TAG" --yes --cleanup-tag=false 2>/dev/null || true
+          gh release create "$TAG" release/* \
+            --title "cloudflared-fips $TAG" \
+            --notes-file /tmp/release-notes.md
