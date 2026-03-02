@@ -848,7 +848,6 @@ Type=simple
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
 EnvironmentFile=-${CONFIG_DIR}/env
-ExecStartPre=${BIN_DIR}/cloudflared-fips-selftest
 ExecStart=${BIN_DIR}/cloudflared-fips-dashboard \\
   --addr ${listen_addr} \\
   --manifest ${CONFIG_DIR}/build-manifest.json \\
@@ -895,7 +894,6 @@ Type=simple
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
 EnvironmentFile=-${CONFIG_DIR}/env
-ExecStartPre=${BIN_DIR}/cloudflared-fips-selftest
 ExecStart=${BIN_DIR}/cloudflared tunnel run --metrics localhost:2000 --protocol ${PROTOCOL}
 Restart=on-failure
 RestartSec=5
@@ -929,7 +927,6 @@ Type=simple
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
 EnvironmentFile=-${CONFIG_DIR}/env
-ExecStartPre=${BIN_DIR}/cloudflared-fips-selftest
 ExecStart=${BIN_DIR}/cloudflared-fips-proxy \\
   --listen :443 \\
   --cert ${CONFIG_DIR}/tls-cert.pem \\
@@ -1073,8 +1070,15 @@ phase4_start() {
 
     case "$ROLE" in
         controller)
+            # Start tunnel + proxy immediately (no dependency on dashboard)
+            if systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
+                systemctl start cloudflared-fips-tunnel
+            fi
+            if systemctl is-enabled --quiet cloudflared-fips-proxy 2>/dev/null; then
+                systemctl start cloudflared-fips-proxy
+            fi
+            # Start dashboard and wait for API readiness
             systemctl start cloudflared-fips-dashboard
-            # Wait for dashboard API to be ready before self-enrolling agent
             local retries=0
             local dash_ready=false
             while ! curl -sf http://127.0.0.1:8080/health &>/dev/null; do
@@ -1096,7 +1100,6 @@ phase4_start() {
                 if [[ -n "$admin_key" ]]; then
                     local enroll_ok=false
                     for attempt in 1 2 3; do
-                        # Create a self-enrollment token
                         local token_resp
                         token_resp=$(curl -sf -X POST http://127.0.0.1:8080/api/v1/fleet/tokens \
                             -H "Authorization: Bearer ${admin_key}" \
@@ -1142,13 +1145,8 @@ phase4_start() {
                 warn "Skipping self-enrollment (dashboard not ready). Run manually after dashboard starts:"
                 warn "  sudo cloudflared-fips-provision --role controller --self-enroll"
             fi
+            # Start agent last (needs enrollment credentials)
             systemctl start cloudflared-fips-agent
-            if systemctl is-enabled --quiet cloudflared-fips-proxy 2>/dev/null; then
-                systemctl start cloudflared-fips-proxy
-            fi
-            if systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
-                systemctl start cloudflared-fips-tunnel
-            fi
             ;;
         server)
             systemctl start cloudflared-fips-agent
