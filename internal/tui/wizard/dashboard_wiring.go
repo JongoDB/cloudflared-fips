@@ -88,7 +88,7 @@ func (p *DashboardWiringPage) fieldCount() int {
 // NewDashboardWiringPage creates page 2.
 func NewDashboardWiringPage() *DashboardWiringPage {
 	apiToken := common.NewPasswordInput("Cloudflare API Token", "Bearer token", "(or set CF_API_TOKEN env var)")
-	apiToken.HelpText = "Create at: https://dash.cloudflare.com/profile/api-tokens\nRequired permissions: Zone:Read, Access:Read, SSL and Certificates:Read\nThe token is validated automatically when you leave this field."
+	apiToken.HelpText = "Create at: https://dash.cloudflare.com/profile/api-tokens\nRequired permissions (Resource | Permission | Access):\n  Zone | Zone | Read\n  Zone | Access: Apps and Policies | Read\n  Zone | SSL and Certificates | Read\nThe token is validated automatically when you leave this field."
 	if env := os.Getenv("CF_API_TOKEN"); env != "" {
 		apiToken.SetValue(env)
 	}

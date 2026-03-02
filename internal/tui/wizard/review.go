@@ -215,15 +215,27 @@ func (p *ReviewPage) buildProvisionExec() *exec.Cmd {
 	return exec.Command("sh", "-c", shellScript)
 }
 
+// findProvisionScript returns the path to the provision script, checking
+// installed locations first (RPM/DEB install to /usr/local/bin), then
+// falling back to relative paths for development.
+func findProvisionScript() string {
+	// Installed location (RPM, DEB, pkg all install here)
+	if _, err := os.Stat("/usr/local/bin/cloudflared-fips-provision"); err == nil {
+		return "/usr/local/bin/cloudflared-fips-provision"
+	}
+	// Development fallback
+	switch runtime.GOOS {
+	case "darwin":
+		return "./scripts/provision-macos.sh"
+	default:
+		return "./scripts/provision-linux.sh"
+	}
+}
+
 // BuildProvisionCommand returns the script path and arguments for provisioning
 // based on the config. Exported for testing.
 func BuildProvisionCommand(cfg *config.Config) (script string, args []string) {
-	switch runtime.GOOS {
-	case "darwin":
-		script = "./scripts/provision-macos.sh"
-	default:
-		script = "./scripts/provision-linux.sh"
-	}
+	script = findProvisionScript()
 
 	args = append(args, "--role", cfg.Role)
 	args = append(args, "--tier", tierNumber(cfg.DeploymentTier))
