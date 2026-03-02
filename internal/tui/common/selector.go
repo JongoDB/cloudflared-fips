@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,11 +17,12 @@ type SelectorOption struct {
 
 // Selector is a vertical radio-select component with descriptions.
 type Selector struct {
-	Label    string
-	HelpText string // Contextual help shown when focused
-	Options  []SelectorOption
-	Cursor   int
-	Focused  bool
+	Label      string
+	HelpText   string // Contextual help shown when focused
+	Options    []SelectorOption
+	Cursor     int
+	Focused    bool
+	MaxVisible int // Max items to show at once (0 = show all). Enables scrolling window.
 }
 
 // NewSelector creates a new radio-select.
@@ -83,24 +85,57 @@ func (s *Selector) Update(msg tea.Msg) {
 	}
 }
 
+// visibleRange returns the start and end indices for the visible window.
+func (s *Selector) visibleRange() (int, int) {
+	n := len(s.Options)
+	max := s.MaxVisible
+	if max <= 0 || max >= n {
+		return 0, n
+	}
+	// Keep cursor centered in the window
+	half := max / 2
+	start := s.Cursor - half
+	if start < 0 {
+		start = 0
+	}
+	end := start + max
+	if end > n {
+		end = n
+		start = end - max
+	}
+	return start, end
+}
+
 // View renders the selector.
 func (s *Selector) View() string {
 	var b strings.Builder
 	b.WriteString(LabelStyle.Render(s.Label))
 	b.WriteString("\n")
 
-	for i, opt := range s.Options {
+	n := len(s.Options)
+	start, end := s.visibleRange()
+	hasScrollUp := start > 0
+	hasScrollDown := end < n
+
+	// Scroll-up indicator
+	if hasScrollUp {
+		b.WriteString(HintStyle.Render(fmt.Sprintf("    \u2191 %d more above", start)))
+		b.WriteString("\n")
+	}
+
+	for i := start; i < end; i++ {
+		opt := s.Options[i]
 		selected := i == s.Cursor
 
 		cursor := "  "
-		radio := lipgloss.NewStyle().Foreground(ColorMuted).Render("○")
+		radio := lipgloss.NewStyle().Foreground(ColorMuted).Render("\u25cb")
 		if selected {
 			if s.Focused {
-				cursor = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render("▸ ")
-				radio = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render("●")
+				cursor = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render("\u25b8 ")
+				radio = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render("\u25cf")
 			} else {
 				cursor = "  "
-				radio = lipgloss.NewStyle().Foreground(ColorPrimary).Render("●")
+				radio = lipgloss.NewStyle().Foreground(ColorPrimary).Render("\u25cf")
 			}
 		}
 
@@ -123,6 +158,13 @@ func (s *Selector) View() string {
 			b.WriteString(desc + "\n")
 		}
 	}
+
+	// Scroll-down indicator
+	if hasScrollDown {
+		b.WriteString(HintStyle.Render(fmt.Sprintf("    \u2193 %d more below", n-end)))
+		b.WriteString("\n")
+	}
+
 	if s.HelpText != "" && s.Focused {
 		b.WriteString(HelpTextStyle.Render(s.HelpText))
 		b.WriteString("\n")

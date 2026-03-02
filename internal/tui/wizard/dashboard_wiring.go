@@ -391,8 +391,13 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		p.apiTunnels = msg.tunnels
 		p.tunnelsLoaded = true
 
-		// Build tunnel picker: existing tunnels + "Create New"
+		// Build tunnel picker: "Create New" first, then existing tunnels
 		opts := make([]common.SelectorOption, 0, len(msg.tunnels)+1)
+		opts = append(opts, common.SelectorOption{
+			Value:       "__create_new__",
+			Label:       "+ Create New Tunnel",
+			Description: "Create a new tunnel via the API",
+		})
 		for _, t := range msg.tunnels {
 			status := t.Status
 			if status == "" {
@@ -404,12 +409,12 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 				Description: t.ID[:minLen(t.ID, 12)] + "... (" + status + ")",
 			})
 		}
-		opts = append(opts, common.SelectorOption{
-			Value:       "__create_new__",
-			Label:       "+ Create New Tunnel",
-			Description: "Create a new tunnel via the API",
-		})
 		p.tunnelPicker = common.NewSelector("Tunnel", opts)
+		p.tunnelPicker.MaxVisible = 8 // Show 8 at a time, scroll for more
+		// Default cursor to first real tunnel (skip "Create New")
+		if len(msg.tunnels) > 0 {
+			p.tunnelPicker.Cursor = 1
+		}
 
 		// If focus is on tunnel field, update display
 		if p.focus == 3 {
@@ -646,13 +651,85 @@ func (p *DashboardWiringPage) createTunnel(accountID, name string) tea.Cmd {
 }
 
 func (p *DashboardWiringPage) ScrollOffset() int {
-	// Approximate line offsets per field in the View() output.
-	offsets := []int{0, 5, 10, 15, 22, 27, 32, 37}
-	if p.focus < len(offsets) {
-		return offsets[p.focus]
+	// Compute dynamic line offsets based on current discovery state.
+	// Each section's height varies depending on what's loaded.
+	line := 0
+
+	// Field 0: API token (label + input + help indicator)
+	if p.focus == 0 {
+		return line
 	}
-	// MDM-specific fields start after the selector.
-	return 42 + (p.focus-dashWiringBaseFields)*5
+	line += 3 // token field
+
+	// Discovery status block (variable height)
+	statusView := p.discoveryStatusView()
+	if statusView != "" {
+		line += strings.Count(statusView, "\n")
+	}
+	line++ // blank line after status
+
+	// Field 1: Domain (Zone) section
+	if p.focus == 1 {
+		return line
+	}
+	line += 2 // label + at least 1 option line
+	if p.hasZones() {
+		// Each zone option = 2 lines (label + description), capped by MaxVisible
+		visible := len(p.zones)
+		line += visible * 2
+	}
+	line += 2 // spacing after zone section
+
+	// Field 2: Account section
+	if p.focus == 2 {
+		return line
+	}
+	line += 3 // account label + value line + spacing
+
+	// Field 3: Tunnel section
+	if p.focus == 3 {
+		return line
+	}
+	line += 2 // tunnel header
+	if p.hasTunnels() {
+		// Tunnel picker: capped by MaxVisible (8) or total options
+		visible := len(p.tunnelPicker.Options)
+		if p.tunnelPicker.MaxVisible > 0 && visible > p.tunnelPicker.MaxVisible {
+			visible = p.tunnelPicker.MaxVisible + 2 // +2 for scroll indicators
+		}
+		line += visible * 2
+	}
+	if p.isCreatingNewTunnel() {
+		line += 4 // tunnel name input + status
+	}
+	line += 2 // spacing
+
+	// Field 4: Hostname subdomain
+	if p.focus == 4 {
+		return line
+	}
+	line += 5
+
+	// Field 5: Hostname service
+	if p.focus == 5 {
+		return line
+	}
+	line += 4
+
+	// Field 6: Metrics address
+	if p.focus == 6 {
+		return line
+	}
+	line += 4
+
+	// Field 7: MDM provider
+	if p.focus == 7 {
+		return line
+	}
+	line += 8
+
+	// MDM-specific fields
+	return line + (p.focus-dashWiringBaseFields)*5
 }
 
 func (p *DashboardWiringPage) Validate() bool {
