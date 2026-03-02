@@ -92,7 +92,8 @@ jobs:
           /usr/local/go/bin/go build -trimpath -ldflags "$LDFLAGS" -o /tmp/cloudflared-fips-agent ./cmd/agent
 
           cp scripts/provision-linux.sh /tmp/cloudflared-fips-provision
-          chmod +x /tmp/cloudflared-fips-provision
+          cp scripts/unprovision-linux.sh /tmp/cloudflared-fips-unprovision
+          chmod +x /tmp/cloudflared-fips-provision /tmp/cloudflared-fips-unprovision
 
       - name: Run FIPS self-test (amd64 only)
         if: matrix.goarch == 'amd64'
@@ -184,6 +185,7 @@ jobs:
           cp /tmp/cloudflared-fips-proxy /root/rpmbuild/SOURCES/
           cp /tmp/cloudflared-fips-agent /root/rpmbuild/SOURCES/
           cp /tmp/cloudflared-fips-provision /root/rpmbuild/SOURCES/
+          cp /tmp/cloudflared-fips-unprovision /root/rpmbuild/SOURCES/
 
           cp configs/cloudflared-fips.yaml /root/rpmbuild/SOURCES/
           cp /tmp/build-manifest.json /root/rpmbuild/SOURCES/
@@ -237,16 +239,10 @@ jobs:
         with:
           name: cloudflared-fips-linux-${{ matrix.goarch }}
           path: |
-            /tmp/cloudflared-fips-selftest
-            /tmp/cloudflared-fips-dashboard
-            /tmp/cloudflared-fips-tui
-            /tmp/cloudflared-fips-proxy
-            /tmp/cloudflared-fips-agent
-            /tmp/cloudflared-fips-provision
-            /tmp/build-manifest.json
-            /tmp/sbom.*.json
             /tmp/cloudflared-fips*.rpm
             /tmp/cloudflared-fips*.deb
+            /tmp/build-manifest.json
+            /tmp/sbom.*.json
           if-no-files-found: error
 
   # ── macOS builds: native runner, Go native FIPS 140-3 (GODEBUG=fips140=on) ──
@@ -346,13 +342,8 @@ jobs:
         with:
           name: cloudflared-fips-darwin-${{ matrix.goarch }}
           path: |
-            /tmp/cloudflared-fips-selftest
-            /tmp/cloudflared-fips-dashboard
-            /tmp/cloudflared-fips-tui
-            /tmp/cloudflared-fips-proxy
-            /tmp/cloudflared-fips-agent
-            /tmp/build-manifest.json
             /tmp/cloudflared-fips-*.pkg
+            /tmp/build-manifest.json
           if-no-files-found: error
 
   # ── Windows builds: native runner, Go native FIPS 140-3 (GODEBUG=fips140=on) ──
@@ -463,13 +454,8 @@ jobs:
         with:
           name: cloudflared-fips-windows-${{ matrix.goarch }}
           path: |
-            ${{ runner.temp }}/cloudflared-fips-selftest.exe
-            ${{ runner.temp }}/cloudflared-fips-dashboard.exe
-            ${{ runner.temp }}/cloudflared-fips-tui.exe
-            ${{ runner.temp }}/cloudflared-fips-proxy.exe
-            ${{ runner.temp }}/cloudflared-fips-agent.exe
-            ${{ runner.temp }}/build-manifest.json
             ${{ runner.temp }}/cloudflared-fips.msi
+            ${{ runner.temp }}/build-manifest.json
           if-no-files-found: error
 
   # ── Artifact signing: GPG for binaries/packages, cosign for containers ──
@@ -546,22 +532,18 @@ jobs:
         run: |
           mkdir -p release/
 
-          # Linux amd64
-          if [ -d artifacts/cloudflared-fips-linux-amd64 ]; then
-            cp artifacts/cloudflared-fips-linux-amd64/*.rpm release/ 2>/dev/null || true
-            cp artifacts/cloudflared-fips-linux-amd64/*.deb release/ 2>/dev/null || true
-            cp artifacts/cloudflared-fips-linux-amd64/build-manifest.json release/build-manifest-linux-amd64.json 2>/dev/null || true
-            cp artifacts/cloudflared-fips-linux-amd64/sbom.*.json release/ 2>/dev/null || true
-          fi
+          # Linux: RPM, DEB, SBOM, manifest
+          for arch in amd64 arm64; do
+            dir="artifacts/cloudflared-fips-linux-${arch}"
+            if [ -d "$dir" ]; then
+              cp "$dir"/*.rpm release/ 2>/dev/null || true
+              cp "$dir"/*.deb release/ 2>/dev/null || true
+              cp "$dir"/sbom.*.json release/ 2>/dev/null || true
+              cp "$dir"/build-manifest.json "release/build-manifest-linux-${arch}.json" 2>/dev/null || true
+            fi
+          done
 
-          # Linux arm64
-          if [ -d artifacts/cloudflared-fips-linux-arm64 ]; then
-            cp artifacts/cloudflared-fips-linux-arm64/*.rpm release/ 2>/dev/null || true
-            cp artifacts/cloudflared-fips-linux-arm64/*.deb release/ 2>/dev/null || true
-            cp artifacts/cloudflared-fips-linux-arm64/build-manifest.json release/build-manifest-linux-arm64.json 2>/dev/null || true
-          fi
-
-          # macOS
+          # macOS: .pkg, manifest
           for arch in amd64 arm64; do
             dir="artifacts/cloudflared-fips-darwin-${arch}"
             if [ -d "$dir" ]; then
@@ -570,18 +552,12 @@ jobs:
             fi
           done
 
-          # Windows
+          # Windows: MSI, manifest (no individual .exe files)
           for arch in amd64 arm64; do
             dir="artifacts/cloudflared-fips-windows-${arch}"
             if [ -d "$dir" ]; then
               cp "$dir"/*.msi release/ 2>/dev/null || true
               cp "$dir"/build-manifest.json "release/build-manifest-windows-${arch}.json" 2>/dev/null || true
-              # Rename .exe files with platform suffix
-              for exe in "$dir"/*.exe; do
-                [ -f "$exe" ] || continue
-                base=$(basename "$exe")
-                cp "$exe" "release/${base%.exe}-windows-${arch}.exe"
-              done
             fi
           done
 
@@ -665,6 +641,7 @@ jobs:
             echo "| \`cloudflared-fips-proxy\` | Tier 3 self-hosted FIPS edge proxy |"
             echo "| \`cloudflared-fips-agent\` | Lightweight endpoint FIPS posture agent |"
             echo "| \`cloudflared-fips-provision\` | Multi-role provisioning script |"
+            echo "| \`cloudflared-fips-unprovision\` | Clean uninstall / unprovision script |"
             echo ""
             echo "### Crypto Modules"
             echo ""
