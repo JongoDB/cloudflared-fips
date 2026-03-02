@@ -221,30 +221,55 @@ The product detects client FIPS capability through:
 ### RHEL / Rocky / Alma 9 (RPM)
 
 ```bash
-sudo dnf install https://github.com/JongoDB/cloudflared-fips/releases/download/v0.3.1/cloudflared-fips-0.3.1-1.el9.x86_64.rpm
+sudo dnf install https://github.com/JongoDB/cloudflared-fips/releases/download/v0.5.1/cloudflared-fips-0.5.1-1.el9.x86_64.rpm
 ```
 
 ### macOS
 
 ```bash
-curl -fLO https://github.com/JongoDB/cloudflared-fips/releases/download/v0.3.1/cloudflared-fips-0.3.1.pkg
-sudo installer -pkg cloudflared-fips-0.3.1.pkg -target /
+curl -fLO https://github.com/JongoDB/cloudflared-fips/releases/download/v0.5.1/cloudflared-fips-0.5.1.pkg
+sudo installer -pkg cloudflared-fips-0.5.1.pkg -target /
 ```
 
 The RPM/pkg installs all binaries to `/usr/local/bin/` and runs the FIPS self-test automatically.
 
+Find the latest release at: https://github.com/JongoDB/cloudflared-fips/releases
+
+## Configure
+
+`cloudflared-fips` is the single unified command for everything. Run with no arguments for an interactive main menu, or use subcommands directly:
+
+```bash
+cloudflared-fips                    # Interactive main menu (TUI)
+cloudflared-fips setup              # Setup wizard (role selection, config, provisioning)
+cloudflared-fips status             # Live compliance status monitor (terminal)
+cloudflared-fips selftest           # FIPS self-test suite (KATs, ciphers, OS FIPS mode)
+cloudflared-fips dashboard          # Start web dashboard + API server
+cloudflared-fips proxy              # Start FIPS edge proxy (Tier 3)
+cloudflared-fips agent              # Start endpoint posture agent
+cloudflared-fips provision          # Run provisioning script (systemd units, enrollment)
+cloudflared-fips unprovision        # Tear down services and config
+cloudflared-fips version            # Show version, crypto backend, build info
+```
+
+### Crypto modules
+
+The crypto backend is selected automatically per platform:
+
+- **Linux:** BoringCrypto (CMVP #4735, FIPS 140-3) via `GOEXPERIMENT=boringcrypto`
+- **macOS/Windows:** Go native FIPS 140-3 module (CAVP A6650) via `GODEBUG=fips140=on`
+
 ## Binaries
 
-The RPM ships six binaries. Which ones run on a given node depends on its role.
+The unified `cloudflared-fips` CLI dispatches to companion binaries. The RPM/pkg ships all of them — which ones run on a given node depends on its role.
 
 | Binary | Description | Used by |
 |--------|-------------|---------|
-| `cloudflared-fips-selftest` | Runs FIPS Known Answer Tests (KATs) against NIST CAVP vectors (AES-GCM, SHA-256/384, HMAC, ECDSA, RSA), verifies the crypto backend is active, validates cipher suites, and checks OS FIPS mode. Exits non-zero if any check fails. | All roles |
-| `cloudflared-fips-dashboard` | HTTP API server for compliance state, fleet management (when `--fleet-mode` is set), SSE real-time events, and the embedded web UI. Controllers run this as their primary service. Binds `127.0.0.1:8080` by default. | Controller |
-| `cloudflared-fips-tui` | Interactive terminal UI. `setup` subcommand walks through role-specific configuration and provisions the node. `status` subcommand polls the dashboard API and renders a live compliance monitor. | All roles (setup), Controller (status) |
-| `cloudflared-fips-proxy` | Reverse proxy that terminates client TLS using BoringCrypto. Used in Tier 3 deployments where you control the client-facing TLS termination point instead of relying on Cloudflare's edge. Includes ClientHello inspection and JA4 fingerprinting. | Proxy |
+| `cloudflared-fips` | **Unified entry point.** Interactive main menu, setup wizard, status monitor, and subcommand dispatch to all other binaries. | All roles |
+| `cloudflared-fips-selftest` | FIPS Known Answer Tests (KATs) against NIST CAVP vectors (AES-GCM, SHA-256/384, HMAC, ECDSA, RSA), crypto backend verification, cipher suite validation, OS FIPS mode check. Exits non-zero if any check fails. | All roles |
+| `cloudflared-fips-dashboard` | HTTP API server for compliance state, fleet management (`--fleet-mode`), SSE real-time events, and the embedded web UI. Controllers run this as their primary service. Binds `127.0.0.1:8080` by default. | Controller |
+| `cloudflared-fips-proxy` | Reverse proxy that terminates client TLS using BoringCrypto. Used in Tier 3 deployments where you control the client-facing TLS termination point. Includes ClientHello inspection and JA4 fingerprinting. | Proxy |
 | `cloudflared-fips-agent` | Lightweight (~11 MB) posture agent that reports OS FIPS mode, disk encryption, WARP status, and other compliance data to the controller. Runs as a systemd timer that checks in periodically. | Server, Proxy, Client |
-| `cloudflared-fips-provision` | Shell script that handles the full provisioning sequence: installs Go, enables OS FIPS mode (with reboot), builds binaries from source with BoringCrypto, writes config, creates systemd units, enrolls with the controller, and starts services. Idempotent — safe to re-run after reboot. | All roles (one-time setup) |
 
 ### What runs on each role
 
@@ -257,7 +282,7 @@ The RPM ships six binaries. Which ones run on a given node depends on its role.
 
 ## Provisioning
 
-There are two ways to provision a node: the interactive TUI wizard or the non-interactive CLI.
+There are two ways to provision a node: the interactive setup wizard or the non-interactive CLI.
 
 ### Prerequisites
 
@@ -270,10 +295,10 @@ Before provisioning, you need:
 | **Proxy** | A Cloudflare Tunnel token (proxy gets its own tunnel), TLS certificate + key for client-facing connections, the controller's URL, and an enrollment token. |
 | **Client** | The controller's URL and an enrollment token. |
 
-### Option A: Interactive wizard (TUI)
+### Option A: Interactive wizard
 
 ```bash
-cloudflared-fips-tui setup
+cloudflared-fips setup
 ```
 
 The wizard adapts to the selected role:
@@ -286,6 +311,14 @@ The wizard adapts to the selected role:
 | **Client** | Role & Tier → Agent Config → FIPS Options → Review & Provision |
 
 Each field has inline help text — focus a field and read the help block below it for guidance on where to find values (API tokens, tunnel tokens, enrollment tokens, etc.).
+
+The **Dashboard Wiring** page (controller only) validates your Cloudflare API token in real time — after you enter the token and tab away, you'll see progressive discovery:
+```
+✓ Token verified — 1 account (MyOrg)
+✓ 2 zones (example.com, internal.dev) loaded
+✓ 3 tunnels found
+```
+Zones appear as a "Domain (Zone)" picker. If the token is invalid, you get a friendly error with a fix hint. Editing the token after an error automatically retries verification.
 
 After the Review page, select **Provision this node** to run the full provisioning sequence. The provisioner will:
 1. Enable OS FIPS mode (RHEL/Rocky/Alma: `fips-mode-setup --enable`)
@@ -305,7 +338,7 @@ For scripted or headless deployments:
 
 **Controller:**
 ```bash
-sudo cloudflared-fips-provision --role controller \
+sudo cloudflared-fips provision --role controller \
   --tunnel-token eyJhIjoiN... \
   --protocol quic \
   --admin-key "$(openssl rand -hex 16)" \
@@ -314,7 +347,7 @@ sudo cloudflared-fips-provision --role controller \
 
 **Server:**
 ```bash
-sudo cloudflared-fips-provision --role server \
+sudo cloudflared-fips provision --role server \
   --controller-url https://controller.internal:8080 \
   --enrollment-token <TOKEN> \
   --service-name my-api \
@@ -325,7 +358,7 @@ sudo cloudflared-fips-provision --role server \
 
 **Proxy:**
 ```bash
-sudo cloudflared-fips-provision --role proxy \
+sudo cloudflared-fips provision --role proxy \
   --controller-url https://controller.internal:8080 \
   --enrollment-token <TOKEN> \
   --tunnel-token eyJhIjoiN... \
@@ -335,12 +368,20 @@ sudo cloudflared-fips-provision --role proxy \
 
 **Client:**
 ```bash
-sudo cloudflared-fips-provision --role client \
+sudo cloudflared-fips provision --role client \
   --controller-url https://controller.internal:8080 \
   --enrollment-token <TOKEN>
 ```
 
 Additional flags: `--no-fips` (skip FIPS mode for dev/test), `--node-name <NAME>`, `--node-region <REGION>`.
+
+### Teardown
+
+```bash
+sudo cloudflared-fips unprovision
+```
+
+Stops services, removes systemd units, and optionally removes config and data. Use `--keep-config` to preserve `/etc/cloudflared-fips/`.
 
 ### Generating enrollment tokens
 
@@ -359,7 +400,7 @@ After provisioning and any required reboot:
 
 ```bash
 # Verify FIPS self-test passes
-cloudflared-fips-selftest
+cloudflared-fips selftest
 
 # Check services are running (role-dependent)
 systemctl status cloudflared-fips-dashboard  # controller
