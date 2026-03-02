@@ -803,7 +803,7 @@ install_cloudflared() {
     local url="https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-${ARCH}"
     curl -sLo "${BIN_DIR}/cloudflared" "$url"
     chmod 0755 "${BIN_DIR}/cloudflared"
-    log "cloudflared installed: $(cloudflared --version 2>&1 | head -1)"
+    log "cloudflared installed: $("${BIN_DIR}/cloudflared" --version 2>&1 | head -1)"
 }
 
 # ---------------------------------------------------------------------------
@@ -1074,6 +1074,51 @@ phase4_start() {
     case "$ROLE" in
         controller)
             systemctl start cloudflared-fips-dashboard
+            # Wait for dashboard API to be ready before self-enrolling agent
+            local retries=0
+            while ! curl -sf http://127.0.0.1:8080/health &>/dev/null; do
+                retries=$((retries + 1))
+                if [[ $retries -ge 10 ]]; then
+                    warn "Dashboard not ready after 10s — agent self-enrollment may fail"
+                    break
+                fi
+                sleep 1
+            done
+            # Self-enroll the controller's own agent so it can report posture
+            if [[ -z "$(grep NODE_ID "${CONFIG_DIR}/env" 2>/dev/null)" ]]; then
+                log "Self-enrolling controller agent..."
+                local admin_key
+                admin_key=$(grep FLEET_ADMIN_KEY "${CONFIG_DIR}/env" | cut -d= -f2-)
+                if [[ -n "$admin_key" ]]; then
+                    # Create a self-enrollment token
+                    local token_resp
+                    token_resp=$(curl -sf -X POST http://127.0.0.1:8080/api/v1/fleet/tokens \
+                        -H "Authorization: Bearer ${admin_key}" \
+                        -H "Content-Type: application/json" \
+                        -d '{"role":"controller","max_uses":1}' 2>/dev/null) || true
+                    if [[ -n "$token_resp" ]]; then
+                        local self_token
+                        self_token=$(echo "$token_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+                        if [[ -n "$self_token" ]]; then
+                            local hostname
+                            hostname=$(hostname -s)
+                            local enroll_resp
+                            enroll_resp=$(curl -sf -X POST http://127.0.0.1:8080/api/v1/fleet/enroll \
+                                -H "Content-Type: application/json" \
+                                -d "{\"token\":\"${self_token}\",\"name\":\"${hostname} (controller)\",\"role\":\"controller\",\"version\":\"${CLOUDFLARED_VERSION}\",\"fips_backend\":\"BoringCrypto\"}" 2>/dev/null) || true
+                            if [[ -n "$enroll_resp" ]]; then
+                                local self_node_id self_api_key
+                                self_node_id=$(echo "$enroll_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['node_id'])" 2>/dev/null)
+                                self_api_key=$(echo "$enroll_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])" 2>/dev/null)
+                                echo "NODE_ID=${self_node_id}" >> "${CONFIG_DIR}/env"
+                                echo "NODE_API_KEY=${self_api_key}" >> "${CONFIG_DIR}/env"
+                                echo "CONTROLLER_URL=http://127.0.0.1:8080" >> "${CONFIG_DIR}/env"
+                                log "Controller self-enrolled as node ${self_node_id}"
+                            fi
+                        fi
+                    fi
+                fi
+            fi
             systemctl start cloudflared-fips-agent
             if systemctl is-enabled --quiet cloudflared-fips-proxy 2>/dev/null; then
                 systemctl start cloudflared-fips-proxy
@@ -1113,6 +1158,13 @@ phase4_start() {
                 log "Agent service is running"
             else
                 warn "Agent failed to start. Check: journalctl -u cloudflared-fips-agent -n 50"
+            fi
+            if systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
+                if systemctl is-active --quiet cloudflared-fips-tunnel; then
+                    log "Tunnel service is running"
+                else
+                    warn "Tunnel failed to start. Check: journalctl -u cloudflared-fips-tunnel -n 50"
+                fi
             fi
 
             log "Verifying endpoints..."
@@ -1231,7 +1283,11 @@ print_summary() {
                 info "Proxy logs:   journalctl -u cloudflared-fips-proxy -f"
             fi
             if systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
-                info "Tunnel:       cloudflared receiving traffic from Cloudflare"
+                if systemctl is-active --quiet cloudflared-fips-tunnel; then
+                    info "Tunnel:       cloudflared connected to Cloudflare"
+                else
+                    warn "Tunnel:       NOT RUNNING — check: journalctl -u cloudflared-fips-tunnel -n 50"
+                fi
                 info "Tunnel logs:  journalctl -u cloudflared-fips-tunnel -f"
             fi
             if [[ -n "$ADMIN_KEY" ]]; then
