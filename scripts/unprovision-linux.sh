@@ -128,6 +128,8 @@ FOUND_PLIST=false
 FOUND_INSTALL_DIR=false
 FOUND_GO=false
 FOUND_NODE=false
+FOUND_RPM=false
+RPM_PKG_NAME=""
 
 discover() {
     info "Discovering installed components..."
@@ -174,6 +176,14 @@ discover() {
     [[ -d "$INSTALL_DIR" ]] && FOUND_INSTALL_DIR=true || true
     [[ -d "/usr/local/go" ]] && FOUND_GO=true || true
     [[ -d "/usr/local/node" || -f "/usr/local/bin/node" ]] && FOUND_NODE=true || true
+
+    # Check if installed via RPM/DEB package
+    if command -v rpm &>/dev/null; then
+        RPM_PKG_NAME=$(rpm -qa 'cloudflared-fips*' 2>/dev/null | head -1 || true)
+        if [[ -n "$RPM_PKG_NAME" ]]; then
+            FOUND_RPM=true
+        fi
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -236,6 +246,10 @@ show_summary() {
 
     if $FOUND_MARKER; then
         log "Provision marker: $MARKER"
+    fi
+
+    if $FOUND_RPM; then
+        log "RPM package: $RPM_PKG_NAME"
     fi
 
     if $PURGE; then
@@ -312,6 +326,22 @@ remove_units() {
     fi
 
     run systemctl daemon-reload 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# Phase 4b: Remove RPM/DEB package (if installed via package manager)
+# ---------------------------------------------------------------------------
+remove_package() {
+    if ! $FOUND_RPM; then
+        return
+    fi
+
+    log "Removing RPM package: $RPM_PKG_NAME"
+    # Use --noscripts since we already stopped services in Phase 3
+    run rpm -e --noscripts "$RPM_PKG_NAME" 2>/dev/null || {
+        warn "rpm -e failed, trying dnf..."
+        run dnf remove -y "$RPM_PKG_NAME" 2>/dev/null || true
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -582,6 +612,7 @@ show_result() {
     local kept=()
 
     [[ $svc_count -gt 0 ]] && removed+=("${svc_count} services")
+    $FOUND_RPM && removed+=("RPM package")
     if ! $KEEP_BINARIES && [[ $bin_count -gt 0 ]]; then
         removed+=("${bin_count} binaries")
     elif $KEEP_BINARIES && [[ $bin_count -gt 0 ]]; then
@@ -639,6 +670,7 @@ main() {
 
     stop_services
     remove_units
+    remove_package
     remove_binaries
     remove_config
     remove_data
