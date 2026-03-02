@@ -610,15 +610,13 @@ show_result() {
     $PURGE && removed+=("dev deps (Go/Node/repo)")
 
     if [[ ${#removed[@]} -gt 0 ]]; then
-        local IFS=', '
-        log "Removed: ${removed[*]}"
+        log "Removed: $(printf '%s' "${removed[0]}"; printf ', %s' "${removed[@]:1}")"
     else
         info "Nothing to remove"
     fi
 
     if [[ ${#kept[@]} -gt 0 ]]; then
-        local IFS=', '
-        info "Kept: ${kept[*]}"
+        info "Kept: $(printf '%s' "${kept[0]}"; printf ', %s' "${kept[@]:1}")"
     fi
 
     info "Kept: /usr/local/bin/cloudflared (upstream)"
