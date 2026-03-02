@@ -813,6 +813,41 @@ install_cloudflared() {
 }
 
 # ---------------------------------------------------------------------------
+# Write the agent systemd unit (called from create_systemd_units or after enrollment)
+# ---------------------------------------------------------------------------
+write_agent_unit() {
+    cat > /etc/systemd/system/cloudflared-fips-agent.service <<UNITEOF
+[Unit]
+Description=cloudflared-fips Endpoint FIPS Posture Agent
+Documentation=https://github.com/JongoDB/cloudflared-fips
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+EnvironmentFile=-${CONFIG_DIR}/env
+ExecStart=${BIN_DIR}/cloudflared-fips-agent
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cloudflared-fips-agent
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=${CONFIG_DIR}
+PrivateTmp=yes
+
+[Install]
+WantedBy=cloudflared-fips.target
+UNITEOF
+}
+
+# ---------------------------------------------------------------------------
 # Create systemd units based on role and tier
 # ---------------------------------------------------------------------------
 create_systemd_units() {
@@ -958,35 +993,10 @@ UNITEOF
 
     # --- Agent service (server, proxy, client, and controller roles) ---
     if [[ "$ROLE" == "client" || "$ROLE" == "server" || "$ROLE" == "proxy" || "$ROLE" == "controller" ]]; then
-        cat > /etc/systemd/system/cloudflared-fips-agent.service <<UNITEOF
-[Unit]
-Description=cloudflared-fips Endpoint FIPS Posture Agent
-Documentation=https://github.com/JongoDB/cloudflared-fips
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=${SERVICE_USER}
-Group=${SERVICE_USER}
-EnvironmentFile=-${CONFIG_DIR}/env
-ExecStart=${BIN_DIR}/cloudflared-fips-agent
-Restart=on-failure
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=cloudflared-fips-agent
-
-# Hardening
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-ReadOnlyPaths=${CONFIG_DIR}
-PrivateTmp=yes
-
-[Install]
-WantedBy=cloudflared-fips.target
-UNITEOF
+        # For controller role, the agent unit is written AFTER self-enrollment
+        # so that NODE_ID/API_KEY/CONTROLLER_URL are in the env file.
+        # For other roles, enrollment happens in phase3_install before we get here.
+        write_agent_unit
     fi
 
     # --- Target unit (groups all services for this role) ---
@@ -1092,21 +1102,25 @@ phase4_start() {
             if systemctl is-enabled --quiet cloudflared-fips-proxy 2>/dev/null; then
                 systemctl start cloudflared-fips-proxy
             fi
-            # Start dashboard and wait for API readiness
+            # Start dashboard and wait for API readiness (poll the real health endpoint)
             systemctl start cloudflared-fips-dashboard
             local retries=0
             local dash_ready=false
-            while ! curl -sf http://127.0.0.1:8080/health &>/dev/null; do
+            log "Waiting for dashboard API to become ready..."
+            while ! curl -sf http://127.0.0.1:8080/api/v1/health &>/dev/null; do
                 retries=$((retries + 1))
-                if [[ $retries -ge 30 ]]; then
-                    warn "Dashboard not ready after 30s — agent self-enrollment may fail"
+                if [[ $retries -ge 60 ]]; then
                     break
                 fi
                 sleep 1
             done
-            if curl -sf http://127.0.0.1:8080/health &>/dev/null; then
+            if curl -sf http://127.0.0.1:8080/api/v1/health &>/dev/null; then
                 dash_ready=true
+                log "Dashboard API ready (${retries}s)"
+            else
+                warn "Dashboard not ready after 60s"
             fi
+
             # Setup tunnel: create DNS CNAME + configure ingress (if hostname provided)
             if [[ -n "$PUBLIC_HOSTNAME" && -n "$CF_API_TOKEN" ]]; then
                 log "Setting up tunnel hostname: ${PUBLIC_HOSTNAME} → ${HOSTNAME_SERVICE}..."
@@ -1118,14 +1132,15 @@ phase4_start() {
                     --public-hostname "${PUBLIC_HOSTNAME}" \
                     --hostname-service "${HOSTNAME_SERVICE}" || warn "Tunnel setup had warnings (check above)"
             fi
+
             # Self-enroll the controller's own agent so it can report posture
+            local enroll_ok=false
             if [[ "$dash_ready" == "true" ]] && [[ -z "$(grep NODE_ID "${CONFIG_DIR}/env" 2>/dev/null)" ]]; then
                 log "Self-enrolling controller agent..."
                 local admin_key
                 admin_key=$(grep FLEET_ADMIN_KEY "${CONFIG_DIR}/env" | cut -d= -f2-)
                 if [[ -n "$admin_key" ]]; then
-                    local enroll_ok=false
-                    for attempt in 1 2 3; do
+                    for attempt in 1 2 3 4 5; do
                         local token_resp
                         token_resp=$(curl -sf -X POST http://127.0.0.1:8080/api/v1/fleet/tokens \
                             -H "Authorization: Bearer ${admin_key}" \
@@ -1163,16 +1178,32 @@ phase4_start() {
                         sleep 2
                     done
                     if [[ "$enroll_ok" != "true" ]]; then
-                        warn "Self-enrollment failed after 3 attempts. Run manually:"
-                        warn "  sudo cloudflared-fips-provision --role controller --self-enroll"
+                        warn "Self-enrollment failed after 5 attempts"
                     fi
                 fi
-            elif [[ "$dash_ready" != "true" ]]; then
-                warn "Skipping self-enrollment (dashboard not ready). Run manually after dashboard starts:"
-                warn "  sudo cloudflared-fips-provision --role controller --self-enroll"
+            elif grep -q "NODE_ID=" "${CONFIG_DIR}/env" 2>/dev/null; then
+                enroll_ok=true
+                log "Agent already enrolled (NODE_ID found in env)"
             fi
-            # Start agent last (needs enrollment credentials)
-            systemctl start cloudflared-fips-agent
+
+            # Only start agent if enrollment succeeded — prevents crash loop
+            if [[ "$enroll_ok" == "true" ]]; then
+                # Rewrite agent unit + reload so systemd sees fresh env file
+                write_agent_unit
+                systemctl daemon-reload
+                systemctl start cloudflared-fips-agent
+            else
+                warn "Agent NOT started — self-enrollment did not complete."
+                warn "The agent requires NODE_ID, NODE_API_KEY, and CONTROLLER_URL."
+                warn ""
+                warn "To fix, run:"
+                warn "  sudo ${INSTALL_DIR}/scripts/provision-linux.sh --role controller --no-fips"
+                warn "Or manually enroll:"
+                warn "  1. Create token:  curl -X POST -H 'Authorization: Bearer <admin-key>' http://127.0.0.1:8080/api/v1/fleet/tokens -d '{\"role\":\"controller\",\"max_uses\":1}'"
+                warn "  2. Enroll:        curl -X POST http://127.0.0.1:8080/api/v1/fleet/enroll -d '{\"token\":\"<token>\",\"name\":\"$(hostname -s)\"}'"
+                warn "  3. Add to env:    echo 'NODE_ID=<id>' >> ${CONFIG_DIR}/env && echo 'NODE_API_KEY=<key>' >> ${CONFIG_DIR}/env && echo 'CONTROLLER_URL=http://127.0.0.1:8080' >> ${CONFIG_DIR}/env"
+                warn "  4. Start agent:   sudo systemctl start cloudflared-fips-agent"
+            fi
             ;;
         server)
             systemctl start cloudflared-fips-agent
@@ -1201,10 +1232,14 @@ phase4_start() {
             else
                 fail "Dashboard failed to start. Check: journalctl -u cloudflared-fips-dashboard -n 50"
             fi
-            if systemctl is-active --quiet cloudflared-fips-agent; then
-                log "Agent service is running"
+            if grep -q "NODE_ID=" "${CONFIG_DIR}/env" 2>/dev/null; then
+                if systemctl is-active --quiet cloudflared-fips-agent; then
+                    log "Agent service is running"
+                else
+                    warn "Agent failed to start. Check: journalctl -u cloudflared-fips-agent -n 50"
+                fi
             else
-                warn "Agent failed to start. Check: journalctl -u cloudflared-fips-agent -n 50"
+                warn "Agent not started (enrollment pending — see instructions above)"
             fi
             if systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
                 if systemctl is-active --quiet cloudflared-fips-tunnel; then
