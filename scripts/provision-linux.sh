@@ -1059,6 +1059,9 @@ UNITEOF
         fi
     fi
 
+    # Reload systemd so it picks up new/changed unit files
+    systemctl daemon-reload
+
     log "Systemd units installed."
 }
 
@@ -1066,6 +1069,12 @@ UNITEOF
 # Phase 4: Start and verify
 # ---------------------------------------------------------------------------
 phase4_start() {
+    # Stop any existing services so we pick up new binaries + unit files
+    systemctl stop cloudflared-fips.target 2>/dev/null || true
+    for svc in cloudflared-fips-dashboard cloudflared-fips-tunnel cloudflared-fips-proxy cloudflared-fips-agent; do
+        systemctl stop "$svc" 2>/dev/null || true
+    done
+
     log "Starting cloudflared-fips services (role: ${ROLE}, tier: ${TIER})..."
 
     case "$ROLE" in
