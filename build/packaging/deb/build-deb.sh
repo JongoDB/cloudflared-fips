@@ -46,10 +46,14 @@ for bin in cloudflared-fips-selftest cloudflared-fips-dashboard cloudflared-fips
     fi
 done
 
-# Install provision script
+# Install provision and unprovision scripts
 if [ -f "$BINARY_DIR/cloudflared-fips-provision" ]; then
     cp "$BINARY_DIR/cloudflared-fips-provision" "$PKG_DIR/usr/local/bin/cloudflared-fips-provision"
     chmod 755 "$PKG_DIR/usr/local/bin/cloudflared-fips-provision"
+fi
+if [ -f "$BINARY_DIR/cloudflared-fips-unprovision" ]; then
+    cp "$BINARY_DIR/cloudflared-fips-unprovision" "$PKG_DIR/usr/local/bin/cloudflared-fips-unprovision"
+    chmod 755 "$PKG_DIR/usr/local/bin/cloudflared-fips-unprovision"
 fi
 
 # Install build manifest

@@ -210,6 +210,181 @@ func TestCreateDNSCNAMEAPIError(t *testing.T) {
 	}
 }
 
+func TestDeleteTunnel(t *testing.T) {
+	var gotMethod, gotPath string
+
+	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_, _ = w.Write(cfResponse(map[string]interface{}{}))
+	})
+	defer srv.Close()
+
+	c := NewClient("tok", WithBaseURL(srv.URL))
+	err := c.DeleteTunnel("acct-123", "tun-uuid-1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotMethod != "DELETE" {
+		t.Errorf("expected DELETE, got %s", gotMethod)
+	}
+	if !strings.Contains(gotPath, "/accounts/acct-123/cfd_tunnel/tun-uuid-1234") {
+		t.Errorf("unexpected path: %s", gotPath)
+	}
+}
+
+func TestDeleteTunnelAPIError(t *testing.T) {
+	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(cfErrorResponse(1003, "tunnel has active connections"))
+	})
+	defer srv.Close()
+
+	c := NewClient("tok", WithBaseURL(srv.URL))
+	err := c.DeleteTunnel("acct-123", "tun-uuid-1234")
+	if err == nil {
+		t.Fatal("expected error for tunnel with active connections")
+	}
+	if !strings.Contains(err.Error(), "tunnel has active connections") {
+		t.Errorf("expected active connections error, got: %v", err)
+	}
+}
+
+func TestDeleteDNSRecord(t *testing.T) {
+	var gotMethod, gotPath string
+
+	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_, _ = w.Write(cfResponse(map[string]interface{}{"id": "dns-record-id"}))
+	})
+	defer srv.Close()
+
+	c := NewClient("tok", WithBaseURL(srv.URL))
+	err := c.DeleteDNSRecord("zone-123", "dns-record-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotMethod != "DELETE" {
+		t.Errorf("expected DELETE, got %s", gotMethod)
+	}
+	if !strings.Contains(gotPath, "/zones/zone-123/dns_records/dns-record-id") {
+		t.Errorf("unexpected path: %s", gotPath)
+	}
+}
+
+func TestDeleteDNSRecordAPIError(t *testing.T) {
+	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(cfErrorResponse(81044, "record not found"))
+	})
+	defer srv.Close()
+
+	c := NewClient("tok", WithBaseURL(srv.URL))
+	err := c.DeleteDNSRecord("zone-123", "nonexistent-id")
+	if err == nil {
+		t.Fatal("expected error for missing record")
+	}
+	if !strings.Contains(err.Error(), "record not found") {
+		t.Errorf("expected record not found error, got: %v", err)
+	}
+}
+
+func TestFindDNSRecord(t *testing.T) {
+	var gotMethod, gotPath string
+
+	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.RequestURI()
+
+		records := []DNSRecordResult{
+			{ID: "dns-1", Type: "CNAME", Name: "dashboard.example.com", Content: "tun-uuid.cfargotunnel.com"},
+		}
+		_, _ = w.Write(cfResponse(records))
+	})
+	defer srv.Close()
+
+	c := NewClient("tok", WithBaseURL(srv.URL))
+	records, err := c.FindDNSRecord("zone-123", "dashboard.example.com", "CNAME")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotMethod != "GET" {
+		t.Errorf("expected GET, got %s", gotMethod)
+	}
+	if !strings.Contains(gotPath, "/zones/zone-123/dns_records") {
+		t.Errorf("unexpected path: %s", gotPath)
+	}
+	if !strings.Contains(gotPath, "type=CNAME") {
+		t.Errorf("expected type=CNAME in query, got: %s", gotPath)
+	}
+	if !strings.Contains(gotPath, "name=dashboard.example.com") {
+		t.Errorf("expected name= in query, got: %s", gotPath)
+	}
+
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	if records[0].ID != "dns-1" {
+		t.Errorf("expected record ID dns-1, got %q", records[0].ID)
+	}
+	if records[0].Name != "dashboard.example.com" {
+		t.Errorf("expected name dashboard.example.com, got %q", records[0].Name)
+	}
+}
+
+func TestFindDNSRecordEmpty(t *testing.T) {
+	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(cfResponse([]DNSRecordResult{}))
+	})
+	defer srv.Close()
+
+	c := NewClient("tok", WithBaseURL(srv.URL))
+	records, err := c.FindDNSRecord("zone-123", "nonexistent.example.com", "CNAME")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Errorf("expected 0 records, got %d", len(records))
+	}
+}
+
+func TestDeleteMethod(t *testing.T) {
+	var gotMethod string
+	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		_, _ = w.Write(cfResponse("deleted"))
+	})
+	defer srv.Close()
+
+	c := NewClient("tok", WithBaseURL(srv.URL))
+	_, err := c.delete("/test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "DELETE" {
+		t.Errorf("expected DELETE method, got %s", gotMethod)
+	}
+}
+
+func TestDeleteRateLimited(t *testing.T) {
+	srv := mockCFAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+		_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":429,"message":"rate limited"}]}`))
+	})
+	defer srv.Close()
+
+	c := NewClient("tok", WithBaseURL(srv.URL))
+	_, err := c.delete("/test")
+	if err == nil {
+		t.Fatal("expected error for 429")
+	}
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Errorf("expected rate limit error, got %q", err.Error())
+	}
+}
+
 func TestGenerateTunnelToken(t *testing.T) {
 	secret := []byte("0123456789abcdef0123456789abcdef") // 32 bytes
 	token := GenerateTunnelToken("account-id", "tunnel-id", secret)

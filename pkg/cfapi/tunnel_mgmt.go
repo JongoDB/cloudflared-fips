@@ -134,6 +134,46 @@ func (c *Client) CreateDNSCNAME(zoneID, hostname, tunnelID string) (*DNSRecordRe
 	return &result, nil
 }
 
+// DeleteTunnel deletes a Cloudflare Tunnel. The tunnel must have no active
+// connections (i.e., cloudflared must be stopped first).
+// API: DELETE /accounts/{accountID}/cfd_tunnel/{tunnelID}
+func (c *Client) DeleteTunnel(accountID, tunnelID string) error {
+	path := fmt.Sprintf("/accounts/%s/cfd_tunnel/%s", accountID, tunnelID)
+	_, err := c.delete(path)
+	if err != nil {
+		return fmt.Errorf("delete tunnel: %w", err)
+	}
+	return nil
+}
+
+// DeleteDNSRecord deletes a single DNS record by ID.
+// API: DELETE /zones/{zoneID}/dns_records/{recordID}
+func (c *Client) DeleteDNSRecord(zoneID, recordID string) error {
+	path := fmt.Sprintf("/zones/%s/dns_records/%s", zoneID, recordID)
+	_, err := c.delete(path)
+	if err != nil {
+		return fmt.Errorf("delete DNS record: %w", err)
+	}
+	return nil
+}
+
+// FindDNSRecord searches for DNS records matching the given name and type.
+// Returns matching records, which can then be deleted by ID.
+// API: GET /zones/{zoneID}/dns_records?type={recordType}&name={name}
+func (c *Client) FindDNSRecord(zoneID, name, recordType string) ([]DNSRecordResult, error) {
+	path := fmt.Sprintf("/zones/%s/dns_records?type=%s&name=%s", zoneID, recordType, name)
+	data, err := c.get(path)
+	if err != nil {
+		return nil, fmt.Errorf("find DNS records: %w", err)
+	}
+
+	var results []DNSRecordResult
+	if err := json.Unmarshal(data, &results); err != nil {
+		return nil, fmt.Errorf("parse DNS records response: %w", err)
+	}
+	return results, nil
+}
+
 // GenerateTunnelToken generates a cloudflared connector token from account ID,
 // tunnel ID, and the 32-byte secret. The token is a base64-encoded JSON object:
 //

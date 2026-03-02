@@ -169,6 +169,7 @@ func (p *ReviewPage) buildNextSteps() common.Selector {
 		{Value: "provision", Label: "Provision this node", Description: "Write config, build, install, and start services"},
 		{Value: "selftest", Label: "Run self-test only", Description: "Verify FIPS compliance of this build"},
 		{Value: "dashboard", Label: "Launch dashboard & status monitor", Description: "Start dashboard server and open the live monitor"},
+		{Value: "unprovision", Label: "Unprovision this node", Description: "Stop services and remove all cloudflared-fips components"},
 		{Value: "exit", Label: "Exit", Description: "Return to the terminal"},
 	}
 	return common.NewSelector("What's next?", opts)
@@ -195,6 +196,12 @@ func (p *ReviewPage) dispatchAction() (Page, tea.Cmd) {
 			cmd, err := startDashboard(configPath)
 			return dashStartedMsg{cmd: cmd, err: err}
 		}
+	case "unprovision":
+		p.running = "unprovision"
+		cmd := p.buildUnprovisionExec()
+		return p, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return execDoneMsg{err: err}
+		})
 	case "exit":
 		return p, tea.Quit
 	}
@@ -351,6 +358,63 @@ func BuildProvisionCommand(cfg *config.Config) (script string, args []string) {
 	// Skip FIPS
 	if cfg.SkipFIPS {
 		args = append(args, "--no-fips")
+	}
+
+	return script, args
+}
+
+// buildUnprovisionExec constructs the exec.Cmd for the unprovision script.
+func (p *ReviewPage) buildUnprovisionExec() *exec.Cmd {
+	script, args := BuildUnprovisionCommand(p.cfg)
+
+	fullCmd := script + " " + strings.Join(args, " ")
+	if os.Geteuid() != 0 {
+		fullCmd = "sudo " + fullCmd
+	}
+	shellScript := fullCmd + `; rc=$?; echo ""; echo "Press Enter to return to wizard..."; read _; exit $rc`
+	return exec.Command("sh", "-c", shellScript)
+}
+
+// unprovisionInstalledPaths lists where packages install the unprovision script.
+var unprovisionInstalledPaths = []string{
+	"/usr/local/bin/cloudflared-fips-unprovision",
+}
+
+// findUnprovisionScript returns the path to the unprovision script.
+func findUnprovisionScript() string {
+	for _, p := range unprovisionInstalledPaths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	if p, err := exec.LookPath("cloudflared-fips-unprovision"); err == nil {
+		return p
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return "./scripts/unprovision-macos.sh"
+	default:
+		return "./scripts/unprovision-linux.sh"
+	}
+}
+
+// BuildUnprovisionCommand returns the script path and arguments for unprovisioning.
+func BuildUnprovisionCommand(cfg *config.Config) (script string, args []string) {
+	script = findUnprovisionScript()
+
+	if cfg.Role != "" {
+		args = append(args, "--role", cfg.Role)
+	}
+
+	// CF teardown if credentials available
+	if cfg.Dashboard.CFAPIToken != "" && cfg.Dashboard.AccountID != "" && cfg.Dashboard.TunnelID != "" {
+		args = append(args, "--teardown-cf")
+		args = append(args, "--cf-api-token", cfg.Dashboard.CFAPIToken)
+		args = append(args, "--cf-account-id", cfg.Dashboard.AccountID)
+		args = append(args, "--cf-tunnel-id", cfg.Dashboard.TunnelID)
+		if cfg.Dashboard.ZoneID != "" {
+			args = append(args, "--cf-zone-id", cfg.Dashboard.ZoneID)
+		}
 	}
 
 	return script, args

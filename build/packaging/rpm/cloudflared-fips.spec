@@ -27,6 +27,7 @@ Included binaries:
   cloudflared-fips-proxy      — Tier 3 self-hosted FIPS edge proxy
   cloudflared-fips-agent      — Lightweight endpoint FIPS posture agent
   cloudflared-fips-provision  — Multi-role provisioning script
+  cloudflared-fips-unprovision — Clean uninstall / unprovision script
 
 Role selection happens at provision time via the TUI wizard or provision script.
 
@@ -45,8 +46,9 @@ install -m 0755 %{_sourcedir}/cloudflared-fips-tui %{buildroot}/usr/local/bin/cl
 install -m 0755 %{_sourcedir}/cloudflared-fips-proxy %{buildroot}/usr/local/bin/cloudflared-fips-proxy
 install -m 0755 %{_sourcedir}/cloudflared-fips-agent %{buildroot}/usr/local/bin/cloudflared-fips-agent
 
-# Provision script
+# Provision and unprovision scripts
 install -m 0755 %{_sourcedir}/cloudflared-fips-provision %{buildroot}/usr/local/bin/cloudflared-fips-provision
+install -m 0755 %{_sourcedir}/cloudflared-fips-unprovision %{buildroot}/usr/local/bin/cloudflared-fips-unprovision
 
 # Config and manifest
 install -m 0644 %{_sourcedir}/cloudflared-fips.yaml %{buildroot}/etc/cloudflared/config.yaml.sample
@@ -94,6 +96,7 @@ systemctl daemon-reload 2>/dev/null || true
 /usr/local/bin/cloudflared-fips-proxy
 /usr/local/bin/cloudflared-fips-agent
 /usr/local/bin/cloudflared-fips-provision
+/usr/local/bin/cloudflared-fips-unprovision
 %config(noreplace) /etc/cloudflared/config.yaml.sample
 /usr/share/cloudflared-fips/build-manifest.json
 

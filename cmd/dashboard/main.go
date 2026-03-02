@@ -65,6 +65,7 @@ func main() {
 
 	// Tunnel setup (one-shot mode: create DNS CNAME + configure tunnel ingress, then exit)
 	setupTunnel := flag.Bool("setup-tunnel", false, "one-shot: create DNS CNAME and configure tunnel ingress, then exit")
+	teardownTunnel := flag.Bool("teardown-tunnel", false, "one-shot: delete DNS CNAME and tunnel, then exit")
 	publicHostname := flag.String("public-hostname", "", "public hostname for tunnel ingress (e.g., dashboard.example.com)")
 	hostnameService := flag.String("hostname-service", "http://localhost:8080", "backend service URL for tunnel ingress")
 
@@ -89,6 +90,15 @@ func main() {
 			envOrFlag(*cfAccountID, "CF_ACCOUNT_ID"),
 			envOrFlag(*cfTunnelID, "CF_TUNNEL_ID"),
 			*publicHostname, *hostnameService)
+		return
+	}
+
+	// --teardown-tunnel: one-shot mode — delete DNS records + tunnel, then exit
+	if *teardownTunnel {
+		runTeardownTunnel(logger, envOrFlag(*cfToken, "CF_API_TOKEN"),
+			envOrFlag(*cfZoneID, "CF_ZONE_ID"),
+			envOrFlag(*cfAccountID, "CF_ACCOUNT_ID"),
+			envOrFlag(*cfTunnelID, "CF_TUNNEL_ID"))
 		return
 	}
 
@@ -421,4 +431,64 @@ func runSetupTunnel(logger *log.Logger, token, zoneID, accountID, tunnelID, host
 	}
 
 	logger.Printf("Tunnel setup complete")
+}
+
+// runTeardownTunnel is a one-shot mode that deletes DNS CNAME records and
+// the tunnel itself, then exits. Counterpart to runSetupTunnel. Called by
+// the unprovision script to clean up Cloudflare resources.
+func runTeardownTunnel(logger *log.Logger, token, zoneID, accountID, tunnelID string) {
+	logger.Printf("Teardown tunnel: account=%s tunnel=%s", accountID, tunnelID)
+
+	if token == "" {
+		logger.Fatalf("No API token provided (--cf-api-token or CF_API_TOKEN required)")
+	}
+	if accountID == "" || tunnelID == "" {
+		logger.Fatalf("--cf-account-id and --cf-tunnel-id are required for teardown")
+	}
+
+	client := cfapi.NewClient(token)
+	exitCode := 0
+
+	// Step 1: Find and delete DNS CNAME records pointing to this tunnel
+	if zoneID != "" {
+		logger.Printf("Looking for DNS records pointing to %s.cfargotunnel.com...", tunnelID)
+		records, err := client.FindDNSRecord(zoneID, "", "CNAME")
+		if err != nil {
+			logger.Printf("Warning: failed to query DNS records: %v", err)
+		} else {
+			tunnelTarget := tunnelID + ".cfargotunnel.com"
+			deleted := 0
+			for _, r := range records {
+				if r.Content == tunnelTarget {
+					logger.Printf("Deleting DNS CNAME: %s → %s (ID: %s)", r.Name, r.Content, r.ID)
+					if err := client.DeleteDNSRecord(zoneID, r.ID); err != nil {
+						logger.Printf("Warning: failed to delete DNS record %s: %v", r.ID, err)
+						exitCode = 1
+					} else {
+						deleted++
+					}
+				}
+			}
+			if deleted > 0 {
+				logger.Printf("Deleted %d DNS record(s)", deleted)
+			} else {
+				logger.Printf("No DNS records found pointing to this tunnel")
+			}
+		}
+	}
+
+	// Step 2: Delete the tunnel
+	logger.Printf("Deleting tunnel: %s", tunnelID)
+	if err := client.DeleteTunnel(accountID, tunnelID); err != nil {
+		logger.Printf("Error: failed to delete tunnel: %v", err)
+		exitCode = 1
+	} else {
+		logger.Printf("Tunnel deleted successfully")
+	}
+
+	if exitCode != 0 {
+		logger.Printf("Teardown completed with errors")
+		os.Exit(exitCode)
+	}
+	logger.Printf("Tunnel teardown complete")
 }
