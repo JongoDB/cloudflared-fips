@@ -1076,48 +1076,71 @@ phase4_start() {
             systemctl start cloudflared-fips-dashboard
             # Wait for dashboard API to be ready before self-enrolling agent
             local retries=0
+            local dash_ready=false
             while ! curl -sf http://127.0.0.1:8080/health &>/dev/null; do
                 retries=$((retries + 1))
-                if [[ $retries -ge 10 ]]; then
-                    warn "Dashboard not ready after 10s — agent self-enrollment may fail"
+                if [[ $retries -ge 30 ]]; then
+                    warn "Dashboard not ready after 30s — agent self-enrollment may fail"
                     break
                 fi
                 sleep 1
             done
+            if curl -sf http://127.0.0.1:8080/health &>/dev/null; then
+                dash_ready=true
+            fi
             # Self-enroll the controller's own agent so it can report posture
-            if [[ -z "$(grep NODE_ID "${CONFIG_DIR}/env" 2>/dev/null)" ]]; then
+            if [[ "$dash_ready" == "true" ]] && [[ -z "$(grep NODE_ID "${CONFIG_DIR}/env" 2>/dev/null)" ]]; then
                 log "Self-enrolling controller agent..."
                 local admin_key
                 admin_key=$(grep FLEET_ADMIN_KEY "${CONFIG_DIR}/env" | cut -d= -f2-)
                 if [[ -n "$admin_key" ]]; then
-                    # Create a self-enrollment token
-                    local token_resp
-                    token_resp=$(curl -sf -X POST http://127.0.0.1:8080/api/v1/fleet/tokens \
-                        -H "Authorization: Bearer ${admin_key}" \
-                        -H "Content-Type: application/json" \
-                        -d '{"role":"controller","max_uses":1}' 2>/dev/null) || true
-                    if [[ -n "$token_resp" ]]; then
+                    local enroll_ok=false
+                    for attempt in 1 2 3; do
+                        # Create a self-enrollment token
+                        local token_resp
+                        token_resp=$(curl -sf -X POST http://127.0.0.1:8080/api/v1/fleet/tokens \
+                            -H "Authorization: Bearer ${admin_key}" \
+                            -H "Content-Type: application/json" \
+                            -d '{"role":"controller","max_uses":1}' 2>/dev/null) || true
+                        if [[ -z "$token_resp" ]]; then
+                            sleep 2
+                            continue
+                        fi
                         local self_token
                         self_token=$(echo "$token_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
-                        if [[ -n "$self_token" ]]; then
-                            local hostname
-                            hostname=$(hostname -s)
-                            local enroll_resp
-                            enroll_resp=$(curl -sf -X POST http://127.0.0.1:8080/api/v1/fleet/enroll \
-                                -H "Content-Type: application/json" \
-                                -d "{\"token\":\"${self_token}\",\"name\":\"${hostname} (controller)\",\"role\":\"controller\",\"version\":\"${CLOUDFLARED_VERSION}\",\"fips_backend\":\"BoringCrypto\"}" 2>/dev/null) || true
-                            if [[ -n "$enroll_resp" ]]; then
-                                local self_node_id self_api_key
-                                self_node_id=$(echo "$enroll_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['node_id'])" 2>/dev/null)
-                                self_api_key=$(echo "$enroll_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])" 2>/dev/null)
+                        if [[ -z "$self_token" ]]; then
+                            sleep 2
+                            continue
+                        fi
+                        local hostname
+                        hostname=$(hostname -s)
+                        local enroll_resp
+                        enroll_resp=$(curl -sf -X POST http://127.0.0.1:8080/api/v1/fleet/enroll \
+                            -H "Content-Type: application/json" \
+                            -d "{\"token\":\"${self_token}\",\"name\":\"${hostname} (controller)\",\"role\":\"controller\",\"version\":\"${CLOUDFLARED_VERSION}\",\"fips_backend\":\"BoringCrypto\"}" 2>/dev/null) || true
+                        if [[ -n "$enroll_resp" ]]; then
+                            local self_node_id self_api_key
+                            self_node_id=$(echo "$enroll_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['node_id'])" 2>/dev/null)
+                            self_api_key=$(echo "$enroll_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])" 2>/dev/null)
+                            if [[ -n "$self_node_id" && -n "$self_api_key" ]]; then
                                 echo "NODE_ID=${self_node_id}" >> "${CONFIG_DIR}/env"
                                 echo "NODE_API_KEY=${self_api_key}" >> "${CONFIG_DIR}/env"
                                 echo "CONTROLLER_URL=http://127.0.0.1:8080" >> "${CONFIG_DIR}/env"
                                 log "Controller self-enrolled as node ${self_node_id}"
+                                enroll_ok=true
+                                break
                             fi
                         fi
+                        sleep 2
+                    done
+                    if [[ "$enroll_ok" != "true" ]]; then
+                        warn "Self-enrollment failed after 3 attempts. Run manually:"
+                        warn "  sudo cloudflared-fips-provision --role controller --self-enroll"
                     fi
                 fi
+            elif [[ "$dash_ready" != "true" ]]; then
+                warn "Skipping self-enrollment (dashboard not ready). Run manually after dashboard starts:"
+                warn "  sudo cloudflared-fips-provision --role controller --self-enroll"
             fi
             systemctl start cloudflared-fips-agent
             if systemctl is-enabled --quiet cloudflared-fips-proxy 2>/dev/null; then
