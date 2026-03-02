@@ -499,7 +499,7 @@ export const mockSections: ChecklistSection[] = [
 ]
 
 export const mockManifest: BuildManifest = {
-  version: '0.1.0',
+  version: '0.5.5',
   commit: 'abc1234',
   build_time: '2026-02-21T00:00:00Z',
   cloudflared_upstream_version: '2025.2.0',

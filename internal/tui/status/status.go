@@ -15,26 +15,31 @@ import (
 
 	"github.com/cloudflared-fips/cloudflared-fips/internal/compliance"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo"
+	"github.com/cloudflared-fips/cloudflared-fips/pkg/fleet"
 )
 
 // StatusModel is the Bubbletea model for the compliance status view.
 type StatusModel struct {
-	apiAddr  string
-	interval time.Duration
-	viewport viewport.Model
-	report   *compliance.ComplianceReport
-	lastPoll time.Time
-	err      error
-	width    int
-	height   int
-	ready    bool
+	apiAddr   string
+	interval  time.Duration
+	fleetMode bool
+	viewport  viewport.Model
+	report    *compliance.ComplianceReport
+	fleetSum  *fleet.FleetSummary
+	lastPoll  time.Time
+	err       error
+	fleetErr  error
+	width     int
+	height    int
+	ready     bool
 }
 
 // NewStatusModel creates a new status monitor.
-func NewStatusModel(apiAddr string, interval time.Duration) StatusModel {
+func NewStatusModel(apiAddr string, interval time.Duration, fleetMode bool) StatusModel {
 	return StatusModel{
-		apiAddr:  apiAddr,
-		interval: interval,
+		apiAddr:   apiAddr,
+		interval:  interval,
+		fleetMode: fleetMode,
 	}
 }
 
@@ -42,6 +47,12 @@ func NewStatusModel(apiAddr string, interval time.Duration) StatusModel {
 type pollMsg struct {
 	report *compliance.ComplianceReport
 	err    error
+}
+
+// fleetPollMsg carries a fleet summary from a poll tick.
+type fleetPollMsg struct {
+	summary *fleet.FleetSummary
+	err     error
 }
 
 // tickMsg triggers the next poll.
@@ -71,6 +82,30 @@ func pollAPI(addr string) tea.Cmd {
 	}
 }
 
+// pollFleetSummary fetches the fleet summary from the dashboard API.
+func pollFleetSummary(addr string) tea.Cmd {
+	return func() tea.Msg {
+		url := fmt.Sprintf("http://%s/api/v1/fleet/summary", addr)
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get(url)
+		if err != nil {
+			return fleetPollMsg{err: fmt.Errorf("fleet API: %w", err)}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return fleetPollMsg{err: fmt.Errorf("fleet API %d: %s", resp.StatusCode, string(body))}
+		}
+
+		var summary fleet.FleetSummary
+		if err := json.NewDecoder(resp.Body).Decode(&summary); err != nil {
+			return fleetPollMsg{err: fmt.Errorf("decode fleet summary: %w", err)}
+		}
+		return fleetPollMsg{summary: &summary}
+	}
+}
+
 // scheduleTick returns a command that sends a tickMsg after the interval.
 func scheduleTick(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(_ time.Time) tea.Msg {
@@ -80,7 +115,11 @@ func scheduleTick(d time.Duration) tea.Cmd {
 
 // Init starts the first poll and schedules the tick loop.
 func (m StatusModel) Init() tea.Cmd {
-	return tea.Batch(pollAPI(m.apiAddr), scheduleTick(m.interval))
+	cmds := []tea.Cmd{pollAPI(m.apiAddr), scheduleTick(m.interval)}
+	if m.fleetMode {
+		cmds = append(cmds, pollFleetSummary(m.apiAddr))
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update handles messages.
@@ -116,8 +155,24 @@ func (m StatusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case fleetPollMsg:
+		if msg.err != nil {
+			m.fleetErr = msg.err
+		} else {
+			m.fleetErr = nil
+			m.fleetSum = msg.summary
+		}
+		if m.ready {
+			m.viewport.SetContent(m.renderContent())
+		}
+		return m, nil
+
 	case tickMsg:
-		return m, tea.Batch(pollAPI(m.apiAddr), scheduleTick(m.interval))
+		cmds := []tea.Cmd{pollAPI(m.apiAddr), scheduleTick(m.interval)}
+		if m.fleetMode {
+			cmds = append(cmds, pollFleetSummary(m.apiAddr))
+		}
+		return m, tea.Batch(cmds...)
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -198,6 +253,11 @@ func (m StatusModel) renderContent() string {
 	// Sections
 	for _, section := range m.report.Sections {
 		b.WriteString(renderSection(section))
+	}
+
+	// Fleet topology (controller mode only)
+	if m.fleetMode {
+		b.WriteString(renderFleetTopology(m.fleetSum, m.fleetErr))
 	}
 
 	return b.String()

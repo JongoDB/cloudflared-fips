@@ -58,8 +58,9 @@ func printUsage() {
 	fmt.Println("runs the provision script to build, install, and start services.")
 	fmt.Println()
 	fmt.Println("Status flags:")
-	fmt.Println("  --api       Dashboard API address (default: localhost:8080)")
-	fmt.Println("  --interval  Poll interval (default: 5s)")
+	fmt.Println("  --api         Dashboard API address (default: localhost:8080)")
+	fmt.Println("  --interval    Poll interval (default: 5s)")
+	fmt.Println("  --fleet-mode  Enable fleet topology view (controller mode)")
 }
 
 func runSetup() {
@@ -75,11 +76,12 @@ func runStatus(args []string) {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	apiAddr := fs.String("api", "127.0.0.1:8080", "Dashboard API address (host:port)")
 	interval := fs.Duration("interval", 5*time.Second, "Poll interval")
+	fleetMode := fs.Bool("fleet-mode", false, "Enable fleet topology view (controller mode)")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(1)
 	}
 
-	m := status.NewStatusModel(*apiAddr, *interval)
+	m := status.NewStatusModel(*apiAddr, *interval, *fleetMode)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

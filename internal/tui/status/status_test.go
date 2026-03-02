@@ -210,7 +210,7 @@ func TestRenderSummaryBar_WithUnknown(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewStatusModel(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	if m.apiAddr != "localhost:8080" {
 		t.Errorf("apiAddr = %q, want localhost:8080", m.apiAddr)
 	}
@@ -230,7 +230,7 @@ func TestNewStatusModel(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRenderLastUpdate_ZeroTime(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	got := m.renderLastUpdate()
 	if !strings.Contains(got, "Connecting") {
 		t.Errorf("zero time should show 'Connecting...', got: %q", got)
@@ -238,7 +238,7 @@ func TestRenderLastUpdate_ZeroTime(t *testing.T) {
 }
 
 func TestRenderLastUpdate_WithTime(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	m.lastPoll = time.Date(2026, 2, 28, 14, 30, 45, 0, time.UTC)
 	got := m.renderLastUpdate()
 	if !strings.Contains(got, "14:30:45") {
@@ -254,7 +254,7 @@ func TestRenderLastUpdate_WithTime(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRenderContent_Error(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	m.err = fmt.Errorf("connection refused")
 	got := m.renderContent()
 	if !strings.Contains(got, "connection refused") {
@@ -266,7 +266,7 @@ func TestRenderContent_Error(t *testing.T) {
 }
 
 func TestRenderContent_NilReport(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	got := m.renderContent()
 	if !strings.Contains(got, "Waiting") {
 		t.Errorf("nil report should show 'Waiting...', got: %q", got)
@@ -274,7 +274,7 @@ func TestRenderContent_NilReport(t *testing.T) {
 }
 
 func TestRenderContent_WithReport(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	m.report = &compliance.ComplianceReport{
 		Summary: compliance.Summary{
 			Total:  3,
@@ -306,7 +306,7 @@ func TestRenderContent_WithReport(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRenderFooter_Connected(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 10*time.Second)
+	m := NewStatusModel("localhost:8080", 10*time.Second, false)
 	got := m.renderFooter()
 	if !strings.Contains(got, "Connected") {
 		t.Errorf("no error should show 'Connected', got: %q", got)
@@ -320,7 +320,7 @@ func TestRenderFooter_Connected(t *testing.T) {
 }
 
 func TestRenderFooter_Disconnected(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 10*time.Second)
+	m := NewStatusModel("localhost:8080", 10*time.Second, false)
 	m.err = fmt.Errorf("timeout")
 	got := m.renderFooter()
 	if !strings.Contains(got, "Disconnected") {
@@ -333,7 +333,7 @@ func TestRenderFooter_Disconnected(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestView_NotReady(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	got := m.View()
 	if !strings.Contains(got, "Initializing") {
 		t.Errorf("not-ready model should show 'Initializing', got: %q", got)
@@ -345,7 +345,7 @@ func TestView_NotReady(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUpdate_WindowSizeMsg(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model := updated.(StatusModel)
 	if !model.ready {
@@ -360,7 +360,7 @@ func TestUpdate_WindowSizeMsg(t *testing.T) {
 }
 
 func TestUpdate_PollMsg_Success(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	report := &compliance.ComplianceReport{
 		Summary: compliance.Summary{Total: 1, Passed: 1},
 	}
@@ -378,7 +378,7 @@ func TestUpdate_PollMsg_Success(t *testing.T) {
 }
 
 func TestUpdate_PollMsg_Error(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	updated, _ := m.Update(pollMsg{err: fmt.Errorf("connection refused")})
 	model := updated.(StatusModel)
 	if model.err == nil {
@@ -388,7 +388,7 @@ func TestUpdate_PollMsg_Error(t *testing.T) {
 }
 
 func TestUpdate_PollMsg_ClearsError(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	m.err = fmt.Errorf("previous error")
 	report := &compliance.ComplianceReport{
 		Summary: compliance.Summary{Total: 1, Passed: 1},
@@ -401,7 +401,7 @@ func TestUpdate_PollMsg_ClearsError(t *testing.T) {
 }
 
 func TestUpdate_WindowSizeMsg_SmallHeight(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
 	model := updated.(StatusModel)
 	// contentH should be clamped to minimum 5
@@ -411,7 +411,7 @@ func TestUpdate_WindowSizeMsg_SmallHeight(t *testing.T) {
 }
 
 func TestUpdate_WindowSizeMsg_Resize(t *testing.T) {
-	m := NewStatusModel("localhost:8080", 5*time.Second)
+	m := NewStatusModel("localhost:8080", 5*time.Second, false)
 	// First size
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 	model := updated.(StatusModel)

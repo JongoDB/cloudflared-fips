@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/cloudflared-fips/cloudflared-fips/internal/compliance"
+	"github.com/cloudflared-fips/cloudflared-fips/pkg/fleet"
 )
 
 // statusIcon returns a colored icon for a compliance status.
@@ -130,4 +131,73 @@ func renderSummaryBar(summary compliance.Summary, width int) string {
 	}
 
 	return summaryBoxStyle.Render(counts + "   " + pStyle(percentStr) + " " + pStyle(bar))
+}
+
+// renderFleetTopology renders the fleet hub-spoke topology diagram.
+func renderFleetTopology(summary *fleet.FleetSummary, fleetErr error) string {
+	var b strings.Builder
+
+	b.WriteString("\n")
+	b.WriteString(sectionNameStyle.Render(" Fleet Topology"))
+	b.WriteString("\n")
+
+	if fleetErr != nil {
+		b.WriteString(dimStyle.Render(fmt.Sprintf("   Fleet data unavailable: %v", fleetErr)))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	if summary == nil {
+		b.WriteString(dimStyle.Render("   Waiting for fleet data..."))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	byRole := summary.ByRole
+	if byRole == nil {
+		byRole = map[string]int{}
+	}
+
+	ctrlCount := byRole["controller"]
+	serverCount := byRole["server"]
+	proxyCount := byRole["proxy"]
+	clientCount := byRole["client"]
+
+	// Controller at the top
+	ctrlStatus := passStyle.Render("● Online")
+	if ctrlCount == 0 {
+		ctrlStatus = unknownStyle.Render("○ None")
+	}
+	b.WriteString(fmt.Sprintf("                  CONTROLLER (%d)  %s\n", ctrlCount, ctrlStatus))
+	b.WriteString(dimStyle.Render("             ┌──────────┼──────────┐"))
+	b.WriteString("\n")
+
+	// Child roles
+	srvLabel := renderRoleCount("SERVER", serverCount)
+	prxLabel := renderRoleCount("PROXY", proxyCount)
+	cliLabel := renderRoleCount("CLIENT", clientCount)
+
+	b.WriteString(fmt.Sprintf("        %-18s %-18s %s\n", srvLabel, prxLabel, cliLabel))
+
+	// Fleet totals
+	totalLine := dimStyle.Render(fmt.Sprintf(
+		"   Total: %d nodes  %s online  %s degraded  %s offline  %s compliant",
+		summary.TotalNodes,
+		passStyle.Render(fmt.Sprintf("%d", summary.Online)),
+		warnStyle.Render(fmt.Sprintf("%d", summary.Degraded)),
+		failStyle.Render(fmt.Sprintf("%d", summary.Offline)),
+		passStyle.Render(fmt.Sprintf("%d", summary.FullyCompliant)),
+	))
+	b.WriteString(totalLine)
+	b.WriteString("\n")
+
+	return b.String()
+}
+
+// renderRoleCount renders a role name with its node count, colored by status.
+func renderRoleCount(role string, count int) string {
+	if count == 0 {
+		return unknownStyle.Render(fmt.Sprintf("%s(0)", role))
+	}
+	return passStyle.Render(fmt.Sprintf("%s(%d)", role, count))
 }

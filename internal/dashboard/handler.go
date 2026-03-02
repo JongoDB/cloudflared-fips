@@ -46,6 +46,11 @@ func (h *Handler) HandleManifest(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// Override version with runtime build info — the manifest file may be a
+	// stale sample while buildinfo.Version is injected via ldflags at build time.
+	if buildinfo.Version != "" && buildinfo.Version != "dev" {
+		m.Version = buildinfo.Version
+	}
 	writeJSON(w, http.StatusOK, m)
 }
 

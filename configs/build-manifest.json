@@ -1,15 +1,15 @@
 {
-  "version": "0.1.0",
+  "version": "0.5.5",
   "commit": "abc1234",
   "build_time": "2026-02-21T00:00:00Z",
   "cloudflared_upstream_version": "2025.2.0",
   "cloudflared_upstream_commit": "059f4d9",
   "crypto_engine": "boringcrypto",
-  "boringssl_version": "fips-20220613",
+  "boringssl_version": "fips-20230428",
   "fips_certificates": [
     {
       "module": "BoringSSL",
-      "certificate": "#3678",
+      "certificate": "#4735",
       "algorithms": [
         "AES-GCM-128",
         "AES-GCM-256",

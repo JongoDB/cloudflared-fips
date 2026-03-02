@@ -1,11 +1,12 @@
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
+import FleetTopology from '../components/FleetTopology'
 import FleetHealthBar from '../components/FleetHealthBar'
 import NodeTable from '../components/NodeTable'
 import NodeFilters from '../components/NodeFilters'
 import { useFleetNodes } from '../hooks/useFleetNodes'
-import type { FleetNode, FleetSummary } from '../types/fleet'
+import type { FleetNode, FleetSummary, NodeRole } from '../types/fleet'
 
 const emptySummary: FleetSummary = {
   total_nodes: 0,
@@ -30,6 +31,10 @@ export default function FleetOverviewPage() {
 
   const handleNodeClick = (node: FleetNode) => {
     navigate(`/fleet/nodes/${node.id}`)
+  }
+
+  const handleRoleClick = (role: NodeRole | undefined) => {
+    applyFilter({ ...filter, role })
   }
 
   return (
@@ -62,6 +67,12 @@ export default function FleetOverviewPage() {
           {error}
         </div>
       )}
+
+      <FleetTopology
+        summary={summary || emptySummary}
+        onRoleClick={handleRoleClick}
+        activeRole={filter.role}
+      />
 
       <FleetHealthBar summary={summary || emptySummary} />
 
