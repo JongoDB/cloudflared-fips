@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/cloudflared-fips/cloudflared-fips/internal/tui/common"
 	"github.com/cloudflared-fips/cloudflared-fips/internal/tui/config"
@@ -48,14 +49,15 @@ type DashboardWiringPage struct {
 	tunnelPicker  common.Selector
 
 	// Discovery state
-	accounts       []cfapi.Account
-	zones          []cfapi.Zone
-	apiTunnels     []cfapi.TunnelInfo
-	accountsLoaded bool
-	zonesLoaded    bool
-	tunnelsLoaded  bool
-	discoveryErr   string
-	fetching       bool
+	accounts         []cfapi.Account
+	zones            []cfapi.Zone
+	apiTunnels       []cfapi.TunnelInfo
+	accountsLoaded   bool
+	zonesLoaded      bool
+	tunnelsLoaded    bool
+	discoveryErr     string
+	fetching         bool
+	tokenAtLastVerify string // tracks token value at last discovery attempt
 
 	// Tunnel creation
 	tunnelNameInput    common.TextInput
@@ -420,11 +422,22 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	if msg, ok := msg.(tea.KeyMsg); ok {
 		switch msg.String() {
 		case "tab", "enter":
-			// When leaving the API token field, trigger discovery
-			if p.focus == 0 && strings.TrimSpace(p.apiToken.Value()) != "" && !p.accountsLoaded && !p.fetching {
+			// When leaving the API token field, trigger discovery if:
+			// - token is non-empty, and
+			// - either never verified, or token changed since last verify
+			if p.focus == 0 && strings.TrimSpace(p.apiToken.Value()) != "" && !p.fetching {
+				currentToken := strings.TrimSpace(p.apiToken.Value())
+				needsVerify := !p.accountsLoaded || currentToken != p.tokenAtLastVerify
+				if needsVerify {
+					p.resetDiscoveryState()
+					p.focus = 1
+					p.updateFocus()
+					return p, p.startDiscovery()
+				}
+				// Token already verified and unchanged — just advance
 				p.focus = 1
 				p.updateFocus()
-				return p, p.startDiscovery()
+				return p, fieldNav
 			}
 
 			// When selecting an account from picker, fetch zones + tunnels
@@ -498,7 +511,13 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	var cmd tea.Cmd
 	switch p.focus {
 	case 0:
+		oldVal := p.apiToken.Value()
 		cmd = p.apiToken.Update(msg)
+		newVal := p.apiToken.Value()
+		// If user edited the token after a previous verify attempt, reset discovery state
+		if oldVal != newVal && p.tokenAtLastVerify != "" {
+			p.resetDiscoveryState()
+		}
 	case 1:
 		if p.hasZones() {
 			p.zonePicker.Update(msg)
@@ -556,6 +575,7 @@ func (p *DashboardWiringPage) startDiscovery() tea.Cmd {
 	token := strings.TrimSpace(p.apiToken.Value())
 	p.fetching = true
 	p.discoveryErr = ""
+	p.tokenAtLastVerify = token
 	return func() tea.Msg {
 		client := cfapi.NewClient(token)
 		if err := client.VerifyToken(); err != nil {
@@ -688,30 +708,185 @@ func (p *DashboardWiringPage) Apply(cfg *config.Config) {
 	}
 }
 
+// friendlyTokenError translates raw API errors into user-friendly messages.
+func friendlyTokenError(rawErr string) string {
+	switch {
+	case strings.Contains(rawErr, "Invalid API Token") || strings.Contains(rawErr, "code 1000"):
+		return "Invalid API token — check that you copied it correctly"
+	case strings.Contains(rawErr, "code 6003"):
+		return "Missing required permissions — token needs Zone:Read, Tunnel:Edit, etc."
+	case strings.Contains(rawErr, "API request failed:"):
+		// Network-level errors (dial, timeout, TLS, etc.)
+		return "Cannot reach Cloudflare API — check network connectivity"
+	case strings.Contains(rawErr, "rate limited"):
+		return "Rate limited by Cloudflare — wait a moment and try again"
+	default:
+		return "Token verification failed: " + rawErr
+	}
+}
+
+// resetDiscoveryState clears all API discovery state so re-verification can proceed.
+func (p *DashboardWiringPage) resetDiscoveryState() {
+	p.discoveryErr = ""
+	p.fetching = false
+	p.accounts = nil
+	p.zones = nil
+	p.apiTunnels = nil
+	p.accountsLoaded = false
+	p.zonesLoaded = false
+	p.tunnelsLoaded = false
+	p.tunnelCreated = false
+	p.creatingTunnel = false
+	p.tunnelCreateErr = ""
+	p.createdTunnelToken = ""
+	p.createdTunnelID = ""
+	p.createdTunnelName = ""
+}
+
+// discoveryStatusView renders the progressive API discovery status block.
+func (p *DashboardWiringPage) discoveryStatusView() string {
+	token := strings.TrimSpace(p.apiToken.Value())
+	if token == "" && !p.fetching && p.discoveryErr == "" && !p.accountsLoaded {
+		return "" // nothing to show before user enters a token
+	}
+
+	var b strings.Builder
+
+	// Error state — show friendly message with tip
+	if p.discoveryErr != "" {
+		b.WriteString(common.ErrorStyle.Render("  \u2717 " + friendlyTokenError(p.discoveryErr)))
+		b.WriteString("\n")
+		b.WriteString(common.HintStyle.Render("    Tip: Create a token at https://dash.cloudflare.com/profile/api-tokens"))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	// Currently verifying (no accounts yet)
+	if p.fetching && !p.accountsLoaded {
+		b.WriteString(common.HintStyle.Render("  \u27f3 Verifying token..."))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	// Accounts loaded — show progressive results
+	if p.accountsLoaded && len(p.accounts) > 0 {
+		// Line 1: token + accounts
+		acctNames := make([]string, 0, len(p.accounts))
+		for _, a := range p.accounts {
+			acctNames = append(acctNames, a.Name)
+		}
+		acctSuffix := fmt.Sprintf("%d account", len(p.accounts))
+		if len(p.accounts) != 1 {
+			acctSuffix += "s"
+		}
+		acctSuffix += " (" + strings.Join(acctNames, ", ") + ")"
+		b.WriteString(common.SuccessStyle.Render("  \u2713 Token verified — "+acctSuffix))
+		b.WriteString("\n")
+
+		// Line 2: zones status
+		if p.zonesLoaded {
+			zoneCount := len(p.zones)
+			zoneStr := fmt.Sprintf("%d zone", zoneCount)
+			if zoneCount != 1 {
+				zoneStr += "s"
+			}
+			if zoneCount > 0 {
+				zoneNames := make([]string, 0, len(p.zones))
+				for _, z := range p.zones {
+					zoneNames = append(zoneNames, z.Name)
+				}
+				zoneStr += " (" + strings.Join(zoneNames, ", ") + ")"
+			}
+			b.WriteString(common.SuccessStyle.Render("  \u2713 " + zoneStr + " loaded"))
+			b.WriteString("\n")
+		} else {
+			b.WriteString(common.HintStyle.Render("  \u27f3 Loading zones..."))
+			b.WriteString("\n")
+		}
+
+		// Line 3: tunnels status
+		if p.tunnelsLoaded {
+			tunnelCount := len(p.apiTunnels)
+			tunnelStr := fmt.Sprintf("%d tunnel", tunnelCount)
+			if tunnelCount != 1 {
+				tunnelStr += "s"
+			}
+			tunnelStr += " found"
+			b.WriteString(common.SuccessStyle.Render("  \u2713 " + tunnelStr))
+			b.WriteString("\n")
+		} else if p.zonesLoaded {
+			b.WriteString(common.HintStyle.Render("  \u27f3 Loading tunnels..."))
+			b.WriteString("\n")
+		}
+	} else if p.accountsLoaded && len(p.accounts) == 0 {
+		b.WriteString(common.WarningStyle.Render("  \u2717 No accounts found — token may lack Account permissions"))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
 func (p *DashboardWiringPage) View() string {
 	var b strings.Builder
 	b.WriteString(p.apiToken.View())
 	b.WriteString("\n")
 
-	// Show discovery status
-	if p.fetching {
-		b.WriteString(common.HintStyle.Render("  Verifying token and loading accounts..."))
-		b.WriteString("\n")
-	}
-	if p.discoveryErr != "" {
-		b.WriteString(common.ErrorStyle.Render("  ! "+p.discoveryErr))
-		b.WriteString("\n")
-	}
-	if p.accountsLoaded && len(p.accounts) > 0 {
-		b.WriteString(common.SuccessStyle.Render("  Token verified"))
-		b.WriteString("\n")
+	// Show progressive discovery status
+	statusView := p.discoveryStatusView()
+	if statusView != "" {
+		b.WriteString(statusView)
 	}
 	b.WriteString("\n")
 
-	// Zone: picker or text input
+	// Domain (Zone): picker, loading state, or manual input
+	b.WriteString(common.LabelStyle.Render("Domain (Zone)"))
+	b.WriteString("\n")
 	if p.hasZones() {
-		b.WriteString(p.zonePicker.View())
+		// Zone picker loaded — show radio selector (without duplicate label)
+		for i, opt := range p.zonePicker.Options {
+			selected := i == p.zonePicker.Cursor
+			cursor := "  "
+			radio := common.MutedStyle.Render("\u25cb")
+			if selected {
+				if p.zonePicker.Focused {
+					cursor = common.FocusedPrompt
+					radio = lipgloss.NewStyle().Bold(true).Foreground(common.ColorPrimary).Render("\u25cf")
+				} else {
+					radio = lipgloss.NewStyle().Foreground(common.ColorPrimary).Render("\u25cf")
+				}
+			}
+			label := opt.Label
+			if selected && p.zonePicker.Focused {
+				label = lipgloss.NewStyle().Bold(true).Foreground(common.ColorWhite).Render(label)
+			} else if selected {
+				label = lipgloss.NewStyle().Foreground(common.ColorWhite).Render(label)
+			} else {
+				label = lipgloss.NewStyle().Foreground(common.ColorDim).Render(label)
+			}
+			b.WriteString(cursor + radio + " " + label + "\n")
+			if opt.Description != "" {
+				descStyle := common.HintStyle
+				if selected && p.zonePicker.Focused {
+					descStyle = lipgloss.NewStyle().Foreground(common.ColorDim)
+				}
+				b.WriteString(descStyle.Render("    "+opt.Description) + "\n")
+			}
+		}
+	} else if p.accountsLoaded && !p.zonesLoaded {
+		b.WriteString(common.HintStyle.Render("  \u27f3 Loading your domains..."))
+		b.WriteString("\n")
+	} else if p.zonesLoaded && len(p.zones) == 0 {
+		b.WriteString(common.ErrorStyle.Render("  \u2717 No zones found — ensure your token has Zone:Read permission"))
+		b.WriteString("\n")
+		b.WriteString(p.zoneID.View())
+	} else if !p.accountsLoaded && !p.fetching && p.discoveryErr == "" {
+		b.WriteString(common.HintStyle.Render("  \u25cb Verify your API token first"))
+		b.WriteString("\n")
+	} else if p.discoveryErr != "" {
+		b.WriteString(common.HintStyle.Render("  \u25cb Fix your API token to load domains"))
+		b.WriteString("\n")
 	} else {
+		// Fallback: manual zone ID entry
 		b.WriteString(p.zoneID.View())
 	}
 	b.WriteString("\n\n")
@@ -723,7 +898,16 @@ func (p *DashboardWiringPage) View() string {
 		// Single account — show as read-only info
 		b.WriteString(common.LabelStyle.Render("Account"))
 		b.WriteString("\n")
-		b.WriteString(common.HintStyle.Render("  " + p.accounts[0].Name + " (" + p.accounts[0].ID + ")"))
+		b.WriteString(common.SuccessStyle.Render("  \u2713 " + p.accounts[0].Name))
+		b.WriteString(common.HintStyle.Render("  " + p.accounts[0].ID))
+	} else if p.fetching && !p.accountsLoaded {
+		b.WriteString(common.LabelStyle.Render("Account"))
+		b.WriteString("\n")
+		b.WriteString(common.HintStyle.Render("  \u27f3 Discovering..."))
+	} else if !p.accountsLoaded && p.discoveryErr == "" && !p.fetching {
+		b.WriteString(common.LabelStyle.Render("Account"))
+		b.WriteString("\n")
+		b.WriteString(common.HintStyle.Render("  \u25cb Verify your API token first"))
 	} else {
 		b.WriteString(p.accountID.View())
 	}
@@ -752,6 +936,10 @@ func (p *DashboardWiringPage) View() string {
 				b.WriteString(common.HintStyle.Render("  Token generated automatically"))
 			}
 		}
+	} else if p.accountsLoaded && !p.tunnelsLoaded {
+		b.WriteString(common.HintStyle.Render("  \u27f3 Loading tunnels..."))
+	} else if !p.accountsLoaded && !p.fetching {
+		b.WriteString(common.HintStyle.Render("  \u25cb Verify your API token first"))
 	} else {
 		// No tunnels loaded — show name input for creation
 		b.WriteString(p.tunnelNameInput.View())
