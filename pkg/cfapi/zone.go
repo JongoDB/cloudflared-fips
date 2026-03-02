@@ -208,9 +208,10 @@ type Account struct {
 
 // Zone represents a Cloudflare zone.
 type Zone struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	ID      string  `json:"id"`
+	Name    string  `json:"name"`
+	Status  string  `json:"status"`
+	Account Account `json:"account"`
 }
 
 // VerifyToken checks that the configured API token is valid.
@@ -244,6 +245,35 @@ func (c *Client) ListZones(accountID string) ([]Zone, error) {
 		return nil, fmt.Errorf("parse zones: %w", err)
 	}
 	return zones, nil
+}
+
+// ListAllZones returns all zones accessible by the token (no account filter).
+// Each zone includes its embedded Account field.
+func (c *Client) ListAllZones() ([]Zone, error) {
+	data, err := c.get("/zones?per_page=50")
+	if err != nil {
+		return nil, err
+	}
+	var zones []Zone
+	if err := json.Unmarshal(data, &zones); err != nil {
+		return nil, fmt.Errorf("parse zones: %w", err)
+	}
+	return zones, nil
+}
+
+// DiscoverAccountsFromZones extracts unique accounts from a list of zones.
+// This is used as a fallback when the token lacks Account-level permissions
+// (GET /accounts returns empty but zones still include their account info).
+func DiscoverAccountsFromZones(zones []Zone) []Account {
+	seen := make(map[string]bool)
+	var accounts []Account
+	for _, z := range zones {
+		if z.Account.ID != "" && !seen[z.Account.ID] {
+			seen[z.Account.ID] = true
+			accounts = append(accounts, z.Account)
+		}
+	}
+	return accounts
 }
 
 // ListTunnels returns non-deleted tunnels for a given account.

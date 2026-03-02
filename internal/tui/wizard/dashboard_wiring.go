@@ -16,6 +16,7 @@ import (
 // Async messages for Cloudflare API discovery.
 type tokenVerifiedMsg struct {
 	accounts []cfapi.Account
+	zones    []cfapi.Zone // populated when accounts discovered via zone fallback
 	err      error
 }
 
@@ -327,10 +328,21 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		}
 		p.accountPicker = common.NewSelector("Account", opts)
 
-		// Auto-fill account ID if only one
+		// If zones were pre-fetched (fallback discovery path), use them directly
+		if len(msg.zones) > 0 {
+			// Auto-fill account if only one
+			if len(msg.accounts) == 1 {
+				p.accountID.SetValue(msg.accounts[0].ID)
+			}
+			// Inject pre-fetched zones as if zonesLoadedMsg arrived
+			return p, func() tea.Msg {
+				return zonesLoadedMsg{zones: msg.zones}
+			}
+		}
+
+		// Normal path: auto-fill account ID if only one, then fetch zones
 		if len(msg.accounts) == 1 {
 			p.accountID.SetValue(msg.accounts[0].ID)
-			// Fetch zones for first account
 			return p, p.fetchZones(msg.accounts[0].ID)
 		}
 		return p, nil
@@ -571,6 +583,8 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 }
 
 // startDiscovery verifies the token and fetches accounts.
+// If the token lacks Account-level permission (GET /accounts returns empty),
+// it falls back to listing all zones and extracting accounts from the zone data.
 func (p *DashboardWiringPage) startDiscovery() tea.Cmd {
 	token := strings.TrimSpace(p.apiToken.Value())
 	p.fetching = true
@@ -582,7 +596,20 @@ func (p *DashboardWiringPage) startDiscovery() tea.Cmd {
 			return tokenVerifiedMsg{err: err}
 		}
 		accounts, err := client.ListAccounts()
-		return tokenVerifiedMsg{accounts: accounts, err: err}
+		if err != nil {
+			return tokenVerifiedMsg{err: err}
+		}
+		// If accounts are empty, the token likely lacks Account resource permission.
+		// Fall back: list all zones (which include embedded account info).
+		if len(accounts) == 0 {
+			zones, zErr := client.ListAllZones()
+			if zErr != nil {
+				return tokenVerifiedMsg{err: zErr}
+			}
+			accounts = cfapi.DiscoverAccountsFromZones(zones)
+			return tokenVerifiedMsg{accounts: accounts, zones: zones}
+		}
+		return tokenVerifiedMsg{accounts: accounts}
 	}
 }
 
