@@ -1,4 +1,4 @@
-.PHONY: all build-all selftest-bin dashboard-bin tui-bin fips-proxy-bin agent-bin \
+.PHONY: all build-all unified-bin selftest-bin dashboard-bin tui-bin fips-proxy-bin agent-bin \
        selftest setup status dashboard tui fips-proxy agent \
        dashboard-dev dashboard-build dashboard-embed \
        lint test test-cover vet check \
@@ -64,9 +64,14 @@ endif
 # Build all project binaries
 all: build-all
 
-build-all: selftest-bin dashboard-bin tui-bin fips-proxy-bin agent-bin
+build-all: unified-bin selftest-bin dashboard-bin tui-bin fips-proxy-bin agent-bin
 	@echo "All binaries built in $(OUTPUT_DIR)/"
 	@ls -lh $(OUTPUT_DIR)/
+
+# Unified CLI binary (single entry point for all subcommands)
+unified-bin:
+	@mkdir -p $(OUTPUT_DIR)
+	$(FIPS_ENV) go build -trimpath -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/cloudflared-fips ./cmd/cloudflared-fips
 
 # Self-test CLI binary
 selftest-bin:
@@ -211,6 +216,7 @@ crypto-audit:
 rpm: build-all
 	@echo "=== Building RPM package ==="
 	mkdir -p /tmp/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
+	cp $(OUTPUT_DIR)/cloudflared-fips /tmp/rpmbuild/SOURCES/
 	cp $(OUTPUT_DIR)/cloudflared-fips-selftest /tmp/rpmbuild/SOURCES/
 	cp $(OUTPUT_DIR)/cloudflared-fips-dashboard /tmp/rpmbuild/SOURCES/
 	cp $(OUTPUT_DIR)/cloudflared-fips-tui /tmp/rpmbuild/SOURCES/
@@ -228,7 +234,8 @@ rpm: build-all
 deb: build-all
 	@echo "=== Building DEB package ==="
 	cp scripts/provision-linux.sh $(OUTPUT_DIR)/cloudflared-fips-provision
-	chmod +x $(OUTPUT_DIR)/cloudflared-fips-provision
+	cp scripts/unprovision-linux.sh $(OUTPUT_DIR)/cloudflared-fips-unprovision
+	chmod +x $(OUTPUT_DIR)/cloudflared-fips-provision $(OUTPUT_DIR)/cloudflared-fips-unprovision
 	cp configs/cloudflared-fips.yaml $(OUTPUT_DIR)/ 2>/dev/null || true
 	cp configs/build-manifest.json $(OUTPUT_DIR)/ 2>/dev/null || true
 	bash build/packaging/deb/build-deb.sh $(VERSION) amd64 $(OUTPUT_DIR) $(OUTPUT_DIR)

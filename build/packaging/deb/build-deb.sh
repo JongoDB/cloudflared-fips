@@ -35,8 +35,8 @@ cp "$SCRIPT_DIR/DEBIAN/postinst" "$PKG_DIR/DEBIAN/postinst"
 cp "$SCRIPT_DIR/DEBIAN/prerm" "$PKG_DIR/DEBIAN/prerm"
 chmod 755 "$PKG_DIR/DEBIAN/postinst" "$PKG_DIR/DEBIAN/prerm"
 
-# Install fleet binaries
-for bin in cloudflared-fips-selftest cloudflared-fips-dashboard cloudflared-fips-tui \
+# Install fleet binaries (unified CLI + individual binaries)
+for bin in cloudflared-fips cloudflared-fips-selftest cloudflared-fips-dashboard cloudflared-fips-tui \
            cloudflared-fips-proxy cloudflared-fips-agent; do
     if [ -f "$BINARY_DIR/$bin" ]; then
         cp "$BINARY_DIR/$bin" "$PKG_DIR/usr/local/bin/$bin"

@@ -85,6 +85,7 @@ jobs:
             -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.BuildDate=${BUILD_DATE} \
             -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.FIPSBuild=true"
 
+          /usr/local/go/bin/go build -trimpath -ldflags "$LDFLAGS" -o /tmp/cloudflared-fips ./cmd/cloudflared-fips
           /usr/local/go/bin/go build -trimpath -ldflags "$LDFLAGS" -o /tmp/cloudflared-fips-selftest ./cmd/selftest
           /usr/local/go/bin/go build -trimpath -ldflags "$LDFLAGS" -o /tmp/cloudflared-fips-dashboard ./cmd/dashboard
           /usr/local/go/bin/go build -trimpath -ldflags "$LDFLAGS" -o /tmp/cloudflared-fips-tui ./cmd/tui
@@ -179,6 +180,7 @@ jobs:
           mkdir -p /root/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
 
           # Copy all fleet binaries into rpmbuild SOURCES
+          cp /tmp/cloudflared-fips /root/rpmbuild/SOURCES/
           cp /tmp/cloudflared-fips-selftest /root/rpmbuild/SOURCES/
           cp /tmp/cloudflared-fips-dashboard /root/rpmbuild/SOURCES/
           cp /tmp/cloudflared-fips-tui /root/rpmbuild/SOURCES/
@@ -288,6 +290,7 @@ jobs:
             -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.BuildDate=${BUILD_DATE} \
             -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.FIPSBuild=true"
 
+          go build -trimpath -ldflags "$LDFLAGS" -o /tmp/cloudflared-fips ./cmd/cloudflared-fips
           go build -trimpath -ldflags "$LDFLAGS" -o /tmp/cloudflared-fips-selftest ./cmd/selftest
           go build -trimpath -ldflags "$LDFLAGS" -o /tmp/cloudflared-fips-dashboard ./cmd/dashboard
           go build -trimpath -ldflags "$LDFLAGS" -o /tmp/cloudflared-fips-tui ./cmd/tui
@@ -387,6 +390,7 @@ jobs:
             -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.BuildDate=${BUILD_DATE} \
             -X github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo.FIPSBuild=true"
 
+          go build -trimpath -ldflags "$LDFLAGS" -o "${RUNNER_TEMP}/cloudflared-fips.exe" ./cmd/cloudflared-fips
           go build -trimpath -ldflags "$LDFLAGS" -o "${RUNNER_TEMP}/cloudflared-fips-selftest.exe" ./cmd/selftest
           go build -trimpath -ldflags "$LDFLAGS" -o "${RUNNER_TEMP}/cloudflared-fips-dashboard.exe" ./cmd/dashboard
           go build -trimpath -ldflags "$LDFLAGS" -o "${RUNNER_TEMP}/cloudflared-fips-tui.exe" ./cmd/tui

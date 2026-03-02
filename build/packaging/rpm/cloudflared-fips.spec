@@ -21,6 +21,7 @@ BoringCrypto (CMVP #4735). Ships all fleet binaries for zero-trust
 network fabric deployment with 4 roles: controller, server, proxy, client.
 
 Included binaries:
+  cloudflared-fips             — Unified CLI (main menu + all subcommands)
   cloudflared-fips-selftest   — FIPS self-test suite (KATs, cipher validation)
   cloudflared-fips-dashboard  — Compliance dashboard + fleet controller API
   cloudflared-fips-tui        — Interactive setup wizard + live status monitor
@@ -28,6 +29,10 @@ Included binaries:
   cloudflared-fips-agent      — Lightweight endpoint FIPS posture agent
   cloudflared-fips-provision  — Multi-role provisioning script
   cloudflared-fips-unprovision — Clean uninstall / unprovision script
+
+Run 'cloudflared-fips' with no arguments for the interactive main menu,
+or use subcommands: setup, status, selftest, dashboard, proxy, agent,
+provision, unprovision, version.
 
 Role selection happens at provision time via the TUI wizard or provision script.
 
@@ -38,6 +43,9 @@ Role selection happens at provision time via the TUI wizard or provision script.
 mkdir -p %{buildroot}/usr/local/bin
 mkdir -p %{buildroot}/etc/cloudflared
 mkdir -p %{buildroot}/usr/share/cloudflared-fips
+
+# Unified CLI
+install -m 0755 %{_sourcedir}/cloudflared-fips %{buildroot}/usr/local/bin/cloudflared-fips
 
 # Fleet binaries
 install -m 0755 %{_sourcedir}/cloudflared-fips-selftest %{buildroot}/usr/local/bin/cloudflared-fips-selftest
@@ -69,11 +77,12 @@ echo "  Config sample:    /etc/cloudflared/config.yaml.sample"
 echo "  Build manifest:   /usr/share/cloudflared-fips/build-manifest.json"
 echo ""
 echo "  Next steps — choose one:"
-echo "    cloudflared-fips-tui setup                              # interactive wizard"
-echo "    cloudflared-fips-provision --role controller             # fleet controller"
-echo "    cloudflared-fips-provision --role server --enrollment-token <T> --controller-url <URL>"
-echo "    cloudflared-fips-provision --role proxy  --enrollment-token <T> --controller-url <URL>"
-echo "    cloudflared-fips-provision --role client --enrollment-token <T> --controller-url <URL>"
+echo "    cloudflared-fips                                         # interactive main menu"
+echo "    cloudflared-fips setup                                   # interactive wizard"
+echo "    cloudflared-fips provision --role controller              # fleet controller"
+echo "    cloudflared-fips provision --role server --enrollment-token <T> --controller-url <URL>"
+echo "    cloudflared-fips provision --role proxy  --enrollment-token <T> --controller-url <URL>"
+echo "    cloudflared-fips provision --role client --enrollment-token <T> --controller-url <URL>"
 
 %preun
 if [ "$1" = "0" ]; then
@@ -90,6 +99,7 @@ fi
 systemctl daemon-reload 2>/dev/null || true
 
 %files
+/usr/local/bin/cloudflared-fips
 /usr/local/bin/cloudflared-fips-selftest
 /usr/local/bin/cloudflared-fips-dashboard
 /usr/local/bin/cloudflared-fips-tui
