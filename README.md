@@ -288,14 +288,16 @@ The wizard adapts to the selected role:
 Each field has inline help text — focus a field and read the help block below it for guidance on where to find values (API tokens, tunnel tokens, enrollment tokens, etc.).
 
 After the Review page, select **Provision this node** to run the full provisioning sequence. The provisioner will:
-1. Install Go and build dependencies
-2. Enable OS FIPS mode (RHEL/Rocky/Alma: `fips-mode-setup --enable`)
-3. Reboot if FIPS mode was just enabled (re-run the wizard after reboot)
-4. Build all fleet binaries from source with `GOEXPERIMENT=boringcrypto`
+1. Enable OS FIPS mode (RHEL/Rocky/Alma: `fips-mode-setup --enable`)
+2. **Reboot** if FIPS mode was just enabled (see below)
+3. Install Go and build dependencies (skipped when binaries are pre-installed via RPM)
+4. Build all fleet binaries from source with `GOEXPERIMENT=boringcrypto` (skipped via RPM)
 5. Write the config to `/etc/cloudflared-fips/config.yaml`
 6. Create systemd units for the role's services
 7. Enroll with the controller (server/proxy/client roles)
 8. Start services
+
+**After reboot:** If FIPS mode was just enabled, the machine reboots automatically. When you log back in, you'll see a banner with the exact command to resume provisioning. Run it — provisioning picks up where it left off (FIPS is already active, so it skips straight to config and services).
 
 ### Option B: Non-interactive CLI
 

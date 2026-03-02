@@ -19,6 +19,9 @@
 
 set -euo pipefail
 
+# Save original args for resume after FIPS reboot
+ORIG_ARGS="$*"
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -363,12 +366,34 @@ phase1_fips() {
             ;;
     esac
 
-    # Mark that we need to continue after reboot
-    echo "2" > "$MARKER"
+    # Save the full command line so we can resume after reboot
+    RESUME_CMD="sudo $(readlink -f "$0") $ORIG_ARGS"
+    {
+        echo "phase=2"
+        echo "resume_cmd=$RESUME_CMD"
+    } > "$MARKER"
+
+    # Drop a login helper so the user sees the resume command on login
+    cat > /etc/profile.d/cloudflared-fips-resume.sh <<'PROFILEEOF'
+if [ -f /var/tmp/.cloudflared-fips-provision-phase ]; then
+    echo ""
+    echo "============================================"
+    echo "  cloudflared-fips: provisioning paused"
+    echo "  FIPS mode is now enabled after reboot."
+    echo ""
+    RESUME=$(grep '^resume_cmd=' /var/tmp/.cloudflared-fips-provision-phase | cut -d= -f2-)
+    echo "  Resume with:"
+    echo "    $RESUME"
+    echo "============================================"
+    echo ""
+fi
+PROFILEEOF
 
     warn "============================================"
     warn "  FIPS mode enabled. Rebooting in 5 seconds."
-    warn "  Re-run this script after reboot to continue."
+    warn ""
+    warn "  After reboot, log in and run:"
+    warn "    $RESUME_CMD"
     warn "============================================"
     sleep 5
     reboot
@@ -1268,7 +1293,9 @@ main() {
 
     # Detect if we're resuming after a FIPS reboot
     if [[ -f "$MARKER" ]]; then
-        info "Resuming after reboot..."
+        info "Resuming provisioning after FIPS reboot..."
+        # Clean up the login helper
+        rm -f /etc/profile.d/cloudflared-fips-resume.sh
     fi
 
     phase1_fips
