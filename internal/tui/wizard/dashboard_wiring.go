@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -27,12 +28,17 @@ type tunnelsLoadedMsg struct {
 	err     error
 }
 
-// DashboardWiringPage is page 2: CF API token, zone/account/tunnel IDs, MDM.
+type tunnelCreatedMsg struct {
+	tunnel *cfapi.TunnelWithToken
+	err    error
+}
+
+// DashboardWiringPage collects CF API token, zone/account/tunnel selection,
+// tunnel creation, public hostname, and MDM config.
 type DashboardWiringPage struct {
 	apiToken    common.TextInput
 	zoneID      common.TextInput
 	accountID   common.TextInput
-	tunnelID    common.TextInput
 	metricsAddr common.TextInput
 	mdmProvider common.Selector
 
@@ -51,6 +57,19 @@ type DashboardWiringPage struct {
 	discoveryErr   string
 	fetching       bool
 
+	// Tunnel creation
+	tunnelNameInput    common.TextInput
+	creatingTunnel     bool
+	tunnelCreated      bool
+	createdTunnelToken string
+	createdTunnelID    string
+	createdTunnelName  string
+	tunnelCreateErr    string
+
+	// Public hostname configuration
+	hostnameSubdomain common.TextInput
+	hostnameService   common.TextInput
+
 	// Conditional MDM fields
 	intuneTenantID     common.TextInput
 	intuneClientID     common.TextInput
@@ -63,6 +82,20 @@ type DashboardWiringPage struct {
 	height int
 }
 
+// Field indices:
+//
+//	0: apiToken
+//	1: zone (picker or text)
+//	2: account (picker or text)
+//	3: tunnel (picker with "Create New" or text input for name if creating)
+//	4: hostnameSubdomain
+//	5: hostnameService
+//	6: metricsAddr
+//	7: mdmProvider
+//	8+: MDM-specific fields
+
+const dashWiringBaseFields = 8
+
 // hasAccounts returns true if API accounts were successfully loaded.
 func (p *DashboardWiringPage) hasAccounts() bool {
 	return p.accountsLoaded && len(p.accounts) > 0
@@ -73,8 +106,18 @@ func (p *DashboardWiringPage) hasZones() bool {
 	return p.zonesLoaded && len(p.zones) > 0
 }
 
+// hasTunnels returns true if API tunnels were successfully loaded.
+func (p *DashboardWiringPage) hasTunnels() bool {
+	return p.tunnelsLoaded
+}
+
+// isCreatingNewTunnel returns true if user selected "Create New Tunnel".
+func (p *DashboardWiringPage) isCreatingNewTunnel() bool {
+	return p.hasTunnels() && p.tunnelPicker.Selected() == "__create_new__"
+}
+
 func (p *DashboardWiringPage) fieldCount() int {
-	base := 6 // apiToken, zone, account, tunnelID, metricsAddr, mdmProvider
+	base := dashWiringBaseFields
 	switch p.mdmProvider.Selected() {
 	case "intune":
 		return base + 3
@@ -85,10 +128,24 @@ func (p *DashboardWiringPage) fieldCount() int {
 	}
 }
 
-// NewDashboardWiringPage creates page 2.
+// selectedZoneName returns the domain name for the selected zone.
+func (p *DashboardWiringPage) selectedZoneName() string {
+	if !p.hasZones() {
+		return ""
+	}
+	selectedID := p.zonePicker.Selected()
+	for _, z := range p.zones {
+		if z.ID == selectedID {
+			return z.Name
+		}
+	}
+	return ""
+}
+
+// NewDashboardWiringPage creates the dashboard wiring page.
 func NewDashboardWiringPage() *DashboardWiringPage {
 	apiToken := common.NewPasswordInput("Cloudflare API Token", "Bearer token", "(or set CF_API_TOKEN env var)")
-	apiToken.HelpText = "Create at: https://dash.cloudflare.com/profile/api-tokens\nRequired permissions (Resource | Permission | Access):\n  Zone | Zone | Read\n  Zone | Access: Apps and Policies | Read\n  Zone | SSL and Certificates | Read\nThe token is validated automatically when you leave this field."
+	apiToken.HelpText = "Create at: https://dash.cloudflare.com/profile/api-tokens\nRequired permissions (Resource | Permission | Access):\n  Account | Cloudflare Tunnel | Edit\n  Zone    | Zone              | Read\n  Zone    | DNS               | Edit\n  Zone    | Access: Apps and Policies | Read\n  Zone    | SSL and Certificates     | Read\nThe token is validated automatically when you leave this field."
 	if env := os.Getenv("CF_API_TOKEN"); env != "" {
 		apiToken.SetValue(env)
 	}
@@ -101,8 +158,16 @@ func NewDashboardWiringPage() *DashboardWiringPage {
 	accountID.Validate = config.ValidateOptionalHexID
 	accountID.HelpText = "Find at: https://dash.cloudflare.com → select account →\nOverview sidebar. Auto-discovered from your API token."
 
-	tunnelID := common.NewTextInput("Tunnel ID", "(auto-populated from page 1)", "")
-	tunnelID.HelpText = "Run: cloudflared tunnel list\nOr create: cloudflared tunnel create <name>\nAuto-populated from the tunnel token on the previous page."
+	tunnelName := common.NewTextInput("New Tunnel Name", "my-fips-tunnel", "")
+	tunnelName.Validate = config.ValidateNonEmpty
+	tunnelName.HelpText = "Name for the new Cloudflare Tunnel.\nThe tunnel will be created via the API — no dashboard visit required."
+
+	hostnameSubdomain := common.NewTextInput("Public Hostname", "dashboard", "(subdomain for your domain)")
+	hostnameSubdomain.HelpText = "Public subdomain for the dashboard. Combined with your zone domain.\nExample: 'dashboard' + 'jondevs.com' → dashboard.jondevs.com\nA CNAME record and tunnel ingress rule will be created automatically."
+
+	hostnameService := common.NewTextInput("Backend Service URL", "http://localhost:8080", "")
+	hostnameService.Input.SetValue("http://localhost:8080")
+	hostnameService.HelpText = "Local service URL that the tunnel routes traffic to.\nDefaults to the dashboard server at http://localhost:8080."
 
 	metricsAddr := common.NewTextInput("Metrics Address", "localhost:2000", "")
 	metricsAddr.Input.SetValue("localhost:2000")
@@ -125,12 +190,14 @@ func NewDashboardWiringPage() *DashboardWiringPage {
 		apiToken:           apiToken,
 		zoneID:             zoneID,
 		accountID:          accountID,
-		tunnelID:           tunnelID,
 		metricsAddr:        metricsAddr,
 		mdmProvider:        mdm,
 		accountPicker:      common.NewSelector("Account", nil),
 		zonePicker:         common.NewSelector("Zone", nil),
-		tunnelPicker:       common.NewSelector("Tunnel (API)", nil),
+		tunnelPicker:       common.NewSelector("Tunnel", nil),
+		tunnelNameInput:    tunnelName,
+		hostnameSubdomain:  hostnameSubdomain,
+		hostnameService:    hostnameService,
 		intuneTenantID:     intuneTenantID,
 		intuneClientID:     intuneClientID,
 		intuneClientSecret: intuneClientSecret,
@@ -139,7 +206,7 @@ func NewDashboardWiringPage() *DashboardWiringPage {
 	}
 }
 
-func (p *DashboardWiringPage) Title() string { return "Dashboard Wiring" }
+func (p *DashboardWiringPage) Title() string { return "Dashboard & Tunnel" }
 
 func (p *DashboardWiringPage) Init() tea.Cmd { return nil }
 
@@ -154,21 +221,21 @@ func (p *DashboardWiringPage) SetSize(w, h int) {
 	p.height = h
 }
 
-// PrePopulateTunnelID sets the tunnel ID from page 1.
-func (p *DashboardWiringPage) PrePopulateTunnelID(id string) {
-	p.tunnelID.SetValue(id)
-}
+// PrePopulateTunnelID is a no-op now; tunnel ID comes from tunnel picker/creation.
+func (p *DashboardWiringPage) PrePopulateTunnelID(_ string) {}
 
 func (p *DashboardWiringPage) updateFocus() {
 	p.apiToken.Blur()
 	p.zoneID.Blur()
 	p.accountID.Blur()
-	p.tunnelID.Blur()
 	p.metricsAddr.Blur()
 	p.mdmProvider.Blur()
 	p.accountPicker.Blur()
 	p.zonePicker.Blur()
 	p.tunnelPicker.Blur()
+	p.tunnelNameInput.Blur()
+	p.hostnameSubdomain.Blur()
+	p.hostnameService.Blur()
 	p.intuneTenantID.Blur()
 	p.intuneClientID.Blur()
 	p.intuneClientSecret.Blur()
@@ -191,13 +258,23 @@ func (p *DashboardWiringPage) updateFocus() {
 			p.accountID.Focus()
 		}
 	case 3:
-		p.tunnelID.Focus()
+		if p.isCreatingNewTunnel() {
+			p.tunnelNameInput.Focus()
+		} else if p.hasTunnels() {
+			p.tunnelPicker.Focus()
+		} else {
+			p.tunnelNameInput.Focus()
+		}
 	case 4:
-		p.metricsAddr.Focus()
+		p.hostnameSubdomain.Focus()
 	case 5:
+		p.hostnameService.Focus()
+	case 6:
+		p.metricsAddr.Focus()
+	case 7:
 		p.mdmProvider.Focus()
 	default:
-		idx := p.focus - 6
+		idx := p.focus - dashWiringBaseFields
 		switch p.mdmProvider.Selected() {
 		case "intune":
 			switch idx {
@@ -253,7 +330,6 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 
 	case zonesLoadedMsg:
 		if msg.err != nil {
-			// Don't overwrite a more serious error
 			if p.discoveryErr == "" {
 				p.discoveryErr = "zones: " + msg.err.Error()
 			}
@@ -281,6 +357,12 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		if p.focus == 1 {
 			p.updateFocus()
 		}
+
+		// Auto-fetch tunnels for the account
+		accountID := strings.TrimSpace(p.accountID.Value())
+		if accountID != "" && !p.tunnelsLoaded {
+			return p, p.fetchTunnels(accountID)
+		}
 		return p, nil
 
 	case tunnelsLoadedMsg:
@@ -290,15 +372,43 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		p.apiTunnels = msg.tunnels
 		p.tunnelsLoaded = true
 
-		opts := make([]common.SelectorOption, len(msg.tunnels))
-		for i, t := range msg.tunnels {
-			opts[i] = common.SelectorOption{
+		// Build tunnel picker: existing tunnels + "Create New"
+		opts := make([]common.SelectorOption, 0, len(msg.tunnels)+1)
+		for _, t := range msg.tunnels {
+			status := t.Status
+			if status == "" {
+				status = "unknown"
+			}
+			opts = append(opts, common.SelectorOption{
 				Value:       t.ID,
 				Label:       t.Name,
-				Description: t.ID,
-			}
+				Description: t.ID[:minLen(t.ID, 12)] + "... (" + status + ")",
+			})
 		}
-		p.tunnelPicker = common.NewSelector("Tunnel (API)", opts)
+		opts = append(opts, common.SelectorOption{
+			Value:       "__create_new__",
+			Label:       "+ Create New Tunnel",
+			Description: "Create a new tunnel via the API",
+		})
+		p.tunnelPicker = common.NewSelector("Tunnel", opts)
+
+		// If focus is on tunnel field, update display
+		if p.focus == 3 {
+			p.updateFocus()
+		}
+		return p, nil
+
+	case tunnelCreatedMsg:
+		p.creatingTunnel = false
+		if msg.err != nil {
+			p.tunnelCreateErr = msg.err.Error()
+			return p, nil
+		}
+		p.tunnelCreated = true
+		p.createdTunnelToken = msg.tunnel.Token
+		p.createdTunnelID = msg.tunnel.ID
+		p.createdTunnelName = msg.tunnel.Name
+		p.tunnelCreateErr = ""
 		return p, nil
 	}
 
@@ -312,7 +422,7 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 				return p, p.startDiscovery()
 			}
 
-			// When selecting an account from picker, fetch zones
+			// When selecting an account from picker, fetch zones + tunnels
 			if p.focus == 2 && p.hasAccounts() {
 				selectedID := p.accountPicker.Selected()
 				if selectedID != "" {
@@ -325,24 +435,45 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 				}
 			}
 
-			// When selecting a zone from picker, fill zone ID
+			// When selecting a zone from picker, fill zone ID and update hostname hint
 			if p.focus == 1 && p.hasZones() {
 				selectedID := p.zonePicker.Selected()
 				if selectedID != "" {
 					p.zoneID.SetValue(selectedID)
-					// Also fill account ID from zones data
-					for _, z := range p.zones {
-						if z.ID == selectedID {
-							break
-						}
+					// Update hostname subdomain hint with zone name
+					if zoneName := p.selectedZoneName(); zoneName != "" {
+						p.hostnameSubdomain.Hint = fmt.Sprintf("(→ subdomain.%s)", zoneName)
 					}
 				}
 			}
 
-			// mdmProvider selector: enter selects within, tab advances
-			if p.focus == 5 && msg.String() == "enter" {
+			// Tunnel picker: when "Create New" is selected and user presses enter
+			// on the tunnel name field, trigger creation
+			if p.focus == 3 && p.isCreatingNewTunnel() && msg.String() == "enter" {
+				name := strings.TrimSpace(p.tunnelNameInput.Value())
+				accountID := strings.TrimSpace(p.accountID.Value())
+				if name != "" && accountID != "" && !p.creatingTunnel && !p.tunnelCreated {
+					return p, p.createTunnel(accountID, name)
+				}
+				// If already created or creating, just advance
+				if p.tunnelCreated {
+					p.focus++
+					p.updateFocus()
+					return p, fieldNav
+				}
 				return p, fieldNav
 			}
+
+			// Tunnel picker: enter selects within the selector
+			if p.focus == 3 && p.hasTunnels() && !p.isCreatingNewTunnel() && msg.String() == "enter" {
+				return p, fieldNav
+			}
+
+			// mdmProvider selector: enter selects within, tab advances
+			if p.focus == 7 && msg.String() == "enter" {
+				return p, fieldNav
+			}
+
 			if p.focus < p.fieldCount()-1 {
 				p.focus++
 				p.updateFocus()
@@ -376,13 +507,23 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 			cmd = p.accountID.Update(msg)
 		}
 	case 3:
-		cmd = p.tunnelID.Update(msg)
+		if p.isCreatingNewTunnel() {
+			cmd = p.tunnelNameInput.Update(msg)
+		} else if p.hasTunnels() {
+			p.tunnelPicker.Update(msg)
+		} else {
+			cmd = p.tunnelNameInput.Update(msg)
+		}
 	case 4:
-		cmd = p.metricsAddr.Update(msg)
+		cmd = p.hostnameSubdomain.Update(msg)
 	case 5:
+		cmd = p.hostnameService.Update(msg)
+	case 6:
+		cmd = p.metricsAddr.Update(msg)
+	case 7:
 		p.mdmProvider.Update(msg)
 	default:
-		idx := p.focus - 6
+		idx := p.focus - dashWiringBaseFields
 		switch p.mdmProvider.Selected() {
 		case "intune":
 			switch idx {
@@ -430,14 +571,36 @@ func (p *DashboardWiringPage) fetchZones(accountID string) tea.Cmd {
 	}
 }
 
+// fetchTunnels fetches tunnels for the given account.
+func (p *DashboardWiringPage) fetchTunnels(accountID string) tea.Cmd {
+	token := strings.TrimSpace(p.apiToken.Value())
+	return func() tea.Msg {
+		client := cfapi.NewClient(token)
+		tunnels, err := client.ListTunnels(accountID)
+		return tunnelsLoadedMsg{tunnels: tunnels, err: err}
+	}
+}
+
+// createTunnel creates a new tunnel via the API.
+func (p *DashboardWiringPage) createTunnel(accountID, name string) tea.Cmd {
+	token := strings.TrimSpace(p.apiToken.Value())
+	p.creatingTunnel = true
+	p.tunnelCreateErr = ""
+	return func() tea.Msg {
+		client := cfapi.NewClient(token)
+		tunnel, err := client.CreateTunnel(accountID, name)
+		return tunnelCreatedMsg{tunnel: tunnel, err: err}
+	}
+}
+
 func (p *DashboardWiringPage) ScrollOffset() int {
-	// Base field offsets (apiToken, zone, account, tunnelID, metricsAddr, mdmProvider).
-	offsets := []int{0, 5, 10, 15, 20, 25}
+	// Approximate line offsets per field in the View() output.
+	offsets := []int{0, 5, 10, 15, 22, 27, 32, 37}
 	if p.focus < len(offsets) {
 		return offsets[p.focus]
 	}
 	// MDM-specific fields start after the selector.
-	return 33 + (p.focus-6)*5
+	return 42 + (p.focus-dashWiringBaseFields)*5
 }
 
 func (p *DashboardWiringPage) Validate() bool {
@@ -476,7 +639,29 @@ func (p *DashboardWiringPage) Apply(cfg *config.Config) {
 		cfg.Dashboard.AccountID = strings.TrimSpace(p.accountID.Value())
 	}
 
-	cfg.Dashboard.TunnelID = strings.TrimSpace(p.tunnelID.Value())
+	// Tunnel: from created tunnel or picker selection
+	if p.tunnelCreated {
+		cfg.TunnelToken = p.createdTunnelToken
+		cfg.Dashboard.TunnelID = p.createdTunnelID
+	} else if p.hasTunnels() {
+		selected := p.tunnelPicker.Selected()
+		if selected != "__create_new__" {
+			cfg.Dashboard.TunnelID = selected
+		}
+	}
+
+	// Public hostname
+	subdomain := strings.TrimSpace(p.hostnameSubdomain.Value())
+	if subdomain != "" {
+		zoneName := p.selectedZoneName()
+		if zoneName != "" {
+			cfg.PublicHostname = subdomain + "." + zoneName
+		} else {
+			cfg.PublicHostname = subdomain
+		}
+	}
+	cfg.HostnameService = strings.TrimSpace(p.hostnameService.Value())
+
 	cfg.Dashboard.MetricsAddress = strings.TrimSpace(p.metricsAddr.Value())
 
 	provider := p.mdmProvider.Selected()
@@ -490,6 +675,11 @@ func (p *DashboardWiringPage) Apply(cfg *config.Config) {
 	case "jamf":
 		cfg.Dashboard.MDM.BaseURL = strings.TrimSpace(p.jamfBaseURL.Value())
 		cfg.Dashboard.MDM.APIToken = strings.TrimSpace(p.jamfAPIToken.Value())
+	}
+
+	// Enable CF API integration for controller if token is set
+	if cfg.Dashboard.CFAPIToken != "" {
+		cfg.WithCF = true
 	}
 }
 
@@ -534,8 +724,48 @@ func (p *DashboardWiringPage) View() string {
 	}
 	b.WriteString("\n\n")
 
-	b.WriteString(p.tunnelID.View())
+	// Tunnel section
+	b.WriteString(common.LabelStyle.Render("Cloudflare Tunnel"))
+	b.WriteString("\n")
+	if p.hasTunnels() {
+		b.WriteString(p.tunnelPicker.View())
+		if p.isCreatingNewTunnel() {
+			b.WriteString("\n")
+			b.WriteString(p.tunnelNameInput.View())
+			if p.creatingTunnel {
+				b.WriteString("\n")
+				b.WriteString(common.HintStyle.Render("  Creating tunnel..."))
+			}
+			if p.tunnelCreateErr != "" {
+				b.WriteString("\n")
+				b.WriteString(common.ErrorStyle.Render("  ! "+p.tunnelCreateErr))
+			}
+			if p.tunnelCreated {
+				b.WriteString("\n")
+				b.WriteString(common.SuccessStyle.Render(fmt.Sprintf("  Tunnel created: %s (%s)", p.createdTunnelName, p.createdTunnelID[:minLen(p.createdTunnelID, 12)]+"...")))
+				b.WriteString("\n")
+				b.WriteString(common.HintStyle.Render("  Token generated automatically"))
+			}
+		}
+	} else {
+		// No tunnels loaded — show name input for creation
+		b.WriteString(p.tunnelNameInput.View())
+		b.WriteString("\n")
+		b.WriteString(common.HintStyle.Render("  Enter a name to create a new tunnel via API"))
+	}
 	b.WriteString("\n\n")
+
+	// Public hostname
+	b.WriteString(common.LabelStyle.Render("Public Hostname"))
+	if zoneName := p.selectedZoneName(); zoneName != "" {
+		b.WriteString(common.HintStyle.Render(fmt.Sprintf(" (domain: %s)", zoneName)))
+	}
+	b.WriteString("\n")
+	b.WriteString(p.hostnameSubdomain.View())
+	b.WriteString("\n\n")
+	b.WriteString(p.hostnameService.View())
+	b.WriteString("\n\n")
+
 	b.WriteString(p.metricsAddr.View())
 	b.WriteString("\n\n")
 	b.WriteString(p.mdmProvider.View())
@@ -556,4 +786,12 @@ func (p *DashboardWiringPage) View() string {
 	}
 
 	return b.String()
+}
+
+// minLen returns the minimum of len(s) and n.
+func minLen(s string, n int) int {
+	if len(s) < n {
+		return len(s)
+	}
+	return n
 }

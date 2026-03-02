@@ -69,8 +69,8 @@ func (m *WizardModel) rebuildPages() {
 
 	switch role {
 	case "controller":
-		pages = append(pages, NewControllerConfigPage())
 		pages = append(pages, NewDashboardWiringPage())
+		pages = append(pages, NewControllerConfigPage())
 		if tier == "regional_keyless" || tier == "self_hosted" {
 			pages = append(pages, NewTierSpecificPage(tier))
 		}
@@ -230,9 +230,11 @@ func (m WizardModel) advancePage() (tea.Model, tea.Cmd) {
 	if m.pageIndex < total-1 {
 		m.pageIndex++
 
-		// Pre-populate cross-page data: tunnel ID → dashboard wiring
-		if dp, ok := m.pages[m.pageIndex].(*DashboardWiringPage); ok {
-			dp.PrePopulateTunnelID(m.config.Tunnel)
+		// Pre-populate cross-page data: tunnel token from dashboard wiring → controller config
+		if cp, ok := m.pages[m.pageIndex].(*ControllerConfigPage); ok {
+			if m.config.TunnelToken != "" {
+				cp.PrePopulateTunnelToken(m.config.TunnelToken)
+			}
 		}
 
 		// Before showing review page, apply all preceding pages

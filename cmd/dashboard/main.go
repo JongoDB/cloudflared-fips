@@ -63,6 +63,11 @@ func main() {
 	// IPC socket for CloudSH integration
 	ipcSocket := flag.String("ipc-socket", "", "Unix socket path for CloudSH IPC (e.g., /var/run/cloudflared-fips/compliance.sock)")
 
+	// Tunnel setup (one-shot mode: create DNS CNAME + configure tunnel ingress, then exit)
+	setupTunnel := flag.Bool("setup-tunnel", false, "one-shot: create DNS CNAME and configure tunnel ingress, then exit")
+	publicHostname := flag.String("public-hostname", "", "public hostname for tunnel ingress (e.g., dashboard.example.com)")
+	hostnameService := flag.String("hostname-service", "http://localhost:8080", "backend service URL for tunnel ingress")
+
 	// Fleet mode flags
 	fleetMode := flag.Bool("fleet-mode", false, "enable fleet controller mode (registers nodes, stores reports)")
 	dbPath := flag.String("db-path", "/var/lib/cloudflared-fips/fleet.db", "path to fleet SQLite database")
@@ -76,6 +81,16 @@ func main() {
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "", log.LstdFlags)
+
+	// --setup-tunnel: one-shot mode — create DNS + configure ingress, then exit
+	if *setupTunnel {
+		runSetupTunnel(logger, envOrFlag(*cfToken, "CF_API_TOKEN"),
+			envOrFlag(*cfZoneID, "CF_ZONE_ID"),
+			envOrFlag(*cfAccountID, "CF_ACCOUNT_ID"),
+			envOrFlag(*cfTunnelID, "CF_TUNNEL_ID"),
+			*publicHostname, *hostnameService)
+		return
+	}
 
 	logger.Printf("%s", buildinfo.String())
 	logger.Printf("Starting dashboard server on %s", *addr)
@@ -360,4 +375,50 @@ func envOrFlag(flagVal, envKey string) string {
 		return flagVal
 	}
 	return os.Getenv(envKey)
+}
+
+// runSetupTunnel is a one-shot mode that creates a DNS CNAME record and
+// configures tunnel ingress, then exits. Called by the provision script
+// after the tunnel is running.
+func runSetupTunnel(logger *log.Logger, token, zoneID, accountID, tunnelID, hostname, service string) {
+	logger.Printf("Setup tunnel: hostname=%s service=%s", hostname, service)
+
+	if token == "" {
+		logger.Printf("No API token provided — skipping tunnel setup")
+		return
+	}
+
+	client := cfapi.NewClient(token)
+
+	// Step 1: Create DNS CNAME record (if hostname provided)
+	if hostname != "" && zoneID != "" && tunnelID != "" {
+		logger.Printf("Creating DNS CNAME: %s → %s.cfargotunnel.com", hostname, tunnelID)
+		_, err := client.CreateDNSCNAME(zoneID, hostname, tunnelID)
+		if err != nil {
+			// Record may already exist — log but don't fail
+			if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "81053") {
+				logger.Printf("DNS record already exists for %s (OK)", hostname)
+			} else {
+				logger.Printf("Warning: failed to create DNS CNAME: %v", err)
+			}
+		} else {
+			logger.Printf("DNS CNAME created: %s", hostname)
+		}
+	}
+
+	// Step 2: Configure tunnel ingress (hostname → service mapping)
+	if accountID != "" && tunnelID != "" && hostname != "" && service != "" {
+		logger.Printf("Configuring tunnel ingress: %s → %s", hostname, service)
+		ingress := []cfapi.TunnelIngressRule{
+			{Hostname: hostname, Service: service},
+			{Service: "http_status:404"},
+		}
+		if err := client.ConfigureTunnelIngress(accountID, tunnelID, ingress); err != nil {
+			logger.Printf("Warning: failed to configure tunnel ingress: %v", err)
+		} else {
+			logger.Printf("Tunnel ingress configured successfully")
+		}
+	}
+
+	logger.Printf("Tunnel setup complete")
 }

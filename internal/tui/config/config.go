@@ -31,6 +31,10 @@ type Config struct {
 	LogFile         string          `yaml:"logfile"`
 	Metrics         string          `yaml:"metrics"`
 
+	// Tunnel automation (set by dashboard wiring page)
+	PublicHostname string `yaml:"public_hostname,omitempty"` // e.g., "dashboard.jondevs.com"
+	HostnameService string `yaml:"hostname_service,omitempty"` // e.g., "http://localhost:8080"
+
 	// Dashboard wiring (custom extension fields)
 	Dashboard DashboardConfig `yaml:"dashboard,omitempty"`
 

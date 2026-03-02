@@ -40,9 +40,10 @@ func TestWizardFocus_RoleTierPage(t *testing.T) {
 	}
 }
 
-// TestWizardFocus_AdvanceToControllerConfig verifies that after tabbing through
-// all RoleTierPage fields, the ControllerConfigPage gets proper focus.
-func TestWizardFocus_AdvanceToControllerConfig(t *testing.T) {
+// TestWizardFocus_AdvanceToDashboardWiring verifies that after tabbing through
+// all RoleTierPage fields, the DashboardWiringPage gets proper focus.
+// Page order for controller: RoleTier → DashboardWiring → ControllerConfig → FIPS → Review
+func TestWizardFocus_AdvanceToDashboardWiring(t *testing.T) {
 	m := NewWizardModel()
 	m.width = 120
 	m.height = 40
@@ -71,7 +72,7 @@ func TestWizardFocus_AdvanceToControllerConfig(t *testing.T) {
 		t.Fatalf("after tab 2, still on page 0, got page %d", m.pageIndex)
 	}
 
-	// Tab 3: skipFIPS → advances to page 1 (ControllerConfigPage)
+	// Tab 3: skipFIPS → advances to page 1 (DashboardWiringPage)
 	model, cmd := model.Update(simulateTab())
 	m = model.(WizardModel)
 	if m.pageIndex != 1 {
@@ -80,16 +81,16 @@ func TestWizardFocus_AdvanceToControllerConfig(t *testing.T) {
 
 	// Focus command should NOT be nil
 	if cmd == nil {
-		t.Error("advancing to ControllerConfigPage should return a non-nil focus command")
+		t.Error("advancing to DashboardWiringPage should return a non-nil focus command")
 	}
 
-	// Verify the view shows the admin key input with cursor
+	// Verify the view shows the API token input
 	view := m.View()
-	if !strings.Contains(view, "Admin API Key") {
-		t.Error("ControllerConfigPage should show 'Admin API Key' field")
+	if !strings.Contains(view, "API Token") {
+		t.Error("DashboardWiringPage should show 'API Token' field")
 	}
-	if !strings.Contains(view, "Controller & Tunnel") {
-		t.Error("should show 'Controller & Tunnel' in page title or header")
+	if !strings.Contains(view, "Dashboard & Tunnel") {
+		t.Error("should show 'Dashboard & Tunnel' in page title or header")
 	}
 }
 
@@ -150,8 +151,8 @@ func TestWizardFocus_AdvanceToTierSpecific_Tier3(t *testing.T) {
 }
 
 // TestWizardFocus_FullControllerFlow simulates the controller wizard flow,
-// checking focus at page transitions. ControllerConfigPage requires a non-empty
-// tunnel token to validate, so we verify focus behavior within the page.
+// checking focus at page transitions.
+// Page order: RoleTier → DashboardWiring → ControllerConfig → FIPS → Review
 func TestWizardFocus_FullControllerFlow(t *testing.T) {
 	m := NewWizardModel()
 	m.width = 120
@@ -173,11 +174,11 @@ func TestWizardFocus_FullControllerFlow(t *testing.T) {
 		t.Fatalf("expected page 1 after RoleTierPage, got %d", m.pageIndex)
 	}
 	if cmd == nil {
-		t.Error("focus command should not be nil when entering ControllerConfigPage")
+		t.Error("focus command should not be nil when entering DashboardWiringPage")
 	}
 
-	// On ControllerConfigPage, verify focus moves through fields
-	// Tab through first 3 fields (adminKey → nodeName → region)
+	// On DashboardWiringPage, verify focus moves through fields
+	// Tab through first 3 fields (apiToken → zoneID → accountID)
 	for i := 0; i < 3; i++ {
 		model, cmd = model.Update(simulateTab())
 	}
@@ -188,18 +189,18 @@ func TestWizardFocus_FullControllerFlow(t *testing.T) {
 
 	// Each tab should produce a non-nil command (fieldNav)
 	if cmd == nil {
-		t.Error("tabbing within ControllerConfigPage should return non-nil cmd")
+		t.Error("tabbing within DashboardWiringPage should return non-nil cmd")
 	}
 
 	// Verify view shows focus indicator on the correct field
 	view := m.View()
-	if !strings.Contains(view, "Controller & Tunnel") {
-		t.Error("should show Controller & Tunnel page")
+	if !strings.Contains(view, "Dashboard & Tunnel") {
+		t.Error("should show Dashboard & Tunnel page")
 	}
 }
 
 // TestWizardViewport_ScrollsToFocusedField verifies that on a tall page
-// (ControllerConfigPage, 10 fields), the viewport auto-scrolls so the
+// (DashboardWiringPage, 8 fields), the viewport auto-scrolls so the
 // focused field is visible. With a short viewport (15 lines), the first
 // field should be visible initially, and tabbing far enough should scroll.
 func TestWizardViewport_ScrollsToFocusedField(t *testing.T) {
@@ -217,7 +218,7 @@ func TestWizardViewport_ScrollsToFocusedField(t *testing.T) {
 
 	var model tea.Model = m
 
-	// Advance past RoleTierPage (3 tabs) → ControllerConfigPage
+	// Advance past RoleTierPage (3 tabs) → DashboardWiringPage
 	for i := 0; i < 3; i++ {
 		model, _ = model.Update(simulateTab())
 	}
@@ -226,21 +227,21 @@ func TestWizardViewport_ScrollsToFocusedField(t *testing.T) {
 		t.Fatalf("expected page 1, got %d", m.pageIndex)
 	}
 
-	// First field focused — viewport should show "Admin API Key"
+	// First field focused — viewport should show "API Token"
 	view := m.View()
-	if !strings.Contains(view, "Admin API Key") {
-		t.Error("viewport should show 'Admin API Key' when first field is focused")
+	if !strings.Contains(view, "API Token") {
+		t.Error("viewport should show 'API Token' when first field is focused")
 	}
 
-	// Tab down to field 6 (enforcementMode) — this is far enough to require scrolling.
+	// Tab down to field 6 (metricsAddr) — this is far enough to require scrolling.
 	for i := 0; i < 6; i++ {
 		model, _ = model.Update(simulateTab())
 	}
 	m = model.(WizardModel)
 
 	view = m.View()
-	if !strings.Contains(view, "Enforcement Mode") {
-		t.Error("after tabbing to field 6, viewport should show 'Enforcement Mode'")
+	if !strings.Contains(view, "Metrics Address") {
+		t.Error("after tabbing to field 6, viewport should show 'Metrics Address'")
 	}
 }
 

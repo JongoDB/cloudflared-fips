@@ -70,6 +70,8 @@ ENFORCEMENT_MODE="audit"
 REQUIRE_OS_FIPS=false
 REQUIRE_DISK_ENC=false
 PROTOCOL="quic"
+PUBLIC_HOSTNAME=""
+HOSTNAME_SERVICE="http://localhost:8080"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -98,6 +100,8 @@ while [[ $# -gt 0 ]]; do
         --require-os-fips) REQUIRE_OS_FIPS=true; shift ;;
         --require-disk-enc) REQUIRE_DISK_ENC=true; shift ;;
         --protocol)        PROTOCOL="$2"; shift 2 ;;
+        --public-hostname) PUBLIC_HOSTNAME="$2"; shift 2 ;;
+        --hostname-service) HOSTNAME_SERVICE="$2"; shift 2 ;;
         --help|-h)
             echo "Usage: sudo $0 [OPTIONS]"
             echo ""
@@ -130,6 +134,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --cf-zone-id ID      Cloudflare zone ID (non-interactive)"
             echo "  --cf-account-id ID   Cloudflare account ID (non-interactive)"
             echo "  --cf-tunnel-id ID    Cloudflare tunnel ID (non-interactive)"
+            echo "  --public-hostname H  Public hostname for tunnel (e.g., dashboard.example.com)"
+            echo "  --hostname-service S Backend service URL (default: http://localhost:8080)"
             exit 0
             ;;
         *) echo "Unknown flag: $1"; exit 1 ;;
@@ -1100,6 +1106,17 @@ phase4_start() {
             done
             if curl -sf http://127.0.0.1:8080/health &>/dev/null; then
                 dash_ready=true
+            fi
+            # Setup tunnel: create DNS CNAME + configure ingress (if hostname provided)
+            if [[ -n "$PUBLIC_HOSTNAME" && -n "$CF_API_TOKEN" ]]; then
+                log "Setting up tunnel hostname: ${PUBLIC_HOSTNAME} → ${HOSTNAME_SERVICE}..."
+                ${BIN_DIR}/cloudflared-fips-dashboard --setup-tunnel \
+                    --cf-api-token "${CF_API_TOKEN}" \
+                    --cf-zone-id "${CF_ZONE_ID}" \
+                    --cf-account-id "${CF_ACCOUNT_ID}" \
+                    --cf-tunnel-id "${CF_TUNNEL_ID}" \
+                    --public-hostname "${PUBLIC_HOSTNAME}" \
+                    --hostname-service "${HOSTNAME_SERVICE}" || warn "Tunnel setup had warnings (check above)"
             fi
             # Self-enroll the controller's own agent so it can report posture
             if [[ "$dash_ready" == "true" ]] && [[ -z "$(grep NODE_ID "${CONFIG_DIR}/env" 2>/dev/null)" ]]; then

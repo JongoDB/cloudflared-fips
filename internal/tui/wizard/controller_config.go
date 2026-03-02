@@ -9,26 +9,28 @@ import (
 	"github.com/cloudflared-fips/cloudflared-fips/internal/tui/config"
 )
 
-// ControllerConfigPage collects controller-specific settings: tunnel, ingress,
-// fleet identity, and compliance enforcement policy.
+// ControllerConfigPage collects controller-specific settings: fleet identity,
+// ingress rules, and compliance enforcement policy.
+// Tunnel token and protocol are no longer needed here — the tunnel is created
+// on the Dashboard Wiring page and the token is auto-generated.
 type ControllerConfigPage struct {
 	adminKey        common.TextInput
 	nodeName        common.TextInput
 	region          common.TextInput
-	tunnelToken     common.TextInput
-	protocol        common.Selector
 	ingress         common.IngressEditor
 	enforcementMode common.Selector
 	requireOSFIPS   common.Toggle
 	requireDiskEnc  common.Toggle
-	withCF          common.Toggle
+
+	// Pre-populated from dashboard wiring page (read-only display)
+	tunnelTokenSet bool
 
 	focus  int
 	width  int
 	height int
 }
 
-const controllerFieldCount = 10
+const controllerFieldCount = 7
 
 // NewControllerConfigPage creates the controller config page.
 func NewControllerConfigPage() *ControllerConfigPage {
@@ -38,15 +40,6 @@ func NewControllerConfigPage() *ControllerConfigPage {
 	nodeName := common.NewTextInput("Node Name", defaultHostname(), "")
 	nodeName.Input.SetValue(defaultHostname())
 	region := common.NewTextInput("Node Region", "us-east", "(optional label)")
-
-	tunnelToken := common.NewTextInput("Tunnel Token", "eyJ...", "(REQUIRED — controller owns the Cloudflare tunnel)")
-	tunnelToken.Validate = config.ValidateNonEmpty
-	tunnelToken.HelpText = "Get from Cloudflare Zero Trust dashboard:\n  Networks → Tunnels → Create → Cloudflared → copy token\nOr CLI: cloudflared tunnel token <tunnel-name>"
-
-	proto := common.NewSelector("Protocol", []common.SelectorOption{
-		{Value: "quic", Label: "QUIC", Description: "UDP 7844 — preferred, lower latency"},
-		{Value: "http2", Label: "HTTP/2", Description: "TCP 443 — fallback when UDP is blocked"},
-	})
 
 	ing := common.NewIngressEditor("Ingress Rules")
 
@@ -67,13 +60,19 @@ func NewControllerConfigPage() *ControllerConfigPage {
 		adminKey:        adminKey,
 		nodeName:        nodeName,
 		region:          region,
-		tunnelToken:     tunnelToken,
-		protocol:        proto,
 		ingress:         ing,
 		enforcementMode: enforcement,
 		requireOSFIPS:   requireOSFIPS,
 		requireDiskEnc:  requireDiskEnc,
-		withCF:          common.NewToggle("Enable Cloudflare API integration", "Wire dashboard to CF API for edge compliance checks", false),
+	}
+}
+
+// PrePopulateTunnelToken marks that the tunnel token was set from the
+// dashboard wiring page. The controller config page no longer collects
+// the tunnel token — it's auto-generated.
+func (p *ControllerConfigPage) PrePopulateTunnelToken(token string) {
+	if token != "" {
+		p.tunnelTokenSet = true
 	}
 }
 
@@ -95,13 +94,10 @@ func (p *ControllerConfigPage) updateFocus() {
 	p.adminKey.Blur()
 	p.nodeName.Blur()
 	p.region.Blur()
-	p.tunnelToken.Blur()
-	p.protocol.Blur()
 	p.ingress.Blur()
 	p.enforcementMode.Blur()
 	p.requireOSFIPS.Blur()
 	p.requireDiskEnc.Blur()
-	p.withCF.Blur()
 
 	switch p.focus {
 	case 0:
@@ -111,19 +107,13 @@ func (p *ControllerConfigPage) updateFocus() {
 	case 2:
 		p.region.Focus()
 	case 3:
-		p.tunnelToken.Focus()
-	case 4:
-		p.protocol.Focus()
-	case 5:
 		p.ingress.Focus()
-	case 6:
+	case 4:
 		p.enforcementMode.Focus()
-	case 7:
+	case 5:
 		p.requireOSFIPS.Focus()
-	case 8:
+	case 6:
 		p.requireDiskEnc.Focus()
-	case 9:
-		p.withCF.Focus()
 	}
 }
 
@@ -132,11 +122,11 @@ func (p *ControllerConfigPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		switch msg.String() {
 		case "tab", "enter":
 			// Ingress in add mode: don't advance
-			if p.focus == 5 && p.ingress.Adding {
+			if p.focus == 3 && p.ingress.Adding {
 				return p, fieldNav
 			}
-			// Selectors: enter selects within
-			if msg.String() == "enter" && (p.focus == 4 || p.focus == 6) {
+			// Selector: enter selects within
+			if msg.String() == "enter" && p.focus == 4 {
 				return p, fieldNav
 			}
 			if p.focus < controllerFieldCount-1 {
@@ -164,27 +154,19 @@ func (p *ControllerConfigPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	case 2:
 		cmd = p.region.Update(msg)
 	case 3:
-		cmd = p.tunnelToken.Update(msg)
-	case 4:
-		p.protocol.Update(msg)
-	case 5:
 		cmd = p.ingress.Update(msg)
-	case 6:
+	case 4:
 		p.enforcementMode.Update(msg)
-	case 7:
+	case 5:
 		p.requireOSFIPS.Update(msg)
-	case 8:
+	case 6:
 		p.requireDiskEnc.Update(msg)
-	case 9:
-		p.withCF.Update(msg)
 	}
 	return p, cmd
 }
 
 func (p *ControllerConfigPage) ScrollOffset() int {
-	// Approximate line offsets per field in the View() output.
-	// Each TextInput = ~2 lines (label + input), each \n\n gap = 1 blank.
-	offsets := []int{0, 5, 8, 13, 16, 22, 28, 35, 38, 41}
+	offsets := []int{0, 5, 8, 13, 19, 26, 29}
 	if p.focus < len(offsets) {
 		return offsets[p.focus]
 	}
@@ -192,15 +174,18 @@ func (p *ControllerConfigPage) ScrollOffset() int {
 }
 
 func (p *ControllerConfigPage) Validate() bool {
-	return p.tunnelToken.RunValidation()
+	return true
 }
 
 func (p *ControllerConfigPage) Apply(cfg *config.Config) {
 	cfg.AdminKey = strings.TrimSpace(p.adminKey.Value())
 	cfg.NodeName = strings.TrimSpace(p.nodeName.Value())
 	cfg.NodeRegion = strings.TrimSpace(p.region.Value())
-	cfg.TunnelToken = strings.TrimSpace(p.tunnelToken.Value())
-	cfg.Protocol = p.protocol.Selected()
+	// TunnelToken is set by DashboardWiringPage (auto-generated); don't overwrite.
+	// Protocol is always QUIC (default, best performance) — no longer configurable.
+	if cfg.Protocol == "" {
+		cfg.Protocol = "quic"
+	}
 
 	var rules []config.IngressRule
 	for _, entry := range p.ingress.Entries {
@@ -217,12 +202,11 @@ func (p *ControllerConfigPage) Apply(cfg *config.Config) {
 		RequireOSFIPS:   p.requireOSFIPS.Enabled,
 		RequireDiskEnc:  p.requireDiskEnc.Enabled,
 	}
-	cfg.WithCF = p.withCF.Enabled
 }
 
 func (p *ControllerConfigPage) View() string {
 	var b strings.Builder
-	b.WriteString(common.LabelStyle.Render("Controller & Tunnel Settings"))
+	b.WriteString(common.LabelStyle.Render("Controller Settings"))
 	b.WriteString("\n\n")
 	b.WriteString(p.adminKey.View())
 	b.WriteString("\n\n")
@@ -230,12 +214,13 @@ func (p *ControllerConfigPage) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(p.region.View())
 	b.WriteString("\n\n")
-	b.WriteString(common.LabelStyle.Render("Cloudflare Tunnel (controller owns the tunnel)"))
-	b.WriteString("\n\n")
-	b.WriteString(p.tunnelToken.View())
-	b.WriteString("\n\n")
-	b.WriteString(p.protocol.View())
-	b.WriteString("\n")
+
+	// Show tunnel status from dashboard wiring page
+	if p.tunnelTokenSet {
+		b.WriteString(common.SuccessStyle.Render("Tunnel token set from Dashboard & Tunnel page"))
+		b.WriteString("\n\n")
+	}
+
 	b.WriteString(p.ingress.View())
 	b.WriteString("\n\n")
 	b.WriteString(common.LabelStyle.Render("Compliance Enforcement Policy"))
@@ -245,7 +230,5 @@ func (p *ControllerConfigPage) View() string {
 	b.WriteString(p.requireOSFIPS.View())
 	b.WriteString("\n\n")
 	b.WriteString(p.requireDiskEnc.View())
-	b.WriteString("\n\n")
-	b.WriteString(p.withCF.View())
 	return b.String()
 }

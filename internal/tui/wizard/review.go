@@ -258,9 +258,6 @@ func BuildProvisionCommand(cfg *config.Config) (script string, args []string) {
 		if cfg.TunnelToken != "" {
 			args = append(args, "--tunnel-token", cfg.TunnelToken)
 		}
-		if cfg.Protocol != "" {
-			args = append(args, "--protocol", cfg.Protocol)
-		}
 		if cfg.AdminKey != "" {
 			args = append(args, "--admin-key", cfg.AdminKey)
 		}
@@ -323,6 +320,16 @@ func BuildProvisionCommand(cfg *config.Config) (script string, args []string) {
 	}
 	if cfg.NodeRegion != "" {
 		args = append(args, "--node-region", cfg.NodeRegion)
+	}
+
+	// Public hostname (controller only, for tunnel ingress + DNS setup)
+	if cfg.Role == "controller" {
+		if cfg.PublicHostname != "" {
+			args = append(args, "--public-hostname", cfg.PublicHostname)
+		}
+		if cfg.HostnameService != "" {
+			args = append(args, "--hostname-service", cfg.HostnameService)
+		}
 	}
 
 	// Cloudflare API credentials (controller only)
@@ -516,7 +523,10 @@ func (p *ReviewPage) renderSummary() string {
 		b.WriteString(sectionStyle.Render("TUNNEL"))
 		b.WriteString("\n")
 		masked("Tunnel Token:", cfg.TunnelToken)
-		field("Protocol:", cfg.Protocol)
+		if cfg.PublicHostname != "" {
+			field("Public Hostname:", cfg.PublicHostname)
+			field("Backend Service:", cfg.HostnameService)
+		}
 		b.WriteString("  " + fieldStyle.Render("Ingress Rules:") + "\n")
 		for _, rule := range cfg.Ingress {
 			if rule.Hostname != "" {

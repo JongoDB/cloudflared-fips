@@ -334,9 +334,6 @@ func TestRenderSummary_ControllerRole(t *testing.T) {
 	if !strings.Contains(got, "TUNNEL") {
 		t.Error("controller should contain TUNNEL section")
 	}
-	if !strings.Contains(got, "quic") {
-		t.Error("should show protocol")
-	}
 	if !strings.Contains(got, "app.example.com") {
 		t.Error("should show ingress hostname")
 	}
@@ -536,7 +533,8 @@ func TestNewWizardModel(t *testing.T) {
 	}
 
 	// Verify page titles for default controller role
-	expectedTitles := []string{"Role & Tier", "Controller & Tunnel", "Dashboard Wiring", "FIPS Options", "Review & Provision"}
+	// Page order: RoleTier → DashboardWiring → ControllerConfig → FIPS → Review
+	expectedTitles := []string{"Role & Tier", "Dashboard & Tunnel", "Controller & Tunnel", "FIPS Options", "Review & Provision"}
 	for i, want := range expectedTitles {
 		if i >= len(m.pages) {
 			break
@@ -719,8 +717,9 @@ func TestBuildProvisionCommand_ControllerWithTunnel(t *testing.T) {
 	if !strings.Contains(argStr, "--tunnel-token eyJ-controller-token") {
 		t.Error("controller should include --tunnel-token")
 	}
-	if !strings.Contains(argStr, "--protocol quic") {
-		t.Error("should include --protocol")
+	// Protocol is no longer passed for controller (QUIC is always the default)
+	if strings.Contains(argStr, "--protocol") {
+		t.Error("controller should NOT include --protocol (QUIC is the default)")
 	}
 	if !strings.Contains(argStr, "--admin-key admin-key-123") {
 		t.Error("should include --admin-key")

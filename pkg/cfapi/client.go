@@ -180,6 +180,103 @@ func (c *Client) patch(path string, body interface{}) (json.RawMessage, error) {
 	return apiResp.Result, nil
 }
 
+// post performs a POST request to the Cloudflare API.
+// POST creates new resources; it does not use or invalidate the cache.
+func (c *Client) post(path string, body interface{}) (json.RawMessage, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := c.baseURL + path
+	req, err := http.NewRequest("POST", url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode == 429 {
+		return nil, fmt.Errorf("rate limited by Cloudflare API (429)")
+	}
+
+	var apiResp apiResponse
+	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+		return nil, fmt.Errorf("parse API response: %w", err)
+	}
+
+	if !apiResp.Success {
+		if len(apiResp.Errors) > 0 {
+			return nil, fmt.Errorf("API error: %s (code %d)", apiResp.Errors[0].Message, apiResp.Errors[0].Code)
+		}
+		return nil, fmt.Errorf("API returned success=false")
+	}
+
+	return apiResp.Result, nil
+}
+
+// put performs a PUT request to the Cloudflare API.
+// PUT replaces a resource entirely; it invalidates the cache for the given path.
+func (c *Client) put(path string, body interface{}) (json.RawMessage, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := c.baseURL + path
+	req, err := http.NewRequest("PUT", url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode == 429 {
+		return nil, fmt.Errorf("rate limited by Cloudflare API (429)")
+	}
+
+	var apiResp apiResponse
+	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+		return nil, fmt.Errorf("parse API response: %w", err)
+	}
+
+	if !apiResp.Success {
+		if len(apiResp.Errors) > 0 {
+			return nil, fmt.Errorf("API error: %s (code %d)", apiResp.Errors[0].Message, apiResp.Errors[0].Code)
+		}
+		return nil, fmt.Errorf("API returned success=false")
+	}
+
+	// Invalidate cache for this path
+	c.mu.Lock()
+	delete(c.cache, path)
+	c.mu.Unlock()
+
+	return apiResp.Result, nil
+}
+
 // ClearCache removes all cached responses.
 func (c *Client) ClearCache() {
 	c.mu.Lock()
