@@ -6,6 +6,25 @@
 
 ---
 
+## Release Process
+
+**Strict semver.** Tags are immutable — never delete, move, or force-push a tag.
+
+- **Patch (0.5.x):** Bug fixes, UX improvements, doc updates
+- **Minor (0.x.0):** New features, new API endpoints, new fleet capabilities
+- **Major (x.0.0):** Breaking changes (config format, API contract, CLI flags)
+
+**Workflow:**
+1. Commit all changes to `main`
+2. `git push origin main`
+3. `git tag -a vX.Y.Z -m "vX.Y.Z: Short description"`
+4. `git push origin --tags`
+5. `gh release create vX.Y.Z --title "..." --notes "..."`
+
+**Never** delete or re-create a tag. If a release has a mistake, bump the patch version (e.g., v0.5.2 → v0.5.3). Each tag points to exactly one commit, permanently.
+
+---
+
 ## Progress Summary (last updated: 2026-02-21, final cleanup)
 
 | Area | Status | Notes |
