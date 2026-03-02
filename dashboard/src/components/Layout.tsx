@@ -2,9 +2,14 @@ import type { ReactNode } from 'react'
 
 interface LayoutProps {
   children: ReactNode
+  version?: string
+  cryptoEngine?: string
 }
 
-export default function Layout({ children }: LayoutProps) {
+export default function Layout({ children, version, cryptoEngine }: LayoutProps) {
+  const versionLabel = version ? `v${version}-fips` : 'v0.0.0-fips'
+  const cryptoLabel = cryptoEngine || 'BoringCrypto #4735'
+
   return (
     <div className="min-h-screen bg-gray-50 overflow-x-hidden">
       <header className="bg-white border-b border-gray-200 shadow-sm">
@@ -23,9 +28,9 @@ export default function Layout({ children }: LayoutProps) {
             </div>
             <div className="flex items-center gap-2 sm:gap-4">
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                BoringCrypto #4735
+                {cryptoLabel}
               </span>
-              <span className="text-xs sm:text-sm text-gray-500">v0.1.0-fips</span>
+              <span className="text-xs sm:text-sm text-gray-500">{versionLabel}</span>
             </div>
           </div>
         </div>

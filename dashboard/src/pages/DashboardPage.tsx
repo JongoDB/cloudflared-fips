@@ -3,6 +3,7 @@ import Layout from '../components/Layout'
 import SummaryBar from '../components/SummaryBar'
 import BuildManifestPanel from '../components/BuildManifestPanel'
 import ChecklistSection from '../components/ChecklistSection'
+import ArchitectureChain from '../components/ArchitectureChain'
 import ExportButtons from '../components/ExportButtons'
 import SunsetBanner from '../components/SunsetBanner'
 import DeploymentTierBadge from '../components/DeploymentTierBadge'
@@ -67,8 +68,14 @@ export default function DashboardPage() {
     return result
   }, [sections])
 
+  const cryptoBadge = useMemo(() => {
+    if (!manifest.crypto_engine) return undefined
+    const cert = manifest.fips_certificates?.[0]?.certificate
+    return cert ? `${manifest.crypto_engine} ${cert}` : manifest.crypto_engine
+  }, [manifest])
+
   return (
-    <Layout>
+    <Layout version={manifest.version} cryptoEngine={cryptoBadge}>
       <SunsetBanner
         sunsetDate={migration.sunset_date}
         currentStandard={migration.current_standard}
@@ -92,6 +99,7 @@ export default function DashboardPage() {
         </div>
       </div>
       <SummaryBar summary={summary} />
+      <ArchitectureChain sections={sections} />
       <FIPSBackendCard />
       <BuildManifestPanel manifest={manifest} />
       <div>
