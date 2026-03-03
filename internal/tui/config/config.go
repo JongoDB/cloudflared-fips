@@ -102,6 +102,7 @@ type DashboardConfig struct {
 	ZoneID         string    `yaml:"zone-id,omitempty"`
 	AccountID      string    `yaml:"account-id,omitempty"`
 	TunnelID       string    `yaml:"tunnel-id,omitempty"`
+	TunnelName     string    `yaml:"tunnel-name,omitempty"`
 	MetricsAddress string    `yaml:"metrics-address,omitempty"`
 	MDM            MDMConfig `yaml:"mdm,omitempty"`
 }

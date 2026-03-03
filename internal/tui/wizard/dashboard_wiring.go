@@ -822,6 +822,7 @@ func (p *DashboardWiringPage) Apply(cfg *config.Config) {
 	if p.tunnelCreated {
 		cfg.TunnelToken = p.createdTunnelToken
 		cfg.Dashboard.TunnelID = p.createdTunnelID
+		cfg.Dashboard.TunnelName = p.createdTunnelName
 	} else if p.hasTunnels() {
 		selected := p.tunnelPicker.Selected()
 		if selected != "__create_new__" {
@@ -829,6 +830,13 @@ func (p *DashboardWiringPage) Apply(cfg *config.Config) {
 			// Use fetched token for existing tunnel
 			if p.createdTunnelToken != "" {
 				cfg.TunnelToken = p.createdTunnelToken
+			}
+			// Store tunnel name from picker label
+			for _, opt := range p.tunnelPicker.Options {
+				if opt.Value == selected {
+					cfg.Dashboard.TunnelName = opt.Label
+					break
+				}
 			}
 		}
 	}

@@ -353,6 +353,9 @@ func BuildProvisionCommand(cfg *config.Config) (script string, args []string) {
 		if cfg.Dashboard.TunnelID != "" {
 			args = append(args, "--cf-tunnel-id", cfg.Dashboard.TunnelID)
 		}
+		if cfg.Dashboard.TunnelName != "" {
+			args = append(args, "--tunnel-name", cfg.Dashboard.TunnelName)
+		}
 	}
 
 	// Skip FIPS

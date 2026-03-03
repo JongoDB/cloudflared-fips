@@ -67,6 +67,7 @@ func main() {
 	// Tunnel setup (one-shot mode: create DNS CNAME + configure tunnel ingress, then exit)
 	setupTunnel := flag.Bool("setup-tunnel", false, "one-shot: create DNS CNAME and configure tunnel ingress, then exit")
 	teardownTunnel := flag.Bool("teardown-tunnel", false, "one-shot: delete DNS CNAME and tunnel, then exit")
+	tunnelName := flag.String("tunnel-name", "cloudflared-fips", "name for auto-created tunnel (default: cloudflared-fips)")
 	publicHostname := flag.String("public-hostname", "", "public hostname for tunnel ingress (e.g., dashboard.example.com)")
 	hostnameService := flag.String("hostname-service", "http://localhost:8080", "backend service URL for tunnel ingress")
 
@@ -90,7 +91,7 @@ func main() {
 			envOrFlag(*cfZoneID, "CF_ZONE_ID"),
 			envOrFlag(*cfAccountID, "CF_ACCOUNT_ID"),
 			envOrFlag(*cfTunnelID, "CF_TUNNEL_ID"),
-			*publicHostname, *hostnameService)
+			*tunnelName, *publicHostname, *hostnameService)
 		return
 	}
 
@@ -394,7 +395,7 @@ func envOrFlag(flagVal, envKey string) string {
 // one via the Cloudflare API and prints the tunnel ID and token to stdout
 // (prefixed with TUNNEL_ID= and TUNNEL_TOKEN=) so the provision script can
 // capture them.
-func runSetupTunnel(logger *log.Logger, token, zoneID, accountID, tunnelID, hostname, service string) {
+func runSetupTunnel(logger *log.Logger, token, zoneID, accountID, tunnelID, name, hostname, service string) {
 	logger.Printf("Setup tunnel: hostname=%s service=%s", hostname, service)
 
 	if token == "" {
@@ -411,9 +412,9 @@ func runSetupTunnel(logger *log.Logger, token, zoneID, accountID, tunnelID, host
 
 	// Step 1: Create tunnel if no tunnel ID provided
 	if tunnelID == "" {
-		tunnelName := "cloudflared-fips"
-		if hostname != "" {
-			tunnelName = hostname
+		tunnelName := name
+		if tunnelName == "" {
+			tunnelName = "cloudflared-fips"
 		}
 		logger.Printf("No tunnel ID provided — creating tunnel '%s'...", tunnelName)
 

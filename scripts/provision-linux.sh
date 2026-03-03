@@ -72,6 +72,7 @@ REQUIRE_DISK_ENC=false
 PROTOCOL="quic"
 PUBLIC_HOSTNAME=""
 HOSTNAME_SERVICE="http://localhost:8080"
+TUNNEL_NAME="cloudflared-fips"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -102,6 +103,7 @@ while [[ $# -gt 0 ]]; do
         --protocol)        PROTOCOL="$2"; shift 2 ;;
         --public-hostname) PUBLIC_HOSTNAME="$2"; shift 2 ;;
         --hostname-service) HOSTNAME_SERVICE="$2"; shift 2 ;;
+        --tunnel-name)     TUNNEL_NAME="$2"; shift 2 ;;
         --help|-h)
             echo "Usage: sudo $0 [OPTIONS]"
             echo ""
@@ -1125,6 +1127,7 @@ phase4_start() {
                     --cf-zone-id "${CF_ZONE_ID}" \
                     --cf-account-id "${CF_ACCOUNT_ID}" \
                     --cf-tunnel-id "${CF_TUNNEL_ID}" \
+                    --tunnel-name "${TUNNEL_NAME}" \
                     --public-hostname "${PUBLIC_HOSTNAME}" \
                     --hostname-service "${HOSTNAME_SERVICE}" 2>&1) || warn "Tunnel setup had warnings"
 
@@ -1192,6 +1195,7 @@ TUNUNITEOF
                     --cf-zone-id "${CF_ZONE_ID}" \
                     --cf-account-id "${CF_ACCOUNT_ID}" \
                     --cf-tunnel-id "${CF_TUNNEL_ID}" \
+                    --tunnel-name "${TUNNEL_NAME}" \
                     --public-hostname "${PUBLIC_HOSTNAME}" \
                     --hostname-service "${HOSTNAME_SERVICE}" || warn "Tunnel setup had warnings (check above)"
             fi
