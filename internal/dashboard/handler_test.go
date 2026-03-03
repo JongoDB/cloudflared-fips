@@ -320,6 +320,104 @@ func TestWriteSSEEvent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// SPA fallback: client-side routes serve index.html
+// ---------------------------------------------------------------------------
+
+func TestSPAFallback(t *testing.T) {
+	// Create a temp directory with an index.html and an asset file
+	dir := t.TempDir()
+	indexContent := `<!DOCTYPE html><html><body>SPA</body></html>`
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(indexContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	assetsDir := filepath.Join(dir, "assets")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "app.js"), []byte("console.log('app')"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := spaHandler(http.Dir(dir))
+
+	tests := []struct {
+		path       string
+		wantStatus int
+		wantBody   string
+		desc       string
+	}{
+		{"/", 200, "SPA", "root serves index.html"},
+		{"/fleet", 200, "SPA", "client-side route /fleet serves index.html"},
+		{"/node", 200, "SPA", "client-side route /node serves index.html"},
+		{"/fleet/nodes/abc123", 200, "SPA", "nested client-side route serves index.html"},
+		{"/assets/app.js", 200, "console.log", "real asset file is served directly"},
+		{"/assets/missing.js", 404, "", "missing asset returns 404"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("%s: got status %d, want %d", tt.path, w.Code, tt.wantStatus)
+			}
+			if tt.wantBody != "" && !strings.Contains(w.Body.String(), tt.wantBody) {
+				t.Errorf("%s: body %q does not contain %q", tt.path, w.Body.String(), tt.wantBody)
+			}
+		})
+	}
+}
+
+func TestFullMuxRouting(t *testing.T) {
+	// Create a temp dir with index.html (simulates embedded static)
+	dir := t.TempDir()
+	indexContent := `<!DOCTYPE html><html><body>Dashboard SPA</body></html>`
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(indexContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wire up the mux exactly like cmd/dashboard/main.go does
+	handler := NewHandler("", testChecker())
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, handler)
+	mux.Handle("/", spaHandler(http.Dir(dir)))
+
+	tests := []struct {
+		path       string
+		wantStatus int
+		wantBody   string
+		desc       string
+	}{
+		// API routes should work
+		{"/api/v1/health", 200, `"status"`, "health endpoint"},
+		{"/api/v1/compliance", 200, `"sections"`, "compliance endpoint"},
+		{"/api/v1/selftest", 200, `"results"`, "selftest endpoint"},
+		// SPA client-side routes should serve index.html
+		{"/", 200, "Dashboard SPA", "root"},
+		{"/fleet", 200, "Dashboard SPA", "fleet route"},
+		{"/node", 200, "Dashboard SPA", "node route"},
+		{"/fleet/nodes/abc123", 200, "Dashboard SPA", "nested fleet route"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("%s: got status %d, want %d", tt.path, w.Code, tt.wantStatus)
+			}
+			if tt.wantBody != "" && !strings.Contains(w.Body.String(), tt.wantBody) {
+				t.Errorf("%s: body does not contain %q (got %d bytes)", tt.path, tt.wantBody, w.Body.Len())
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Integration: proxy → ProxyStatsChecker → Checker → Dashboard /api/v1/compliance
 // ---------------------------------------------------------------------------
 
