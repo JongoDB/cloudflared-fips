@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -22,6 +23,8 @@ import (
 	"github.com/cloudflared-fips/cloudflared-fips/internal/compliance"
 	"github.com/cloudflared-fips/cloudflared-fips/internal/dashboard"
 	"github.com/cloudflared-fips/cloudflared-fips/internal/ipc"
+	"github.com/cloudflared-fips/cloudflared-fips/pkg/alerts"
+	"github.com/cloudflared-fips/cloudflared-fips/pkg/audit"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/buildinfo"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/cfapi"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/clientdetect"
@@ -81,6 +84,17 @@ func main() {
 	nodeRegion := flag.String("node-region", "", "region label for this node")
 	nodeID := flag.String("node-id", "", "node ID from enrollment (or set NODE_ID env)")
 
+	// Security Operations flags
+	auditLogPath := flag.String("audit-log", "", "path to audit log file (enables AU-2 compliance; e.g., /var/log/cloudflared-fips/audit.json)")
+	syslogAddr := flag.String("syslog-addr", "", "syslog address for audit log forwarding (e.g., tcp://siem:514)")
+	dashboardToken := flag.String("dashboard-token", "", "Bearer token for dashboard API auth (or set DASHBOARD_TOKEN env)")
+	alertWebhooks := flag.String("alert-webhook", "", "comma-separated webhook URLs for compliance alerts")
+	tokenPathFlag := flag.String("token-path", "", "path to tunnel token file for expiry monitoring")
+	certPathsFlag := flag.String("cert-paths", "", "comma-separated TLS certificate paths to monitor for expiry")
+	secretsPathsFlag := flag.String("secrets-paths", "", "comma-separated directories to scan for secret file permissions")
+	upstreamChecksum := flag.String("upstream-checksum", "", "expected SHA-256 hash of upstream cloudflared binary")
+	enforcementMode := flag.String("enforcement-mode", "audit", "security policy enforcement mode: enforce, audit, disabled")
+
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "", log.LstdFlags)
@@ -118,11 +132,83 @@ func main() {
 		targets = strings.Split(*ingressTargets, ",")
 	}
 
+	// --- Audit Logger (AU-2, AU-3, AU-6) ---
+	var auditLogger *audit.AuditLogger
+	auditPath := envOrFlag(*auditLogPath, "AUDIT_LOG_PATH")
+	if auditPath != "" {
+		var auditOpts []audit.Option
+		sysAddr := envOrFlag(*syslogAddr, "SYSLOG_ADDR")
+		if sysAddr != "" {
+			// Parse "tcp://host:port" or "udp://host:port"
+			if u, err := url.Parse(sysAddr); err == nil {
+				auditOpts = append(auditOpts, audit.WithSyslog(u.Scheme, u.Host))
+				logger.Printf("Syslog forwarding: %s → %s", u.Scheme, u.Host)
+			}
+		}
+		var err error
+		auditLogger, err = audit.NewAuditLogger(auditPath, auditOpts...)
+		if err != nil {
+			logger.Fatalf("Failed to create audit logger: %v", err)
+		}
+		defer auditLogger.Close()
+		logger.Printf("Audit logging enabled: %s", auditPath)
+		auditLogger.Log(audit.AuditEvent{
+			EventType: "system_event",
+			Severity:  "info",
+			Actor:     "system",
+			Action:    "started",
+			Detail:    fmt.Sprintf("Dashboard started: %s on %s", buildinfo.Version, *addr),
+			NISTRef:   "AU-2",
+		})
+	}
+
+	// --- Alert Manager (CA-7, SI-4) ---
+	var alertManager *alerts.AlertManager
+	webhookURLs := envOrFlag(*alertWebhooks, "ALERT_WEBHOOKS")
+	if webhookURLs != "" {
+		var webhooks []alerts.WebhookConfig
+		for _, u := range strings.Split(webhookURLs, ",") {
+			u = strings.TrimSpace(u)
+			if u != "" {
+				webhooks = append(webhooks, alerts.WebhookConfig{URL: u})
+			}
+		}
+		alertManager = alerts.NewAlertManager(auditLogger, webhooks)
+		logger.Printf("Alerting enabled: %d webhook(s)", len(webhooks))
+	} else {
+		alertManager = alerts.NewAlertManager(auditLogger, nil)
+	}
+
+	// --- Dashboard Auth Token ---
+	dashToken := envOrFlag(*dashboardToken, "DASHBOARD_TOKEN")
+	authEnabled := dashToken != ""
+	if authEnabled {
+		logger.Printf("Dashboard API authentication enabled")
+	}
+
+	// --- Parse Security Operations options ---
+	var certPaths []string
+	if cp := envOrFlag(*certPathsFlag, ""); cp != "" {
+		certPaths = strings.Split(cp, ",")
+	}
+	var secretsPaths []string
+	if sp := envOrFlag(*secretsPathsFlag, ""); sp != "" {
+		secretsPaths = strings.Split(sp, ",")
+	}
+
 	liveChecker := compliance.NewLiveChecker(
 		compliance.WithManifestPath(*manifestPath),
 		compliance.WithConfigPath(*configPath),
 		compliance.WithMetricsAddr(*metricsAddr),
 		compliance.WithIngressTargets(targets),
+		compliance.WithAuditLogger(auditLogger),
+		compliance.WithAlertManager(alertManager),
+		compliance.WithAuthEnabled(authEnabled),
+		compliance.WithTokenPath(envOrFlag(*tokenPathFlag, "")),
+		compliance.WithCertPaths(certPaths),
+		compliance.WithSecretsPaths(secretsPaths),
+		compliance.WithUpstreamChecksum(envOrFlag(*upstreamChecksum, "")),
+		compliance.WithEnforcementMode(*enforcementMode),
 	)
 
 	// Build compliance sections from live checks
@@ -130,6 +216,7 @@ func main() {
 	checker.AddSection(liveChecker.RunTunnelChecks())
 	checker.AddSection(liveChecker.RunLocalServiceChecks())
 	checker.AddSection(liveChecker.RunBuildSupplyChainChecks())
+	checker.AddSection(liveChecker.RunSecurityOpsChecks())
 
 	// Cloudflare API integration (if token provided)
 	token := envOrFlag(*cfToken, "CF_API_TOKEN")
@@ -162,6 +249,8 @@ func main() {
 	}
 
 	handler := dashboard.NewHandler(*manifestPath, checker)
+	handler.AuditLogger = auditLogger
+	handler.AlertManager = alertManager
 
 	mux := http.NewServeMux()
 	dashboard.RegisterRoutes(mux, handler)
@@ -339,10 +428,16 @@ func main() {
 		}()
 	}
 
+	// Wrap mux with auth middleware (AC-2, AC-3, AC-7)
+	authMiddleware := dashboard.NewAuthMiddleware(dashboard.AuthConfig{
+		Token:    dashToken,
+		AuditLog: auditLogger,
+	}, mux)
+
 	// Configure HTTP server with timeouts
 	server := &http.Server{
 		Addr:              *addr,
-		Handler:           dashboard.SecurityHeaders(mux),
+		Handler:           dashboard.SecurityHeaders(authMiddleware),
 		ReadTimeout:       30 * time.Second,
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      60 * time.Second, // SSE needs longer write timeout

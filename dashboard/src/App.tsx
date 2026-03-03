@@ -4,6 +4,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import DashboardPage from './pages/DashboardPage'
 import FleetOverviewPage from './pages/FleetOverviewPage'
 import NodeDetailPage from './pages/NodeDetailPage'
+import ComplianceInfoPage from './pages/ComplianceInfoPage'
 
 function App() {
   const [fleetMode, setFleetMode] = useState<boolean | null>(null)
@@ -41,6 +42,9 @@ function App() {
 
           {/* Local node compliance */}
           <Route path="/node" element={<DashboardPage />} />
+
+          {/* AO Compliance Info */}
+          <Route path="/compliance-info" element={<ComplianceInfoPage />} />
 
           {/* Root: redirect based on fleet mode */}
           <Route

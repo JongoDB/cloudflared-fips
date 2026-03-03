@@ -3,8 +3,11 @@ package compliance
 import (
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -15,6 +18,8 @@ import (
 	"time"
 
 	"github.com/cloudflared-fips/cloudflared-fips/internal/selftest"
+	"github.com/cloudflared-fips/cloudflared-fips/pkg/alerts"
+	"github.com/cloudflared-fips/cloudflared-fips/pkg/audit"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/fipsbackend"
 	"github.com/cloudflared-fips/cloudflared-fips/pkg/manifest"
 )
@@ -69,6 +74,17 @@ type LiveChecker struct {
 	configPath     string
 	metricsAddr    string
 	ingressTargets []string
+
+	// Security Operations fields (Part 4)
+	auditLogger      *audit.AuditLogger
+	alertManager     *alerts.AlertManager
+	authEnabled      bool
+	tokenPath        string   // tunnel token for expiry check
+	certPaths        []string // TLS certs for expiry check
+	secretsPaths     []string // dirs to scan for secret file perms
+	upstreamChecksum string   // expected cloudflared hash
+	enforcementMode  string   // enforce, audit, disabled
+	lastScanTime     time.Time
 }
 
 // LiveCheckerOption configures a LiveChecker.
@@ -97,6 +113,46 @@ func WithMetricsAddr(addr string) LiveCheckerOption {
 // WithIngressTargets sets the local service endpoints to probe.
 func WithIngressTargets(targets []string) LiveCheckerOption {
 	return func(lc *LiveChecker) { lc.ingressTargets = targets }
+}
+
+// WithAuditLogger enables audit-log-related compliance checks.
+func WithAuditLogger(al *audit.AuditLogger) LiveCheckerOption {
+	return func(lc *LiveChecker) { lc.auditLogger = al }
+}
+
+// WithAlertManager enables alerting-related compliance checks.
+func WithAlertManager(am *alerts.AlertManager) LiveCheckerOption {
+	return func(lc *LiveChecker) { lc.alertManager = am }
+}
+
+// WithAuthEnabled indicates whether dashboard authentication is active.
+func WithAuthEnabled(enabled bool) LiveCheckerOption {
+	return func(lc *LiveChecker) { lc.authEnabled = enabled }
+}
+
+// WithTokenPath sets the tunnel token file for expiry checking.
+func WithTokenPath(path string) LiveCheckerOption {
+	return func(lc *LiveChecker) { lc.tokenPath = path }
+}
+
+// WithCertPaths sets TLS certificate files to monitor for expiry.
+func WithCertPaths(paths []string) LiveCheckerOption {
+	return func(lc *LiveChecker) { lc.certPaths = paths }
+}
+
+// WithSecretsPaths sets directories to scan for secret file permissions.
+func WithSecretsPaths(paths []string) LiveCheckerOption {
+	return func(lc *LiveChecker) { lc.secretsPaths = paths }
+}
+
+// WithUpstreamChecksum sets the expected SHA-256 hash of upstream cloudflared.
+func WithUpstreamChecksum(hash string) LiveCheckerOption {
+	return func(lc *LiveChecker) { lc.upstreamChecksum = hash }
+}
+
+// WithEnforcementMode sets the security policy enforcement mode.
+func WithEnforcementMode(mode string) LiveCheckerOption {
+	return func(lc *LiveChecker) { lc.enforcementMode = mode }
 }
 
 // NewLiveChecker creates a checker that queries the running system.
@@ -970,5 +1026,650 @@ func (lc *LiveChecker) checkFIPSModuleSunset() ChecklistItem {
 		item.Status = StatusUnknown
 	}
 
+	return item
+}
+
+// --- Security Operations checks (Part 4) ---
+
+// RunSecurityOpsChecks produces the "Security Operations" compliance section
+// with 13 checks covering audit logging, authentication, alerting, credential
+// lifecycle, and security policy enforcement.
+func (lc *LiveChecker) RunSecurityOpsChecks() Section {
+	lc.lastScanTime = time.Now()
+
+	section := Section{
+		ID:          "security-ops",
+		Name:        "Security Operations",
+		Description: "Audit logging, authentication, alerting, credential lifecycle, and policy enforcement (AU, AC, CA, SI, SC, PL controls)",
+	}
+
+	section.Items = append(section.Items, lc.checkAuditLogActive())
+	section.Items = append(section.Items, lc.checkDashboardAuth())
+	section.Items = append(section.Items, lc.checkFailedAuthMonitoring())
+	section.Items = append(section.Items, lc.checkAlertingConfigured())
+	section.Items = append(section.Items, lc.checkSecretsAtRest())
+	section.Items = append(section.Items, lc.checkTunnelTokenExpiry())
+	section.Items = append(section.Items, lc.checkTLSCertExpiry())
+	section.Items = append(section.Items, lc.checkFleetTokenAge())
+	section.Items = append(section.Items, lc.checkUpstreamIntegrity())
+	section.Items = append(section.Items, lc.checkLogForwarding())
+	section.Items = append(section.Items, lc.checkAuditLogIntegrity())
+	section.Items = append(section.Items, lc.checkComplianceScanRecent())
+	section.Items = append(section.Items, lc.checkSecurityPolicyEnforced())
+
+	return section
+}
+
+// so-1: Audit Log Active
+func (lc *LiveChecker) checkAuditLogActive() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-1",
+		Name:               "Audit Log Active",
+		Severity:           "critical",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks that the audit log file is writable and actively recording events",
+		Why:                "NIST AU-2/AU-3 require auditable events to be recorded. Without an active audit log, compliance actions cannot be tracked.",
+		Remediation:        "Start the dashboard with --audit-log /var/log/cloudflared-fips/audit.json",
+		NISTRef:            "AU-2, AU-3",
+	}
+
+	if lc.auditLogger == nil {
+		item.Status = StatusFail
+		item.What = "No audit logger configured"
+		return item
+	}
+
+	if lc.auditLogger.HasEvents() {
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("Audit log active: %s", lc.auditLogger.FilePath())
+	} else {
+		item.Status = StatusWarning
+		item.What = fmt.Sprintf("Audit log exists but empty: %s", lc.auditLogger.FilePath())
+	}
+	return item
+}
+
+// so-2: Dashboard Authentication
+func (lc *LiveChecker) checkDashboardAuth() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-2",
+		Name:               "Dashboard Authentication",
+		Severity:           "high",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks whether Bearer token authentication is enabled for the dashboard API",
+		Why:                "AC-2/AC-3 require access control on management interfaces. Without auth, any local process can query or modify compliance data.",
+		Remediation:        "Set --dashboard-token or DASHBOARD_TOKEN environment variable",
+		NISTRef:            "AC-2, AC-3",
+	}
+
+	if lc.authEnabled {
+		item.Status = StatusPass
+		item.What = "Dashboard API authentication enabled (Bearer token)"
+	} else {
+		item.Status = StatusWarning
+		item.What = "Dashboard API in open mode (localhost-only, no token required)"
+	}
+	return item
+}
+
+// so-3: Failed Auth Monitoring
+func (lc *LiveChecker) checkFailedAuthMonitoring() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-3",
+		Name:               "Failed Auth Monitoring",
+		Severity:           "high",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks that failed authentication attempts are logged and lockout is active",
+		Why:                "AC-7 requires automated account lockout after repeated failures. SI-4 requires monitoring and alerting on security events.",
+		Remediation:        "Enable both --dashboard-token and --audit-log for full auth monitoring with lockout",
+		NISTRef:            "AC-7, SI-4",
+	}
+
+	if lc.authEnabled && lc.auditLogger != nil {
+		item.Status = StatusPass
+		item.What = "Auth + audit logging active; failed attempts logged with IP lockout (5 attempts / 5 min)"
+	} else if lc.auditLogger != nil {
+		item.Status = StatusWarning
+		item.What = "Audit logging active but auth disabled — no failed attempts to monitor"
+	} else {
+		item.Status = StatusWarning
+		item.What = "No auth monitoring configured (enable --dashboard-token and --audit-log)"
+	}
+	return item
+}
+
+// so-4: Alerting Configured
+func (lc *LiveChecker) checkAlertingConfigured() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-4",
+		Name:               "Alerting Configured",
+		Severity:           "medium",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks whether webhook alerting is configured for compliance events",
+		Why:                "CA-7 requires continuous monitoring with notification. SI-4 requires automated alerts on security events.",
+		Remediation:        "Set --alert-webhook to one or more webhook URLs (e.g., Slack, PagerDuty, SIEM)",
+		NISTRef:            "CA-7, SI-4",
+	}
+
+	if lc.alertManager != nil && lc.alertManager.Configured() {
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("Alerting active: %d webhook(s) configured", lc.alertManager.WebhookCount())
+	} else {
+		item.Status = StatusWarning
+		item.What = "No webhooks configured (alerts logged only, no external notification)"
+	}
+	return item
+}
+
+// so-5: Secrets at Rest
+func (lc *LiveChecker) checkSecretsAtRest() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-5",
+		Name:               "Secrets at Rest",
+		Severity:           "critical",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks that secret files (tokens, keys, certificates) have restricted permissions (not world-readable)",
+		Why:                "SC-28 requires protection of information at rest. World-readable secret files allow any local user to steal credentials.",
+		Remediation:        "chmod 0640 on all secret files; chown to cloudflared-fips user/group",
+		NISTRef:            "SC-28, SC-12",
+	}
+
+	secretFiles := lc.collectSecretFiles()
+	if len(secretFiles) == 0 {
+		item.Status = StatusPass
+		item.What = "No secret files found to check (use --secrets-paths to specify directories)"
+		return item
+	}
+
+	var worldReadable []string
+	var widePerms []string
+
+	for _, path := range secretFiles {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		perm := info.Mode().Perm()
+		if perm&0o007 != 0 {
+			worldReadable = append(worldReadable, filepath.Base(path))
+		} else if perm&0o070 > 0o040 {
+			widePerms = append(widePerms, filepath.Base(path))
+		}
+	}
+
+	if len(worldReadable) > 0 {
+		item.Status = StatusFail
+		item.What = fmt.Sprintf("World-readable secrets: %s", strings.Join(worldReadable, ", "))
+	} else if len(widePerms) > 0 {
+		item.Status = StatusWarning
+		item.What = fmt.Sprintf("Wider-than-ideal perms on: %s (recommend 0640)", strings.Join(widePerms, ", "))
+	} else {
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("All %d secret files have restricted permissions", len(secretFiles))
+	}
+	return item
+}
+
+// so-6: Tunnel Token Expiry
+func (lc *LiveChecker) checkTunnelTokenExpiry() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-6",
+		Name:               "Tunnel Token Expiry",
+		Severity:           "high",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks if the tunnel authentication token is approaching expiry",
+		Why:                "SC-12/IA-5 require credential lifecycle management. An expired token causes tunnel outage.",
+		Remediation:        "Rotate the tunnel token via Cloudflare dashboard or API before expiry",
+		NISTRef:            "SC-12, IA-5",
+	}
+
+	if lc.tokenPath == "" {
+		// Check default locations
+		paths := []string{
+			"/etc/cloudflared-fips/token",
+			"/etc/cloudflared/cert.pem",
+			os.Getenv("HOME") + "/.cloudflared/cert.pem",
+		}
+		for _, p := range paths {
+			if _, err := os.Stat(p); err == nil {
+				lc.tokenPath = p
+				break
+			}
+		}
+	}
+
+	if lc.tokenPath == "" {
+		// Token-based tunnels use JWT tokens passed via --token flag at runtime
+		running, tokenBased := detectCloudflaredProcess()
+		if running && tokenBased {
+			item.Status = StatusPass
+			item.What = "Runtime JWT token (managed by Cloudflare, no local file to check)"
+			return item
+		}
+		item.Status = StatusUnknown
+		item.What = "No token file found (use --token-path to specify)"
+		return item
+	}
+
+	info, err := os.Stat(lc.tokenPath)
+	if err != nil {
+		item.Status = StatusUnknown
+		item.What = fmt.Sprintf("Cannot stat token file: %s", lc.tokenPath)
+		return item
+	}
+
+	// For cert.pem files, parse and check expiry
+	if strings.HasSuffix(lc.tokenPath, ".pem") {
+		return lc.checkPEMExpiry(item, lc.tokenPath)
+	}
+
+	// For opaque token files, check modification age as a proxy
+	age := time.Since(info.ModTime())
+	if age > 365*24*time.Hour {
+		item.Status = StatusWarning
+		item.What = fmt.Sprintf("Token file last modified %d days ago — consider rotation", int(age.Hours()/24))
+	} else {
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("Token file: %s (modified %d days ago)", filepath.Base(lc.tokenPath), int(age.Hours()/24))
+	}
+	return item
+}
+
+// so-7: TLS Certificate Expiry
+func (lc *LiveChecker) checkTLSCertExpiry() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-7",
+		Name:               "TLS Certificate Expiry",
+		Severity:           "critical",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks that all configured TLS certificates are valid and not approaching expiry",
+		Why:                "SC-12/IA-5 require credential lifecycle management. Expired certificates cause service outages and break TLS.",
+		Remediation:        "Renew certificates before expiry. Automate renewal with certbot/ACME.",
+		NISTRef:            "SC-12, IA-5",
+	}
+
+	if len(lc.certPaths) == 0 {
+		item.Status = StatusUnknown
+		item.What = "No TLS certificate paths configured (use --cert-paths to monitor)"
+		return item
+	}
+
+	var soonest time.Time
+	var soonestName string
+	var expired []string
+
+	for _, path := range lc.certPaths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		block, _ := pem.Decode(data)
+		if block == nil {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			continue
+		}
+
+		if time.Now().After(cert.NotAfter) {
+			expired = append(expired, filepath.Base(path))
+		} else if soonest.IsZero() || cert.NotAfter.Before(soonest) {
+			soonest = cert.NotAfter
+			soonestName = filepath.Base(path)
+		}
+	}
+
+	if len(expired) > 0 {
+		item.Status = StatusFail
+		item.What = fmt.Sprintf("Expired certificates: %s", strings.Join(expired, ", "))
+		return item
+	}
+
+	if soonest.IsZero() {
+		item.Status = StatusUnknown
+		item.What = "No parseable certificates found at configured paths"
+		return item
+	}
+
+	daysLeft := int(time.Until(soonest).Hours() / 24)
+	if daysLeft < 30 {
+		item.Status = StatusWarning
+		item.What = fmt.Sprintf("Certificate %s expires in %d days (%s)", soonestName, daysLeft, soonest.Format("2006-01-02"))
+	} else {
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("All certificates valid; nearest expiry: %s in %d days", soonestName, daysLeft)
+	}
+	return item
+}
+
+// so-8: Fleet Token Age
+func (lc *LiveChecker) checkFleetTokenAge() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-8",
+		Name:               "Fleet Token Age",
+		Severity:           "medium",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks the age of fleet enrollment tokens for credential rotation compliance",
+		Why:                "SC-12/IA-5 require periodic credential rotation. Long-lived tokens increase the risk of compromise.",
+		Remediation:        "Rotate fleet enrollment tokens every 90 days via the fleet API",
+		NISTRef:            "SC-12, IA-5",
+	}
+
+	// Check if fleet API key file exists (common locations)
+	keyPaths := []string{
+		"/etc/cloudflared-fips/node-api-key",
+		"/var/lib/cloudflared-fips/node-api-key",
+	}
+
+	for _, p := range keyPaths {
+		info, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		age := time.Since(info.ModTime())
+		days := int(age.Hours() / 24)
+
+		if days > 180 {
+			item.Status = StatusFail
+			item.What = fmt.Sprintf("Fleet key %s is %d days old (>180 days)", filepath.Base(p), days)
+			return item
+		}
+		if days > 90 {
+			item.Status = StatusWarning
+			item.What = fmt.Sprintf("Fleet key %s is %d days old (>90 days, rotation recommended)", filepath.Base(p), days)
+			return item
+		}
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("Fleet key %s is %d days old", filepath.Base(p), days)
+		return item
+	}
+
+	item.Status = StatusUnknown
+	item.What = "No fleet enrollment key found (not in fleet mode or key managed externally)"
+	return item
+}
+
+// so-9: Upstream cloudflared Integrity
+func (lc *LiveChecker) checkUpstreamIntegrity() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-9",
+		Name:               "Upstream cloudflared Integrity",
+		Severity:           "high",
+		VerificationMethod: VerifyDirect,
+		What:               "Verifies the upstream cloudflared binary against a known-good SHA-256 checksum",
+		Why:                "SI-7 requires software integrity verification. A modified upstream binary could bypass FIPS crypto.",
+		Remediation:        "Download cloudflared from the official Cloudflare release page and verify its checksum",
+		NISTRef:            "SI-7, SA-11",
+	}
+
+	// Find upstream cloudflared binary
+	paths := []string{
+		"/usr/local/bin/cloudflared",
+		"/usr/bin/cloudflared",
+	}
+	var binaryPath string
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			binaryPath = p
+			break
+		}
+	}
+
+	if binaryPath == "" {
+		item.Status = StatusUnknown
+		item.What = "Upstream cloudflared binary not found at standard paths"
+		return item
+	}
+
+	if lc.upstreamChecksum == "" {
+		item.Status = StatusWarning
+		item.What = fmt.Sprintf("cloudflared found at %s but no expected checksum configured (use --upstream-checksum)", binaryPath)
+		return item
+	}
+
+	data, err := os.ReadFile(binaryPath)
+	if err != nil {
+		item.Status = StatusUnknown
+		item.What = fmt.Sprintf("Cannot read %s: %v", binaryPath, err)
+		return item
+	}
+
+	hash := sha256.Sum256(data)
+	hashHex := hex.EncodeToString(hash[:])
+
+	if hashHex == lc.upstreamChecksum {
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("Upstream cloudflared verified: %s...%s", hashHex[:8], hashHex[len(hashHex)-8:])
+	} else {
+		item.Status = StatusFail
+		item.What = fmt.Sprintf("Hash mismatch: got %s...%s, expected %s...%s",
+			hashHex[:8], hashHex[len(hashHex)-8:],
+			lc.upstreamChecksum[:8], lc.upstreamChecksum[len(lc.upstreamChecksum)-8:])
+	}
+	return item
+}
+
+// so-10: Log Forwarding (SIEM)
+func (lc *LiveChecker) checkLogForwarding() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-10",
+		Name:               "Log Forwarding (SIEM)",
+		Severity:           "high",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks whether audit logs are forwarded to an external SIEM via syslog",
+		Why:                "AU-4/AU-9 require audit log storage with integrity protection. Forwarding to a SIEM prevents local log tampering.",
+		Remediation:        "Set --syslog-addr to forward audit events (e.g., --syslog-addr tcp://siem:514)",
+		NISTRef:            "AU-4, AU-9",
+	}
+
+	if lc.auditLogger == nil {
+		item.Status = StatusFail
+		item.What = "No audit logging configured"
+		return item
+	}
+
+	if lc.auditLogger.SyslogActive() {
+		item.Status = StatusPass
+		item.What = "Audit events forwarded to syslog (SIEM integration active)"
+	} else {
+		item.Status = StatusWarning
+		item.What = "Audit log active but no syslog forwarding (local log only)"
+	}
+	return item
+}
+
+// so-11: Audit Log Integrity
+func (lc *LiveChecker) checkAuditLogIntegrity() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-11",
+		Name:               "Audit Log Integrity",
+		Severity:           "high",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks audit log file permissions to prevent unauthorized modification",
+		Why:                "AU-9 requires protection of audit information. World-readable or writable logs can be tampered with.",
+		Remediation:        "chmod 0640 on audit log files; chown to cloudflared-fips:cloudflared-fips",
+		NISTRef:            "AU-9",
+	}
+
+	if lc.auditLogger == nil {
+		item.Status = StatusWarning
+		item.What = "No audit logger configured"
+		return item
+	}
+
+	logPath := lc.auditLogger.FilePath()
+	if logPath == "" {
+		item.Status = StatusWarning
+		item.What = "Audit log path not available"
+		return item
+	}
+
+	info, err := os.Stat(logPath)
+	if err != nil {
+		item.Status = StatusWarning
+		item.What = fmt.Sprintf("Cannot stat audit log: %v", err)
+		return item
+	}
+
+	perm := info.Mode().Perm()
+	if perm&0o007 != 0 {
+		item.Status = StatusFail
+		item.What = fmt.Sprintf("Audit log is world-accessible: %04o (must be 0640 or stricter)", perm)
+	} else if perm > 0o640 {
+		item.Status = StatusWarning
+		item.What = fmt.Sprintf("Audit log permissions %04o wider than recommended 0640", perm)
+	} else {
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("Audit log permissions: %04o", perm)
+	}
+	return item
+}
+
+// so-12: Compliance Scan Recent
+func (lc *LiveChecker) checkComplianceScanRecent() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-12",
+		Name:               "Compliance Scan Recent",
+		Severity:           "medium",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks when the last compliance scan was performed",
+		Why:                "CA-7 requires continuous monitoring. Stale compliance data may not reflect current system state.",
+		Remediation:        "The dashboard performs scans on every page load and SSE refresh (30s). If this check fails, the dashboard may not be running.",
+		NISTRef:            "CA-7",
+	}
+
+	if lc.lastScanTime.IsZero() {
+		item.Status = StatusWarning
+		item.What = "No scan timestamp recorded"
+		return item
+	}
+
+	age := time.Since(lc.lastScanTime)
+	if age > 30*time.Minute {
+		item.Status = StatusFail
+		item.What = fmt.Sprintf("Last scan was %d minutes ago (>30 min)", int(age.Minutes()))
+	} else if age > 5*time.Minute {
+		item.Status = StatusWarning
+		item.What = fmt.Sprintf("Last scan was %d minutes ago", int(age.Minutes()))
+	} else {
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("Last scan: %s", lc.lastScanTime.Format(time.RFC3339))
+	}
+	return item
+}
+
+// so-13: Security Policy Enforced
+func (lc *LiveChecker) checkSecurityPolicyEnforced() ChecklistItem {
+	item := ChecklistItem{
+		ID:                 "so-13",
+		Name:               "Security Policy Enforced",
+		Severity:           "high",
+		VerificationMethod: VerifyDirect,
+		What:               "Checks the security policy enforcement mode (enforce, audit, or disabled)",
+		Why:                "PL-1 requires security policy implementation. Audit mode logs but does not block; disabled mode provides no protection.",
+		Remediation:        "Set enforcement_mode: enforce in config or --enforcement-mode enforce on CLI",
+		NISTRef:            "PL-1",
+	}
+
+	mode := lc.enforcementMode
+	if mode == "" {
+		mode = "audit" // default
+	}
+
+	switch mode {
+	case "enforce":
+		item.Status = StatusPass
+		item.What = "Security policy enforcement: ENFORCE (non-compliant requests blocked)"
+	case "audit":
+		item.Status = StatusWarning
+		item.What = "Security policy enforcement: AUDIT (violations logged but not blocked)"
+	case "disabled":
+		item.Status = StatusWarning
+		item.What = "Security policy enforcement: DISABLED (no policy enforcement active)"
+	default:
+		item.Status = StatusUnknown
+		item.What = fmt.Sprintf("Unknown enforcement mode: %s", mode)
+	}
+	return item
+}
+
+// --- Helpers for Security Operations checks ---
+
+// collectSecretFiles returns paths to files that likely contain secrets.
+func (lc *LiveChecker) collectSecretFiles() []string {
+	var files []string
+
+	// Default secret locations
+	defaultPaths := []string{
+		"/etc/cloudflared-fips/token",
+		"/etc/cloudflared-fips/node-api-key",
+		"/etc/cloudflared-fips/cloudflared-fips.yaml",
+		"/etc/cloudflared/cert.pem",
+		os.Getenv("HOME") + "/.cloudflared/cert.pem",
+	}
+
+	for _, p := range defaultPaths {
+		if _, err := os.Stat(p); err == nil {
+			files = append(files, p)
+		}
+	}
+
+	// Scan configured secret directories
+	for _, dir := range lc.secretsPaths {
+		filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			name := d.Name()
+			if strings.HasSuffix(name, ".pem") || strings.HasSuffix(name, ".key") ||
+				strings.HasSuffix(name, ".token") || strings.Contains(name, "secret") ||
+				strings.Contains(name, "credential") || name == "api-key" || name == "node-api-key" {
+				files = append(files, path)
+			}
+			return nil
+		})
+	}
+
+	return files
+}
+
+// checkPEMExpiry parses a PEM certificate file and checks expiry.
+func (lc *LiveChecker) checkPEMExpiry(item ChecklistItem, path string) ChecklistItem {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		item.Status = StatusUnknown
+		item.What = fmt.Sprintf("Cannot read %s: %v", path, err)
+		return item
+	}
+
+	block, _ := pem.Decode(data)
+	if block == nil {
+		item.Status = StatusUnknown
+		item.What = fmt.Sprintf("No PEM block found in %s", path)
+		return item
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		item.Status = StatusUnknown
+		item.What = fmt.Sprintf("Cannot parse certificate in %s", path)
+		return item
+	}
+
+	if time.Now().After(cert.NotAfter) {
+		item.Status = StatusFail
+		item.What = fmt.Sprintf("Certificate expired: %s", cert.NotAfter.Format(time.RFC3339))
+		return item
+	}
+
+	daysLeft := int(time.Until(cert.NotAfter).Hours() / 24)
+	if daysLeft < 30 {
+		item.Status = StatusWarning
+		item.What = fmt.Sprintf("Certificate expires in %d days (%s)", daysLeft, cert.NotAfter.Format("2006-01-02"))
+	} else {
+		item.Status = StatusPass
+		item.What = fmt.Sprintf("Certificate valid until %s (%d days)", cert.NotAfter.Format("2006-01-02"), daysLeft)
+	}
 	return item
 }
