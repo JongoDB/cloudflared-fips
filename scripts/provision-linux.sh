@@ -799,9 +799,13 @@ ENREOF
         fi
     fi
 
-    # --- Download cloudflared (when tunnel-token is provided for controller/proxy) ---
-    if [[ -n "$TUNNEL_TOKEN" && ("$ROLE" == "controller" || "$ROLE" == "proxy") ]]; then
-        install_cloudflared
+    # --- Download cloudflared (needed for tunnel connectivity) ---
+    # Install cloudflared if we have a tunnel token OR if we have the CF creds
+    # to auto-create one (public-hostname + api-token + account-id).
+    if [[ ("$ROLE" == "controller" || "$ROLE" == "proxy") ]]; then
+        if [[ -n "$TUNNEL_TOKEN" ]] || [[ -n "$PUBLIC_HOSTNAME" && -n "$CF_API_TOKEN" && -n "$CF_ACCOUNT_ID" ]]; then
+            install_cloudflared
+        fi
     fi
 
     # --- Create systemd units ---
@@ -1112,6 +1116,86 @@ phase4_start() {
 
     case "$ROLE" in
         controller)
+            # --- Auto-create tunnel if hostname provided but no tunnel token ---
+            if [[ -z "$TUNNEL_TOKEN" && -n "$PUBLIC_HOSTNAME" && -n "$CF_API_TOKEN" && -n "$CF_ACCOUNT_ID" ]]; then
+                log "Setting up tunnel hostname: ${PUBLIC_HOSTNAME} → ${HOSTNAME_SERVICE}..."
+                local setup_output
+                setup_output=$(${BIN_DIR}/cloudflared-fips-dashboard --setup-tunnel \
+                    --cf-api-token "${CF_API_TOKEN}" \
+                    --cf-zone-id "${CF_ZONE_ID}" \
+                    --cf-account-id "${CF_ACCOUNT_ID}" \
+                    --cf-tunnel-id "${CF_TUNNEL_ID}" \
+                    --public-hostname "${PUBLIC_HOSTNAME}" \
+                    --hostname-service "${HOSTNAME_SERVICE}" 2>&1) || warn "Tunnel setup had warnings"
+
+                # Capture auto-created tunnel ID and token from stdout
+                local auto_tunnel_id auto_tunnel_token
+                auto_tunnel_id=$(echo "$setup_output" | grep '^TUNNEL_ID=' | head -1 | cut -d= -f2-)
+                auto_tunnel_token=$(echo "$setup_output" | grep '^TUNNEL_TOKEN=' | head -1 | cut -d= -f2-)
+
+                # Show the setup output (minus the machine-readable lines)
+                echo "$setup_output" | grep -v '^TUNNEL_ID=' | grep -v '^TUNNEL_TOKEN='
+
+                if [[ -n "$auto_tunnel_token" && -n "$auto_tunnel_id" ]]; then
+                    TUNNEL_TOKEN="$auto_tunnel_token"
+                    CF_TUNNEL_ID="$auto_tunnel_id"
+                    # Save to env file
+                    sed -i '/^TUNNEL_TOKEN=/d' "${CONFIG_DIR}/env" 2>/dev/null || true
+                    sed -i '/^CF_TUNNEL_ID=/d' "${CONFIG_DIR}/env" 2>/dev/null || true
+                    echo "TUNNEL_TOKEN=${TUNNEL_TOKEN}" >> "${CONFIG_DIR}/env"
+                    echo "CF_TUNNEL_ID=${CF_TUNNEL_ID}" >> "${CONFIG_DIR}/env"
+                    log "Tunnel auto-created (ID: ${CF_TUNNEL_ID})"
+
+                    # Install cloudflared if not already present
+                    install_cloudflared
+
+                    # Create tunnel systemd unit
+                    cat > /etc/systemd/system/cloudflared-fips-tunnel.service <<TUNUNITEOF
+[Unit]
+Description=cloudflared FIPS Tunnel
+Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+EnvironmentFile=-${CONFIG_DIR}/env
+ExecStart=${BIN_DIR}/cloudflared tunnel run --token ${TUNNEL_TOKEN}
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cloudflared-fips-tunnel
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=${CONFIG_DIR}
+PrivateTmp=yes
+
+[Install]
+WantedBy=cloudflared-fips.target
+TUNUNITEOF
+                    systemctl daemon-reload
+                    systemctl enable cloudflared-fips-tunnel.service
+                else
+                    warn "Could not auto-create tunnel. Pass --tunnel-token manually."
+                fi
+            elif [[ -n "$PUBLIC_HOSTNAME" && -n "$CF_API_TOKEN" && -n "$CF_TUNNEL_ID" ]]; then
+                # Tunnel ID exists, just configure DNS + ingress
+                log "Setting up tunnel hostname: ${PUBLIC_HOSTNAME} → ${HOSTNAME_SERVICE}..."
+                ${BIN_DIR}/cloudflared-fips-dashboard --setup-tunnel \
+                    --cf-api-token "${CF_API_TOKEN}" \
+                    --cf-zone-id "${CF_ZONE_ID}" \
+                    --cf-account-id "${CF_ACCOUNT_ID}" \
+                    --cf-tunnel-id "${CF_TUNNEL_ID}" \
+                    --public-hostname "${PUBLIC_HOSTNAME}" \
+                    --hostname-service "${HOSTNAME_SERVICE}" || warn "Tunnel setup had warnings (check above)"
+            fi
+
             # Start tunnel + proxy immediately (no dependency on dashboard)
             if systemctl is-enabled --quiet cloudflared-fips-tunnel 2>/dev/null; then
                 systemctl start cloudflared-fips-tunnel
@@ -1136,18 +1220,6 @@ phase4_start() {
                 log "Dashboard API ready (${retries}s)"
             else
                 warn "Dashboard not ready after 60s"
-            fi
-
-            # Setup tunnel: create DNS CNAME + configure ingress (if hostname provided)
-            if [[ -n "$PUBLIC_HOSTNAME" && -n "$CF_API_TOKEN" ]]; then
-                log "Setting up tunnel hostname: ${PUBLIC_HOSTNAME} → ${HOSTNAME_SERVICE}..."
-                ${BIN_DIR}/cloudflared-fips-dashboard --setup-tunnel \
-                    --cf-api-token "${CF_API_TOKEN}" \
-                    --cf-zone-id "${CF_ZONE_ID}" \
-                    --cf-account-id "${CF_ACCOUNT_ID}" \
-                    --cf-tunnel-id "${CF_TUNNEL_ID}" \
-                    --public-hostname "${PUBLIC_HOSTNAME}" \
-                    --hostname-service "${HOSTNAME_SERVICE}" || warn "Tunnel setup had warnings (check above)"
             fi
 
             # Self-enroll the controller's own agent so it can report posture

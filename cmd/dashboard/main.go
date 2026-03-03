@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -387,9 +388,12 @@ func envOrFlag(flagVal, envKey string) string {
 	return os.Getenv(envKey)
 }
 
-// runSetupTunnel is a one-shot mode that creates a DNS CNAME record and
-// configures tunnel ingress, then exits. Called by the provision script
-// after the tunnel is running.
+// runSetupTunnel is a one-shot mode that creates a Cloudflare Tunnel (if needed),
+// sets up a DNS CNAME record, and configures tunnel ingress, then exits.
+// Called by the provision script. When no tunnel ID is provided, it auto-creates
+// one via the Cloudflare API and prints the tunnel ID and token to stdout
+// (prefixed with TUNNEL_ID= and TUNNEL_TOKEN=) so the provision script can
+// capture them.
 func runSetupTunnel(logger *log.Logger, token, zoneID, accountID, tunnelID, hostname, service string) {
 	logger.Printf("Setup tunnel: hostname=%s service=%s", hostname, service)
 
@@ -397,10 +401,58 @@ func runSetupTunnel(logger *log.Logger, token, zoneID, accountID, tunnelID, host
 		logger.Printf("No API token provided — skipping tunnel setup")
 		return
 	}
+	if accountID == "" {
+		logger.Printf("No account ID provided — skipping tunnel setup")
+		return
+	}
 
 	client := cfapi.NewClient(token)
+	tunnelToken := ""
 
-	// Step 1: Create DNS CNAME record (if hostname provided)
+	// Step 1: Create tunnel if no tunnel ID provided
+	if tunnelID == "" {
+		tunnelName := "cloudflared-fips"
+		if hostname != "" {
+			tunnelName = hostname
+		}
+		logger.Printf("No tunnel ID provided — creating tunnel '%s'...", tunnelName)
+
+		// Check for existing tunnel with same name first
+		existing, err := client.ListTunnels(accountID)
+		if err == nil {
+			for _, t := range existing {
+				if t.Name == tunnelName {
+					logger.Printf("Found existing tunnel: %s (ID: %s)", t.Name, t.ID)
+					tunnelID = t.ID
+					// Get token for existing tunnel
+					tok, err := client.GetTunnelToken(accountID, t.ID)
+					if err != nil {
+						logger.Printf("Warning: could not get token for existing tunnel: %v", err)
+					} else {
+						tunnelToken = tok
+					}
+					break
+				}
+			}
+		}
+
+		// Create new tunnel if none found
+		if tunnelID == "" {
+			result, err := client.CreateTunnel(accountID, tunnelName)
+			if err != nil {
+				logger.Fatalf("Failed to create tunnel: %v", err)
+			}
+			tunnelID = result.ID
+			tunnelToken = result.Token
+			logger.Printf("Tunnel created: %s (ID: %s)", tunnelName, tunnelID)
+		}
+
+		// Print machine-readable output for provision script to capture
+		fmt.Printf("TUNNEL_ID=%s\n", tunnelID)
+		fmt.Printf("TUNNEL_TOKEN=%s\n", tunnelToken)
+	}
+
+	// Step 2: Create DNS CNAME record (if hostname provided)
 	if hostname != "" && zoneID != "" && tunnelID != "" {
 		logger.Printf("Creating DNS CNAME: %s → %s.cfargotunnel.com", hostname, tunnelID)
 		_, err := client.CreateDNSCNAME(zoneID, hostname, tunnelID)
@@ -416,7 +468,7 @@ func runSetupTunnel(logger *log.Logger, token, zoneID, accountID, tunnelID, host
 		}
 	}
 
-	// Step 2: Configure tunnel ingress (hostname → service mapping)
+	// Step 3: Configure tunnel ingress (hostname → service mapping)
 	if accountID != "" && tunnelID != "" && hostname != "" && service != "" {
 		logger.Printf("Configuring tunnel ingress: %s → %s", hostname, service)
 		ingress := []cfapi.TunnelIngressRule{
