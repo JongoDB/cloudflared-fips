@@ -130,6 +130,7 @@ FOUND_GO=false
 FOUND_NODE=false
 FOUND_RPM=false
 RPM_PKG_NAME=""
+FOUND_CF_CREDS=false
 
 discover() {
     info "Discovering installed components..."
@@ -141,6 +142,27 @@ discover() {
         if [[ -n "$ROLE" ]]; then
             info "Auto-detected role: $ROLE"
         fi
+    fi
+
+    # Auto-discover Cloudflare credentials from env file (for --teardown-cf)
+    if [[ -f "${CONFIG_DIR}/env" ]]; then
+        if [[ -z "$CF_API_TOKEN" ]]; then
+            CF_API_TOKEN=$(grep -oP '(?<=^CF_API_TOKEN=).*' "${CONFIG_DIR}/env" 2>/dev/null || true)
+        fi
+        if [[ -z "$CF_ACCOUNT_ID" ]]; then
+            CF_ACCOUNT_ID=$(grep -oP '(?<=^CF_ACCOUNT_ID=).*' "${CONFIG_DIR}/env" 2>/dev/null || true)
+        fi
+        if [[ -z "$CF_TUNNEL_ID" ]]; then
+            CF_TUNNEL_ID=$(grep -oP '(?<=^CF_TUNNEL_ID=).*' "${CONFIG_DIR}/env" 2>/dev/null || true)
+        fi
+        if [[ -z "$CF_ZONE_ID" ]]; then
+            CF_ZONE_ID=$(grep -oP '(?<=^CF_ZONE_ID=).*' "${CONFIG_DIR}/env" 2>/dev/null || true)
+        fi
+    fi
+
+    # Auto-enable teardown if CF credentials are available and not explicitly disabled
+    if [[ -n "$CF_API_TOKEN" && -n "$CF_ACCOUNT_ID" && -n "$CF_TUNNEL_ID" ]] && ! $TEARDOWN_CF; then
+        FOUND_CF_CREDS=true
     fi
 
     # Check systemd units
@@ -266,6 +288,12 @@ show_summary() {
         warn "Cloudflare teardown: will delete tunnel and DNS records"
         [[ -n "$CF_TUNNEL_ID" ]] && warn "  Tunnel ID: $CF_TUNNEL_ID"
         [[ -n "$CF_ZONE_ID" ]] && warn "  Zone ID: $CF_ZONE_ID (DNS cleanup)"
+    elif $FOUND_CF_CREDS; then
+        echo ""
+        info "Cloudflare credentials found in env file:"
+        info "  Tunnel ID:  ${CF_TUNNEL_ID}"
+        [[ -n "$CF_ZONE_ID" ]] && info "  Zone ID:    ${CF_ZONE_ID}"
+        info "  Use --teardown-cf to also delete tunnel + DNS from Cloudflare"
     fi
 
     echo ""
@@ -275,7 +303,17 @@ show_summary() {
 
 confirm() {
     if $YES || $DRY_RUN; then
+        # In auto mode, also teardown CF if creds are available and --teardown-cf was passed
         return 0
+    fi
+
+    # Offer to tear down CF resources if creds are available but --teardown-cf wasn't passed
+    if $FOUND_CF_CREDS && ! $TEARDOWN_CF; then
+        echo ""
+        read -rp "Also delete Cloudflare tunnel + DNS records? [y/N] " cf_answer
+        case "$cf_answer" in
+            [yY]|[yY][eE][sS]) TEARDOWN_CF=true ;;
+        esac
     fi
 
     read -rp "Continue with unprovision? [y/N] " answer

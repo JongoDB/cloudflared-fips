@@ -94,7 +94,8 @@ jobs:
 
           cp scripts/provision-linux.sh /tmp/cloudflared-fips-provision
           cp scripts/unprovision-linux.sh /tmp/cloudflared-fips-unprovision
-          chmod +x /tmp/cloudflared-fips-provision /tmp/cloudflared-fips-unprovision
+          cp scripts/upgrade-linux.sh /tmp/cloudflared-fips-upgrade
+          chmod +x /tmp/cloudflared-fips-provision /tmp/cloudflared-fips-unprovision /tmp/cloudflared-fips-upgrade
 
       - name: Run FIPS self-test (amd64 only)
         if: matrix.goarch == 'amd64'
@@ -212,6 +213,7 @@ jobs:
           cp /tmp/cloudflared-fips-agent /root/rpmbuild/SOURCES/
           cp /tmp/cloudflared-fips-provision /root/rpmbuild/SOURCES/
           cp /tmp/cloudflared-fips-unprovision /root/rpmbuild/SOURCES/
+          cp /tmp/cloudflared-fips-upgrade /root/rpmbuild/SOURCES/
 
           cp configs/cloudflared-fips.yaml /root/rpmbuild/SOURCES/
           cp /tmp/build-manifest.json /root/rpmbuild/SOURCES/
@@ -670,6 +672,7 @@ jobs:
             echo "| \`cloudflared-fips-agent\` | Lightweight endpoint FIPS posture agent |"
             echo "| \`cloudflared-fips-provision\` | Multi-role provisioning script |"
             echo "| \`cloudflared-fips-unprovision\` | Clean uninstall / unprovision script |"
+            echo "| \`cloudflared-fips-upgrade\` | In-place upgrade (preserves config + data) |"
             echo ""
             echo "### Crypto Modules"
             echo ""

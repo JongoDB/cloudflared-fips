@@ -59,3 +59,23 @@ func FindUnprovisionScript() string {
 		return "./scripts/unprovision-linux.sh"
 	}
 }
+
+// FindUpgradeScript returns the path to the upgrade script.
+func FindUpgradeScript() string {
+	if _, err := os.Stat("/usr/local/bin/cloudflared-fips-upgrade"); err == nil {
+		return "/usr/local/bin/cloudflared-fips-upgrade"
+	}
+	if p, err := exec.LookPath("cloudflared-fips-upgrade"); err == nil {
+		return p
+	}
+	// Check /opt/cloudflared-fips repo
+	if _, err := os.Stat("/opt/cloudflared-fips/scripts/upgrade-linux.sh"); err == nil {
+		return "/opt/cloudflared-fips/scripts/upgrade-linux.sh"
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return "./scripts/upgrade-macos.sh"
+	default:
+		return "./scripts/upgrade-linux.sh"
+	}
+}

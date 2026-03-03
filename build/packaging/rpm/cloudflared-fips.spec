@@ -29,6 +29,7 @@ Included binaries:
   cloudflared-fips-agent      — Lightweight endpoint FIPS posture agent
   cloudflared-fips-provision  — Multi-role provisioning script
   cloudflared-fips-unprovision — Clean uninstall / unprovision script
+  cloudflared-fips-upgrade    — In-place upgrade (preserves config + data)
 
 Run 'cloudflared-fips' with no arguments for the interactive main menu,
 or use subcommands: setup, status, selftest, dashboard, proxy, agent,
@@ -54,9 +55,10 @@ install -m 0755 %{_sourcedir}/cloudflared-fips-tui %{buildroot}/usr/local/bin/cl
 install -m 0755 %{_sourcedir}/cloudflared-fips-proxy %{buildroot}/usr/local/bin/cloudflared-fips-proxy
 install -m 0755 %{_sourcedir}/cloudflared-fips-agent %{buildroot}/usr/local/bin/cloudflared-fips-agent
 
-# Provision and unprovision scripts
+# Provision, unprovision, and upgrade scripts
 install -m 0755 %{_sourcedir}/cloudflared-fips-provision %{buildroot}/usr/local/bin/cloudflared-fips-provision
 install -m 0755 %{_sourcedir}/cloudflared-fips-unprovision %{buildroot}/usr/local/bin/cloudflared-fips-unprovision
+install -m 0755 %{_sourcedir}/cloudflared-fips-upgrade %{buildroot}/usr/local/bin/cloudflared-fips-upgrade
 
 # Config and manifest
 install -m 0644 %{_sourcedir}/cloudflared-fips.yaml %{buildroot}/etc/cloudflared/config.yaml.sample
@@ -107,6 +109,7 @@ systemctl daemon-reload 2>/dev/null || true
 /usr/local/bin/cloudflared-fips-agent
 /usr/local/bin/cloudflared-fips-provision
 /usr/local/bin/cloudflared-fips-unprovision
+/usr/local/bin/cloudflared-fips-upgrade
 %config(noreplace) /etc/cloudflared/config.yaml.sample
 /usr/share/cloudflared-fips/build-manifest.json
 
