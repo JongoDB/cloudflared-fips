@@ -114,7 +114,7 @@ func (am *AlertManager) onEvent(evt audit.AuditEvent) {
 	for _, wh := range am.webhooks {
 		if am.matchesFilter(wh, evt) {
 			go func(url string) {
-				sendWebhookWithRetry(url, payload, 3)
+				_ = sendWebhookWithRetry(url, payload, 3)
 			}(wh.URL)
 		}
 	}

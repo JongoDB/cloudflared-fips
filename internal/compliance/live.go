@@ -1617,7 +1617,7 @@ func (lc *LiveChecker) collectSecretFiles() []string {
 
 	// Scan configured secret directories
 	for _, dir := range lc.secretsPaths {
-		filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return nil
 			}
