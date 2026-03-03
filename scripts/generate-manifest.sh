@@ -45,11 +45,11 @@ cat > "${MANIFEST_PATH}" <<EOJSON
   "cloudflared_upstream_version": "${UPSTREAM_VERSION}",
   "cloudflared_upstream_commit": "${UPSTREAM_COMMIT}",
   "crypto_engine": "boringcrypto",
-  "boringssl_version": "fips-20220613",
+  "boringssl_version": "fips-20230428",
   "fips_certificates": [
     {
       "module": "BoringSSL",
-      "certificate": "#3678",
+      "certificate": "#4735",
       "algorithms": [
         "AES-GCM-128", "AES-GCM-256", "SHA-256", "SHA-384", "SHA-512",
         "HMAC-SHA-256", "ECDSA-P256", "ECDSA-P384", "RSA-2048", "RSA-4096",

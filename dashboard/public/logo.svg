@@ -1,57 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 62" width="120" height="62">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 80" width="150" height="80">
   <defs>
-    <filter id="ds">
-      <feDropShadow dx="0" dy=".5" stdDeviation=".8" flood-color="#000" flood-opacity=".18"/>
+    <filter id="ts">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="1.5" flood-color="#000" flood-opacity=".35"/>
     </filter>
   </defs>
 
-  <!-- Back cloud (golden orange, peeks out right) -->
-  <ellipse cx="94" cy="34" rx="18" ry="18" fill="#FBAD41"/>
+  <!-- Back cloud (golden orange, peeks out behind on the right) -->
+  <ellipse cx="118" cy="48" rx="26" ry="24" fill="#FBAD41"/>
 
   <!-- Front cloud (Cloudflare orange) -->
   <path d="
-    M8 50
-    C0 50 0 42 4 38
-    C2 30 8 24 16 24
-    C18 16 24 12 32 12
-    C36 12 40 14 42 18
-    C46 8 54 4 64 4
-    C78 4 86 14 88 26
-    C88 26 92 24 96 26
-    C96 26 88 50 80 50
+    M8 64
+    C0 64 -2 54 4 48
+    C0 38 10 30 22 30
+    C24 20 34 14 46 14
+    C54 14 60 18 64 24
+    C70 12 80 6 92 6
+    C110 6 120 18 122 34
+    C128 32 136 38 136 46
+    C136 54 130 64 120 64
     Z
   " fill="#F6821F"/>
 
-  <!-- White ray / starburst -->
+  <!-- Subtle white ray (toned down so text pops) -->
   <path d="
-    M10 42
-    L78 42
-    L84 38
-    L96 34
-    L84 30
-    L78 34
-    L10 38
+    M14 56
+    L108 56
+    L118 52
+    L138 47
+    L118 42
+    L108 47
+    L14 52
     Z
-  " fill="#fff"/>
+  " fill="#fff" opacity=".5"/>
 
-  <!-- Padlock (centered on cloud with white border) -->
-  <g filter="url(#ds)">
-    <!-- White halo behind shackle -->
-    <path d="M43 23v-9a11 11 0 0 1 22 0v9" fill="none" stroke="#fff" stroke-width="11" stroke-linecap="round"/>
-    <!-- White halo behind body -->
-    <rect x="35" y="19" width="38" height="30" rx="5" fill="#fff"/>
-
-    <!-- Shackle -->
-    <path d="M43 22v-8a11 11 0 0 1 22 0v8" fill="none" stroke="#1a1a1a" stroke-width="5.5" stroke-linecap="round"/>
-    <!-- Inner shackle cutout -->
-    <path d="M48 22v-7.5a6 6 0 0 1 12 0V22" fill="none" stroke="#F6821F" stroke-width="2.5" stroke-linecap="butt"/>
-
-    <!-- Body -->
-    <rect x="38" y="22" width="32" height="24" rx="3" fill="#1a1a1a"/>
-
-    <!-- Keyhole circle -->
-    <circle cx="54" cy="31.5" r="3.5" fill="#F6821F"/>
-    <!-- Keyhole slot -->
-    <path d="M51.5 33 L54 41 L56.5 33 Z" fill="#F6821F"/>
-  </g>
+  <!-- FIPS text — large bold overlay, the hero element -->
+  <text
+    x="66" y="52"
+    font-family="'Inter', 'SF Pro Display', 'Helvetica Neue', system-ui, sans-serif"
+    font-size="42"
+    font-weight="900"
+    letter-spacing="5"
+    text-anchor="middle"
+    fill="#fff"
+    filter="url(#ts)"
+  >FIPS</text>
 </svg>

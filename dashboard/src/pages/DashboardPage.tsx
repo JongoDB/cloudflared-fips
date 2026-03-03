@@ -68,14 +68,8 @@ export default function DashboardPage() {
     return result
   }, [sections])
 
-  const cryptoBadge = useMemo(() => {
-    if (!manifest.crypto_engine) return undefined
-    const cert = manifest.fips_certificates?.[0]?.certificate
-    return cert ? `${manifest.crypto_engine} ${cert}` : manifest.crypto_engine
-  }, [manifest])
-
   return (
-    <Layout version={manifest.version} cryptoEngine={cryptoBadge}>
+    <Layout>
       <SunsetBanner
         sunsetDate={migration.sunset_date}
         currentStandard={migration.current_standard}

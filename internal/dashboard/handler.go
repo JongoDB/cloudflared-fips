@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/cloudflared-fips/cloudflared-fips/internal/compliance"
@@ -46,11 +48,24 @@ func (h *Handler) HandleManifest(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// Override version with runtime build info — the manifest file may be a
-	// stale sample while buildinfo.Version is injected via ldflags at build time.
+	// Override stale manifest fields with runtime build info injected via ldflags.
 	if buildinfo.Version != "" && buildinfo.Version != "dev" {
-		m.Version = buildinfo.Version
+		m.Version = strings.TrimPrefix(buildinfo.Version, "v")
 	}
+	if buildinfo.GitCommit != "" && buildinfo.GitCommit != "unknown" {
+		m.Commit = buildinfo.GitCommit
+	}
+	if buildinfo.BuildDate != "" && buildinfo.BuildDate != "unknown" {
+		m.BuildTime = buildinfo.BuildDate
+	}
+
+	// Detect upstream cloudflared version at runtime if manifest has placeholder.
+	if m.CloudflaredUpstreamVersion == "" || m.CloudflaredUpstreamVersion == "unknown" || m.CloudflaredUpstreamVersion == "0.0.0" {
+		if ver := detectCloudflaredVersion(); ver != "" {
+			m.CloudflaredUpstreamVersion = ver
+		}
+	}
+
 	writeJSON(w, http.StatusOK, m)
 }
 
@@ -155,6 +170,23 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// detectCloudflaredVersion runs "cloudflared version" and extracts the version string.
+// Returns empty string if cloudflared is not installed or the command fails.
+func detectCloudflaredVersion() string {
+	out, err := exec.Command("cloudflared", "version").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	// Output format: "cloudflared version 2025.2.1 (built 2025-02-18-...)"
+	for _, field := range strings.Fields(string(out)) {
+		// Find a field that looks like a version number (digits and dots)
+		if len(field) > 0 && field[0] >= '0' && field[0] <= '9' && strings.Contains(field, ".") {
+			return field
+		}
+	}
+	return ""
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

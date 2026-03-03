@@ -1,8 +1,8 @@
 {
-  "version": "0.5.5",
-  "commit": "abc1234",
-  "build_time": "2026-02-21T00:00:00Z",
-  "cloudflared_upstream_version": "2026.2.0",
+  "version": "0.7.9",
+  "commit": "327fb73",
+  "build_time": "2026-03-03T00:00:00Z",
+  "cloudflared_upstream_version": "2025.2.1",
   "cloudflared_upstream_commit": "059f4d9",
   "crypto_engine": "boringcrypto",
   "boringssl_version": "fips-20230428",
