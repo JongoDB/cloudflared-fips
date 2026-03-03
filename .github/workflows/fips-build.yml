@@ -69,6 +69,31 @@ jobs:
       # Users install official cloudflared separately (provision script handles this).
       # Our RPM ships only fleet binaries; cloudflared is downloaded at provision time.
 
+      - name: Build dashboard frontend
+        run: |
+          # MUST run before Go compile so go:embed picks up the assets
+          curl -fsSL https://rpm.nodesource.com/setup_22.x | bash - 2>/dev/null || true
+          dnf install -y nodejs 2>/dev/null || true
+          if ! command -v node >/dev/null 2>&1; then
+            NODE_VERSION="22.14.0"
+            curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+              | tar -C /usr/local --strip-components=1 -xJf -
+          fi
+          echo "Node.js $(node --version), npm $(npm --version)"
+
+          cd dashboard
+          npm ci --prefer-offline
+          npm run build
+          cd ..
+
+          # Copy built frontend into Go embed directory
+          mkdir -p internal/dashboard/static
+          cp -r dashboard/dist/* internal/dashboard/static/
+
+          echo "=== Dashboard frontend built ==="
+          ls -la internal/dashboard/static/
+          ls -la internal/dashboard/static/assets/ || true
+
       - name: Build fleet binaries
         env:
           GOEXPERIMENT: boringcrypto
@@ -118,30 +143,6 @@ jobs:
             fi
           done
           echo "::warning::BoringCrypto symbols not found (may be stripped). Self-test passed — FIPS mode verified at runtime."
-
-      - name: Build dashboard frontend
-        run: |
-          # Install Node.js for frontend build
-          curl -fsSL https://rpm.nodesource.com/setup_22.x | bash - 2>/dev/null || true
-          dnf install -y nodejs 2>/dev/null || true
-          if ! command -v node >/dev/null 2>&1; then
-            NODE_VERSION="22.14.0"
-            curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
-              | tar -C /usr/local --strip-components=1 -xJf -
-          fi
-          echo "Node.js $(node --version), npm $(npm --version)"
-
-          cd dashboard
-          npm ci --prefer-offline
-          npm run build
-          cd ..
-
-          # Copy built frontend into Go embed directory
-          mkdir -p internal/dashboard/static
-          cp -r dashboard/dist/* internal/dashboard/static/
-
-          echo "=== Dashboard frontend built ==="
-          ls -la internal/dashboard/static/
 
       - name: Install SBOM tools
         run: |

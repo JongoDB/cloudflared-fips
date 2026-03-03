@@ -663,16 +663,29 @@ phase3_install() {
 
     # --- Environment file for Cloudflare API (optional) ---
     ENV_FILE="${CONFIG_DIR}/env"
-    if [[ -n "$CF_API_TOKEN" ]]; then
-        # Non-interactive: credentials passed via flags (from TUI wizard)
-        log "Writing Cloudflare API credentials from flags..."
+    if [[ -f "$ENV_FILE" ]]; then
+        # Preserve existing env file — update specific keys in-place
+        log "Updating existing env file (preserving saved state)..."
+        # Update CF credentials if provided (remove old lines, append new)
+        if [[ -n "$CF_API_TOKEN" ]]; then
+            sed -i '/^CF_API_TOKEN=/d; /^CF_ZONE_ID=/d; /^CF_ACCOUNT_ID=/d; /^CF_TUNNEL_ID=/d' "$ENV_FILE"
+            echo "CF_API_TOKEN=${CF_API_TOKEN}" >> "$ENV_FILE"
+            echo "CF_ZONE_ID=${CF_ZONE_ID}" >> "$ENV_FILE"
+            echo "CF_ACCOUNT_ID=${CF_ACCOUNT_ID}" >> "$ENV_FILE"
+            echo "CF_TUNNEL_ID=${CF_TUNNEL_ID}" >> "$ENV_FILE"
+        fi
+        # Clean stale keys that will be re-added below
+        sed -i '/^ROLE=/d; /^DEPLOYMENT_TIER=/d; /^PUBLIC_HOSTNAME=/d' "$ENV_FILE"
+    elif [[ -n "$CF_API_TOKEN" ]]; then
+        # Fresh install with credentials from flags
+        log "Writing Cloudflare API credentials..."
         cat > "$ENV_FILE" <<ENVEOF
 CF_API_TOKEN=${CF_API_TOKEN}
 CF_ZONE_ID=${CF_ZONE_ID}
 CF_ACCOUNT_ID=${CF_ACCOUNT_ID}
 CF_TUNNEL_ID=${CF_TUNNEL_ID}
 ENVEOF
-    elif [[ "$WITH_CF" == "true" && ! -f "$ENV_FILE" ]]; then
+    elif [[ "$WITH_CF" == "true" ]]; then
         log "Setting up Cloudflare API credentials..."
         echo ""
         read -rp "  CF_API_TOKEN: " CF_API_TOKEN
@@ -687,12 +700,14 @@ CF_ZONE_ID=${CF_ZONE_ID}
 CF_ACCOUNT_ID=${CF_ACCOUNT_ID}
 CF_TUNNEL_ID=${CF_TUNNEL_ID}
 ENVEOF
-    elif [[ ! -f "$ENV_FILE" ]]; then
+    else
         touch "$ENV_FILE"
     fi
 
-    # Store deployment tier
+    # Store role, tier, and tunnel settings for recovery on re-provision
+    echo "ROLE=${ROLE}" >> "$ENV_FILE"
     echo "DEPLOYMENT_TIER=${TIER}" >> "$ENV_FILE"
+    [[ -n "$PUBLIC_HOSTNAME" ]] && echo "PUBLIC_HOSTNAME=${PUBLIC_HOSTNAME}" >> "$ENV_FILE"
 
     chmod 0600 "$ENV_FILE"
     chown "${SERVICE_USER}:" "$ENV_FILE"
@@ -921,6 +936,8 @@ UNITEOF
 
     # --- Tunnel service (controller and proxy roles with tunnel-token) ---
     if [[ -n "$TUNNEL_TOKEN" && ("$ROLE" == "controller" || "$ROLE" == "proxy") ]]; then
+        # Save token (remove old entry first to avoid duplicates)
+        sed -i '/^TUNNEL_TOKEN=/d' "${CONFIG_DIR}/env" 2>/dev/null || true
         echo "TUNNEL_TOKEN=${TUNNEL_TOKEN}" >> "${CONFIG_DIR}/env"
 
         cat > /etc/systemd/system/cloudflared-fips-tunnel.service <<UNITEOF
@@ -1415,6 +1432,60 @@ print_summary() {
 }
 
 # ---------------------------------------------------------------------------
+# Pre-provision cleanup: stop old services, auto-recover CF credentials
+# ---------------------------------------------------------------------------
+cleanup_existing() {
+    # Stop any old services before we recreate units
+    if systemctl is-active --quiet cloudflared-fips.target 2>/dev/null || \
+       systemctl is-active --quiet cloudflared-fips-dashboard 2>/dev/null || \
+       systemctl is-active --quiet cloudflared-fips-tunnel 2>/dev/null; then
+        log "Stopping existing cloudflared-fips services..."
+        systemctl stop cloudflared-fips.target 2>/dev/null || true
+        for svc in dashboard tunnel proxy agent; do
+            systemctl stop "cloudflared-fips-${svc}.service" 2>/dev/null || true
+            systemctl disable "cloudflared-fips-${svc}.service" 2>/dev/null || true
+        done
+        systemctl disable cloudflared-fips.target 2>/dev/null || true
+    fi
+
+    # Remove old systemd units (they'll be recreated with current config)
+    for svc in dashboard tunnel proxy agent; do
+        rm -f "/etc/systemd/system/cloudflared-fips-${svc}.service"
+    done
+    rm -f /etc/systemd/system/cloudflared-fips.target
+    systemctl daemon-reload 2>/dev/null || true
+
+    # Auto-recover Cloudflare credentials from existing env file
+    if [[ -f "${CONFIG_DIR}/env" ]]; then
+        info "Found existing env file — recovering saved credentials..."
+        if [[ -z "$CF_API_TOKEN" ]]; then
+            CF_API_TOKEN=$(grep -oP '(?<=^CF_API_TOKEN=).*' "${CONFIG_DIR}/env" 2>/dev/null || true)
+            [[ -n "$CF_API_TOKEN" ]] && info "  Recovered CF_API_TOKEN from env"
+        fi
+        if [[ -z "$CF_ACCOUNT_ID" ]]; then
+            CF_ACCOUNT_ID=$(grep -oP '(?<=^CF_ACCOUNT_ID=).*' "${CONFIG_DIR}/env" 2>/dev/null || true)
+            [[ -n "$CF_ACCOUNT_ID" ]] && info "  Recovered CF_ACCOUNT_ID from env"
+        fi
+        if [[ -z "$CF_TUNNEL_ID" ]]; then
+            CF_TUNNEL_ID=$(grep -oP '(?<=^CF_TUNNEL_ID=).*' "${CONFIG_DIR}/env" 2>/dev/null || true)
+            [[ -n "$CF_TUNNEL_ID" ]] && info "  Recovered CF_TUNNEL_ID from env"
+        fi
+        if [[ -z "$CF_ZONE_ID" ]]; then
+            CF_ZONE_ID=$(grep -oP '(?<=^CF_ZONE_ID=).*' "${CONFIG_DIR}/env" 2>/dev/null || true)
+            [[ -n "$CF_ZONE_ID" ]] && info "  Recovered CF_ZONE_ID from env"
+        fi
+        if [[ -z "$TUNNEL_TOKEN" ]]; then
+            TUNNEL_TOKEN=$(grep -oP '(?<=^TUNNEL_TOKEN=).*' "${CONFIG_DIR}/env" 2>/dev/null || true)
+            [[ -n "$TUNNEL_TOKEN" ]] && info "  Recovered TUNNEL_TOKEN from env"
+        fi
+        if [[ -z "$PUBLIC_HOSTNAME" ]]; then
+            PUBLIC_HOSTNAME=$(grep -oP '(?<=^PUBLIC_HOSTNAME=).*' "${CONFIG_DIR}/env" 2>/dev/null || true)
+            [[ -n "$PUBLIC_HOSTNAME" ]] && info "  Recovered PUBLIC_HOSTNAME from env"
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -1435,6 +1506,9 @@ main() {
         # Clean up the login helper
         rm -f /etc/profile.d/cloudflared-fips-resume.sh
     fi
+
+    # Clean up old services before re-provisioning
+    cleanup_existing
 
     phase1_fips
 
