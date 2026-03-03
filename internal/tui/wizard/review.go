@@ -212,9 +212,15 @@ func (p *ReviewPage) dispatchAction() (Page, tea.Cmd) {
 func (p *ReviewPage) buildProvisionExec() *exec.Cmd {
 	script, args := BuildProvisionCommand(p.cfg)
 
+	// Quote each arg to protect shell metacharacters (base64 tokens, etc.)
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = shellQuote(a)
+	}
+
 	// Wrap in a shell with a pause so the user can read output before TUI resumes.
 	// If not root, prepend sudo.
-	fullCmd := script + " " + strings.Join(args, " ")
+	fullCmd := script + " " + strings.Join(quoted, " ")
 	if os.Geteuid() != 0 {
 		fullCmd = "sudo " + fullCmd
 	}
@@ -370,12 +376,36 @@ func BuildProvisionCommand(cfg *config.Config) (script string, args []string) {
 func (p *ReviewPage) buildUnprovisionExec() *exec.Cmd {
 	script, args := BuildUnprovisionCommand(p.cfg)
 
-	fullCmd := script + " " + strings.Join(args, " ")
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = shellQuote(a)
+	}
+
+	fullCmd := script + " " + strings.Join(quoted, " ")
 	if os.Geteuid() != 0 {
 		fullCmd = "sudo " + fullCmd
 	}
 	shellScript := fullCmd + `; rc=$?; echo ""; echo "Press Enter to return to wizard..."; read _; exit $rc`
 	return exec.Command("sh", "-c", shellScript)
+}
+
+// shellQuote wraps a string in single quotes for safe shell interpolation.
+// Handles strings containing spaces, special chars, and base64 tokens.
+func shellQuote(s string) string {
+	// If the string is simple (flag name or alphanumeric value), no quoting needed.
+	safe := true
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '/' || c == ':') {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	// Single-quote the value, escaping any embedded single quotes.
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // unprovisionInstalledPaths lists where packages install the unprovision script.

@@ -710,6 +710,7 @@ ENVEOF
     echo "ROLE=${ROLE}" >> "$ENV_FILE"
     echo "DEPLOYMENT_TIER=${TIER}" >> "$ENV_FILE"
     [[ -n "$PUBLIC_HOSTNAME" ]] && echo "PUBLIC_HOSTNAME=${PUBLIC_HOSTNAME}" >> "$ENV_FILE"
+    [[ -n "$TUNNEL_NAME" && "$TUNNEL_NAME" != "cloudflared-fips" ]] && echo "TUNNEL_NAME=${TUNNEL_NAME}" >> "$ENV_FILE"
 
     chmod 0600 "$ENV_FILE"
     chown "${SERVICE_USER}:" "$ENV_FILE"
@@ -1557,6 +1558,14 @@ cleanup_existing() {
         if [[ -z "$PUBLIC_HOSTNAME" ]]; then
             PUBLIC_HOSTNAME=$(grep -oP '(?<=^PUBLIC_HOSTNAME=).*' "${CONFIG_DIR}/env" 2>/dev/null || true)
             [[ -n "$PUBLIC_HOSTNAME" ]] && info "  Recovered PUBLIC_HOSTNAME from env"
+        fi
+        if [[ "$TUNNEL_NAME" == "cloudflared-fips" ]]; then
+            local saved_name
+            saved_name=$(grep -oP '(?<=^TUNNEL_NAME=).*' "${CONFIG_DIR}/env" 2>/dev/null || true)
+            if [[ -n "$saved_name" ]]; then
+                TUNNEL_NAME="$saved_name"
+                info "  Recovered TUNNEL_NAME from env: ${TUNNEL_NAME}"
+            fi
         fi
     fi
 }
