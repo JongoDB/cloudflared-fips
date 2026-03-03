@@ -496,9 +496,9 @@ func (p *DashboardWiringPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 				}
 			}
 
-			// Tunnel picker: when "Create New" is selected and user presses enter
-			// on the tunnel name field, trigger creation
-			if p.focus == 3 && p.isCreatingNewTunnel() && msg.String() == "enter" {
+			// Tunnel picker: when "Create New" is selected and user presses
+			// tab or enter on the tunnel name field, trigger creation
+			if p.focus == 3 && p.isCreatingNewTunnel() {
 				name := strings.TrimSpace(p.tunnelNameInput.Value())
 				accountID := strings.TrimSpace(p.accountID.Value())
 				if name != "" && accountID != "" && !p.creatingTunnel && !p.tunnelCreated {
@@ -838,6 +838,16 @@ func (p *DashboardWiringPage) Apply(cfg *config.Config) {
 					break
 				}
 			}
+		}
+	}
+
+	// Fallback: if no tunnel name was set by the above logic, use the
+	// typed name from the input field. This covers cases where tunnel
+	// API creation is still in-flight, failed, or the user advanced
+	// past the field before the async call completed.
+	if cfg.Dashboard.TunnelName == "" {
+		if typed := strings.TrimSpace(p.tunnelNameInput.Value()); typed != "" {
+			cfg.Dashboard.TunnelName = typed
 		}
 	}
 

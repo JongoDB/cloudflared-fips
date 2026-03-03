@@ -11,7 +11,9 @@
 #   - /etc/cloudflared-fips/ (config, env, certs, tunnel token)
 #   - /var/lib/cloudflared-fips/ (fleet DB, state)
 #   - systemd unit files (tunnel tokens, flags)
-#   - cloudflared upstream binary
+#
+# Also checks for cloudflared (upstream) updates and offers to upgrade.
+# Use --skip-cloudflared to skip the upstream check.
 
 set -euo pipefail
 
@@ -31,25 +33,28 @@ TARGET_VERSION=""
 FROM_SOURCE=false
 DRY_RUN=false
 YES=false
+SKIP_CLOUDFLARED=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --version)     TARGET_VERSION="$2"; shift 2 ;;
-        --from-source) FROM_SOURCE=true; shift ;;
-        --dry-run)     DRY_RUN=true; shift ;;
-        --yes)         YES=true; shift ;;
+        --version)          TARGET_VERSION="$2"; shift 2 ;;
+        --from-source)      FROM_SOURCE=true; shift ;;
+        --dry-run)          DRY_RUN=true; shift ;;
+        --yes)              YES=true; shift ;;
+        --skip-cloudflared) SKIP_CLOUDFLARED=true; shift ;;
         --help|-h)
             echo "Usage: sudo $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --version TAG     Upgrade to specific version (e.g., v0.7.1)"
-            echo "  --from-source     Rebuild from local repo instead of downloading RPM"
-            echo "  --dry-run         Show what would happen without making changes"
-            echo "  --yes             Skip confirmation prompt"
-            echo "  --help, -h        Show this help"
+            echo "  --version TAG       Upgrade cloudflared-fips to specific version (e.g., v0.7.1)"
+            echo "  --from-source       Rebuild from local repo instead of downloading RPM"
+            echo "  --dry-run           Show what would happen without making changes"
+            echo "  --yes               Skip confirmation prompt"
+            echo "  --skip-cloudflared  Don't check/update the upstream cloudflared binary"
+            echo "  --help, -h          Show this help"
             echo ""
-            echo "Preserves: config, data, systemd units, tunnel tokens, fleet DB"
-            echo "Replaces:  binaries, build manifest"
+            echo "Upgrades cloudflared-fips binaries and optionally the upstream cloudflared"
+            echo "binary. Preserves: config, data, systemd units, tunnel tokens, fleet DB."
             exit 0
             ;;
         *) echo "Unknown flag: $1"; exit 1 ;;
@@ -266,6 +271,151 @@ upgrade_source() {
 }
 
 # ---------------------------------------------------------------------------
+# cloudflared (upstream) — version detection and upgrade
+# ---------------------------------------------------------------------------
+CF_CURRENT_VERSION=""
+CF_LATEST_VERSION=""
+
+detect_cloudflared_current() {
+    CF_CURRENT_VERSION=""
+    if command -v cloudflared &>/dev/null; then
+        # cloudflared version outputs: "cloudflared version 2025.2.1 (built 2025-02-18-...)"
+        CF_CURRENT_VERSION=$(cloudflared version 2>/dev/null | grep -oP 'version \K[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+    fi
+
+    if [[ -z "$CF_CURRENT_VERSION" ]]; then
+        info "cloudflared: not installed"
+    else
+        info "cloudflared: ${CF_CURRENT_VERSION}"
+    fi
+}
+
+detect_cloudflared_latest() {
+    if [[ -z "$CF_CURRENT_VERSION" ]]; then
+        return  # not installed, nothing to check
+    fi
+
+    log "Checking latest cloudflared release..."
+    local api_url="https://api.github.com/repos/cloudflare/cloudflared/releases/latest"
+    local release_json
+    release_json=$(curl -sf "$api_url" 2>/dev/null || echo "")
+
+    if [[ -z "$release_json" ]]; then
+        warn "Could not check for cloudflared updates (GitHub API unreachable)"
+        return
+    fi
+
+    CF_LATEST_VERSION=$(echo "$release_json" | grep -oP '"tag_name"\s*:\s*"\K[^"]+' | head -1)
+
+    if [[ -z "$CF_LATEST_VERSION" ]]; then
+        warn "Could not parse cloudflared latest release tag"
+        return
+    fi
+
+    info "cloudflared latest: ${CF_LATEST_VERSION}"
+}
+
+upgrade_cloudflared() {
+    if [[ -z "$CF_CURRENT_VERSION" || -z "$CF_LATEST_VERSION" ]]; then
+        return
+    fi
+
+    # Compare versions (strip leading 'v' if present)
+    local current="${CF_CURRENT_VERSION#v}"
+    local latest="${CF_LATEST_VERSION#v}"
+
+    if [[ "$current" == "$latest" ]]; then
+        info "cloudflared is up to date (${current})"
+        return
+    fi
+
+    echo ""
+    warn "cloudflared update available: ${current} → ${latest}"
+
+    if ! $YES && ! $DRY_RUN; then
+        read -rp "Update cloudflared to ${latest}? [y/N] " answer
+        case "$answer" in
+            [yY]|[yY][eE][sS]) ;;
+            *) info "Skipping cloudflared update."; return ;;
+        esac
+    fi
+
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64)  arch="amd64" ;;
+        aarch64) arch="arm64" ;;
+    esac
+
+    # Try Cloudflare's package repo first (RPM-based systems)
+    if command -v dnf &>/dev/null; then
+        log "Updating cloudflared via dnf..."
+        if $DRY_RUN; then
+            info "Would run: dnf update -y cloudflared"
+        else
+            if dnf update -y cloudflared 2>/dev/null; then
+                log "cloudflared updated via dnf"
+                return
+            fi
+            warn "dnf update failed, falling back to direct download"
+        fi
+    elif command -v yum &>/dev/null; then
+        log "Updating cloudflared via yum..."
+        if $DRY_RUN; then
+            info "Would run: yum update -y cloudflared"
+        else
+            if yum update -y cloudflared 2>/dev/null; then
+                log "cloudflared updated via yum"
+                return
+            fi
+            warn "yum update failed, falling back to direct download"
+        fi
+    fi
+
+    # Direct binary download from GitHub
+    local download_url="https://github.com/cloudflare/cloudflared/releases/download/${CF_LATEST_VERSION}/cloudflared-linux-${arch}"
+    local tmp_bin="/tmp/cloudflared-upgrade"
+    local cf_path
+    cf_path=$(command -v cloudflared)
+
+    log "Downloading cloudflared ${CF_LATEST_VERSION}..."
+    if $DRY_RUN; then
+        info "Would download: ${download_url}"
+        info "Would replace: ${cf_path}"
+        return
+    fi
+
+    if ! curl -sLf -o "$tmp_bin" "$download_url"; then
+        warn "Could not download cloudflared from ${download_url}"
+        warn "Update cloudflared manually: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
+        return
+    fi
+
+    chmod +x "$tmp_bin"
+
+    # Verify the download looks like a cloudflared binary
+    if ! "$tmp_bin" version &>/dev/null; then
+        warn "Downloaded binary does not appear to be valid cloudflared"
+        rm -f "$tmp_bin"
+        return
+    fi
+
+    # Stop tunnel service before replacing binary
+    if systemctl is-active cloudflared-fips-tunnel.service &>/dev/null; then
+        log "Stopping tunnel service..."
+        systemctl stop cloudflared-fips-tunnel.service 2>/dev/null || true
+    fi
+
+    # Replace binary
+    cp "$tmp_bin" "$cf_path"
+    rm -f "$tmp_bin"
+
+    local new_ver
+    new_ver=$(cloudflared version 2>/dev/null | grep -oP 'version \K[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+    log "cloudflared updated: ${CF_CURRENT_VERSION} → ${new_ver}"
+}
+
+# ---------------------------------------------------------------------------
 # Restart services
 # ---------------------------------------------------------------------------
 restart_services() {
@@ -326,6 +476,13 @@ verify() {
     done
     echo ""
 
+    # Show cloudflared version
+    if command -v cloudflared &>/dev/null; then
+        local cf_ver
+        cf_ver=$(cloudflared version 2>/dev/null | grep -oP 'version \K[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+        info "cloudflared version: ${cf_ver}"
+    fi
+
     log "Upgrade complete: ${CURRENT_VERSION:-unknown} → ${new_version}"
 }
 
@@ -344,6 +501,11 @@ confirm() {
         info "Method:   Rebuild from source (${INSTALL_DIR})"
     else
         info "Method:   RPM upgrade (rpm -Uvh)"
+    fi
+    echo ""
+    if [[ -n "$CF_CURRENT_VERSION" && -n "$CF_LATEST_VERSION" && "$CF_CURRENT_VERSION" != "$CF_LATEST_VERSION" ]]; then
+        echo ""
+        info "cloudflared: ${CF_CURRENT_VERSION} → ${CF_LATEST_VERSION} (will prompt)"
     fi
     echo ""
     info "Preserved:"
@@ -383,11 +545,21 @@ main() {
         detect_latest
     fi
 
+    # Detect cloudflared (upstream) version
+    if ! $SKIP_CLOUDFLARED; then
+        detect_cloudflared_current
+        detect_cloudflared_latest
+    fi
+
     # Check if already on target version
     local target_num="${TARGET_VERSION#v}"
     if [[ "$CURRENT_VERSION" == "$target_num" || "$CURRENT_VERSION" == "$TARGET_VERSION" ]]; then
         info "Already on version ${TARGET_VERSION}. Nothing to do."
         info "Use --from-source to force rebuild, or specify a different --version."
+        # Still check cloudflared even if our binaries are current
+        if ! $SKIP_CLOUDFLARED; then
+            upgrade_cloudflared
+        fi
         exit 0
     fi
 
@@ -397,6 +569,11 @@ main() {
         upgrade_source
     else
         upgrade_rpm
+    fi
+
+    # Offer cloudflared update after our binaries are upgraded
+    if ! $SKIP_CLOUDFLARED; then
+        upgrade_cloudflared
     fi
 
     restart_services
