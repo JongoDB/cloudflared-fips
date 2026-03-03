@@ -613,13 +613,25 @@ phase3_install() {
         cp -n configs/cloudflared-fips.yaml "${CONFIG_DIR}/cloudflared-fips.yaml" 2>/dev/null || true
     fi
 
-    # --- Update manifest binary hash to match installed dashboard binary ---
-    if [[ -f "${CONFIG_DIR}/build-manifest.json" && -x "${BIN_DIR}/cloudflared-fips-dashboard" ]]; then
-        local dash_hash
-        dash_hash=$(sha256sum "${BIN_DIR}/cloudflared-fips-dashboard" 2>/dev/null | awk '{print $1}')
-        if [[ -n "$dash_hash" ]]; then
-            sed -i "s/\"binary_sha256\":.*$/\"binary_sha256\": \"${dash_hash}\"/" "${CONFIG_DIR}/build-manifest.json"
-            info "  Updated manifest binary_sha256"
+    # --- Update manifest version and binary hash to match installed binaries ---
+    if [[ -f "${CONFIG_DIR}/build-manifest.json" ]]; then
+        # Update version from binary (ldflags-injected, always correct)
+        if [[ -x "${BIN_DIR}/cloudflared-fips-selftest" ]]; then
+            local bin_version
+            bin_version=$("${BIN_DIR}/cloudflared-fips-selftest" --version 2>/dev/null || echo "")
+            if [[ -n "$bin_version" ]]; then
+                sed -i "s/\"version\":.*$/\"version\": \"${bin_version}\",/" "${CONFIG_DIR}/build-manifest.json"
+                info "  Updated manifest version to ${bin_version}"
+            fi
+        fi
+        # Update binary hash
+        if [[ -x "${BIN_DIR}/cloudflared-fips-dashboard" ]]; then
+            local dash_hash
+            dash_hash=$(sha256sum "${BIN_DIR}/cloudflared-fips-dashboard" 2>/dev/null | awk '{print $1}')
+            if [[ -n "$dash_hash" ]]; then
+                sed -i "s/\"binary_sha256\":.*$/\"binary_sha256\": \"${dash_hash}\"/" "${CONFIG_DIR}/build-manifest.json"
+                info "  Updated manifest binary_sha256"
+            fi
         fi
     fi
 

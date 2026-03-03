@@ -84,6 +84,9 @@ func main() {
 	nodeRegion := flag.String("node-region", "", "region label for this node")
 	nodeID := flag.String("node-id", "", "node ID from enrollment (or set NODE_ID env)")
 
+	// Version flag
+	showVersion := flag.Bool("version", false, "print version and exit")
+
 	// Security Operations flags
 	auditLogPath := flag.String("audit-log", "", "path to audit log file (enables AU-2 compliance; e.g., /var/log/cloudflared-fips/audit.json)")
 	syslogAddr := flag.String("syslog-addr", "", "syslog address for audit log forwarding (e.g., tcp://siem:514)")
@@ -96,6 +99,11 @@ func main() {
 	enforcementMode := flag.String("enforcement-mode", "audit", "security policy enforcement mode: enforce, audit, disabled")
 
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(buildinfo.Version)
+		return
+	}
 
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 

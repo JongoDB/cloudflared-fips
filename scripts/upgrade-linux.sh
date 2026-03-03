@@ -94,21 +94,25 @@ check_root() {
 # ---------------------------------------------------------------------------
 detect_current() {
     CURRENT_VERSION=""
+    # Try selftest binary first
     if [[ -x "${BIN_DIR}/cloudflared-fips-selftest" ]]; then
-        # Try to get version from binary
-        CURRENT_VERSION=$("${BIN_DIR}/cloudflared-fips-selftest" --version 2>/dev/null || echo "unknown")
-    elif command -v rpm &>/dev/null; then
-        CURRENT_VERSION=$(rpm -q --qf '%{VERSION}' cloudflared-fips 2>/dev/null || echo "unknown")
+        CURRENT_VERSION=$("${BIN_DIR}/cloudflared-fips-selftest" --version 2>/dev/null || echo "")
+    fi
+    # Try dashboard binary
+    if [[ -z "$CURRENT_VERSION" ]] && [[ -x "${BIN_DIR}/cloudflared-fips-dashboard" ]]; then
+        CURRENT_VERSION=$("${BIN_DIR}/cloudflared-fips-dashboard" --version 2>/dev/null || echo "")
+    fi
+    # Try RPM query
+    if [[ -z "$CURRENT_VERSION" ]] && command -v rpm &>/dev/null; then
+        CURRENT_VERSION=$(rpm -q --qf '%{VERSION}' cloudflared-fips 2>/dev/null || echo "")
+    fi
+    # Fall back to build manifest
+    if [[ -z "$CURRENT_VERSION" ]] && [[ -f "${CONFIG_DIR}/build-manifest.json" ]]; then
+        CURRENT_VERSION=$(grep -oP '"version"\s*:\s*"\K[^"]+' "${CONFIG_DIR}/build-manifest.json" 2>/dev/null || echo "unknown")
     fi
 
-    if [[ -z "$CURRENT_VERSION" || "$CURRENT_VERSION" == "unknown" ]]; then
-        # Fall back to build manifest
-        if [[ -f "${CONFIG_DIR}/build-manifest.json" ]]; then
-            CURRENT_VERSION=$(grep -oP '"version"\s*:\s*"\K[^"]+' "${CONFIG_DIR}/build-manifest.json" 2>/dev/null || echo "unknown")
-        fi
-    fi
-
-    info "Current version: ${CURRENT_VERSION:-unknown}"
+    CURRENT_VERSION="${CURRENT_VERSION:-unknown}"
+    info "Current version: ${CURRENT_VERSION}"
 }
 
 # ---------------------------------------------------------------------------
@@ -466,9 +470,15 @@ verify() {
     }
     echo ""
 
-    # Show new version
+    # Show new version (prefer binary, fall back to manifest)
     local new_version="unknown"
-    if [[ -f "${CONFIG_DIR}/build-manifest.json" ]]; then
+    if [[ -x "${BIN_DIR}/cloudflared-fips-selftest" ]]; then
+        new_version=$("${BIN_DIR}/cloudflared-fips-selftest" --version 2>/dev/null || echo "unknown")
+    fi
+    if [[ -z "$new_version" || "$new_version" == "unknown" ]] && [[ -x "${BIN_DIR}/cloudflared-fips-dashboard" ]]; then
+        new_version=$("${BIN_DIR}/cloudflared-fips-dashboard" --version 2>/dev/null || echo "unknown")
+    fi
+    if [[ -z "$new_version" || "$new_version" == "unknown" ]] && [[ -f "${CONFIG_DIR}/build-manifest.json" ]]; then
         new_version=$(grep -oP '"version"\s*:\s*"\K[^"]+' "${CONFIG_DIR}/build-manifest.json" 2>/dev/null || echo "unknown")
     fi
 

@@ -17,9 +17,15 @@ import (
 )
 
 func main() {
+	showVersion := flag.Bool("version", false, "print version and exit")
 	verifySignature := flag.Bool("verify-signature", false, "verify GPG signature of the running binary")
 	keyPath := flag.String("key-path", "", "path to GPG public key for signature verification")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(buildinfo.Version)
+		return
+	}
 
 	fmt.Fprintf(os.Stderr, "%s\n", buildinfo.String())
 	fmt.Fprintf(os.Stderr, "Running FIPS self-test suite...\n\n")

@@ -1,6 +1,6 @@
 {
-  "version": "0.7.9",
-  "commit": "327fb73",
+  "version": "0.8.3",
+  "commit": "5d7551a",
   "build_time": "2026-03-03T00:00:00Z",
   "cloudflared_upstream_version": "2025.2.1",
   "cloudflared_upstream_commit": "059f4d9",
