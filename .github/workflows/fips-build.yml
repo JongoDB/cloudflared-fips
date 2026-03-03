@@ -118,6 +118,30 @@ jobs:
           done
           echo "::warning::BoringCrypto symbols not found (may be stripped). Self-test passed — FIPS mode verified at runtime."
 
+      - name: Build dashboard frontend
+        run: |
+          # Install Node.js for frontend build
+          curl -fsSL https://rpm.nodesource.com/setup_22.x | bash - 2>/dev/null || true
+          dnf install -y nodejs 2>/dev/null || true
+          if ! command -v node >/dev/null 2>&1; then
+            NODE_VERSION="22.14.0"
+            curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+              | tar -C /usr/local --strip-components=1 -xJf -
+          fi
+          echo "Node.js $(node --version), npm $(npm --version)"
+
+          cd dashboard
+          npm ci --prefer-offline
+          npm run build
+          cd ..
+
+          # Copy built frontend into Go embed directory
+          mkdir -p internal/dashboard/static
+          cp -r dashboard/dist/* internal/dashboard/static/
+
+          echo "=== Dashboard frontend built ==="
+          ls -la internal/dashboard/static/
+
       - name: Install SBOM tools
         run: |
           /usr/local/go/bin/go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest 2>/dev/null || true
@@ -153,11 +177,11 @@ jobs:
             "cloudflared_upstream_version": "${UPSTREAM_VERSION}",
             "cloudflared_upstream_commit": "${UPSTREAM_COMMIT}",
             "crypto_engine": "boringcrypto",
-            "boringssl_version": "fips-20220613",
+            "boringssl_version": "fips-20230428",
             "fips_certificates": [
               {
                 "module": "BoringSSL",
-                "certificate": "#3678",
+                "certificate": "#4735",
                 "algorithms": ["AES-GCM-128","AES-GCM-256","SHA-256","SHA-384","HMAC-SHA-256","ECDSA-P256","RSA-2048","ECDH-P256"]
               },
               {

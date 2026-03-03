@@ -34,7 +34,7 @@ BIN_DIR="/usr/local/bin"
 SERVICE_USER="cloudflared"
 DASHBOARD_ADDR="127.0.0.1:8080"
 MARKER="/var/tmp/.cloudflared-fips-provision-phase"
-CLOUDFLARED_VERSION="2025.2.1"
+CLOUDFLARED_VERSION="2026.2.0"
 
 # Detected at runtime
 PKG_MGR=""

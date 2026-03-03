@@ -12,7 +12,7 @@ func sampleManifest() *BuildManifest {
 		Version:                    "1.0.0",
 		Commit:                     "abc123def456",
 		BuildTime:                  "2026-02-20T00:00:00Z",
-		CloudflaredUpstreamVersion: "2025.2.1",
+		CloudflaredUpstreamVersion: "2026.2.0",
 		CloudflaredUpstreamCommit:  "def456abc789",
 		CryptoEngine:               "boringcrypto",
 		BoringSSlVersion:           "fips-20230428",
