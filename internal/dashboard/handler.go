@@ -232,13 +232,13 @@ func (h *Handler) HandleAuditSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	if h.AuditLogger == nil {
-		writeSSEEvent(w, flusher, "error", map[string]string{"error": "audit logging not configured"})
+		_ = writeSSEEvent(w, flusher, "error", map[string]string{"error": "audit logging not configured"})
 		return
 	}
 
 	// Send recent events first
 	events := h.AuditLogger.RecentEvents(50)
-	writeSSEEvent(w, flusher, "audit_batch", events)
+	_ = writeSSEEvent(w, flusher, "audit_batch", events)
 
 	// Register listener for new events
 	ch := make(chan audit.AuditEvent, 64)
