@@ -40,7 +40,7 @@ type ChecklistItem struct {
 	What               string             `json:"what"`
 	Why                string             `json:"why"`
 	Remediation        string             `json:"remediation"`
-	NISTRef            string             `json:"nist_ref"`
+	NISTRef            string             `json:"nistRef"`
 }
 
 // ComplianceReport is the top-level compliance state.

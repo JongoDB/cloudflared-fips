@@ -24,7 +24,7 @@ export default function ChecklistSection({ section }: ChecklistSectionProps) {
   const passCount = section.items.filter((i) => i.status === 'pass').length
 
   const nistControls = Array.from(
-    new Set(section.items.flatMap((i) => i.nistRef.split(', ').map((r) => r.trim())).filter(Boolean))
+    new Set(section.items.flatMap((i) => (i.nistRef || '').split(', ').map((r) => r.trim())).filter(Boolean))
   )
   const maxVisible = 6
   const visibleControls = nistControls.slice(0, maxVisible)

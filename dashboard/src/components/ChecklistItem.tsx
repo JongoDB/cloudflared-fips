@@ -21,9 +21,11 @@ export default function ChecklistItem({ item }: ChecklistItemProps) {
           <span className="text-sm font-medium text-gray-900 truncate">
             {item.name}
           </span>
-          <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
-            {item.severity}
-          </span>
+          {item.severity && (
+            <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+              {item.severity}
+            </span>
+          )}
           <VerificationBadge method={item.verificationMethod} />
           {item.nistRef && (
             <span className="hidden md:inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono text-blue-600 bg-blue-50">
@@ -50,34 +52,42 @@ export default function ChecklistItem({ item }: ChecklistItemProps) {
       {expanded && (
         <div className="px-4 pb-4 border-t border-gray-100">
           <dl className="mt-3 space-y-3">
-            <div>
-              <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                What
-              </dt>
-              <dd className="mt-1 text-sm text-gray-700">{item.what}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                Why
-              </dt>
-              <dd className="mt-1 text-sm text-gray-700">{item.why}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                Remediation
-              </dt>
-              <dd className="mt-1 text-sm text-gray-700">{item.remediation}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                NIST Reference
-              </dt>
-              <dd className="mt-1">
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-medium bg-blue-50 text-blue-700">
-                  {item.nistRef}
-                </span>
-              </dd>
-            </div>
+            {item.what && (
+              <div>
+                <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  What
+                </dt>
+                <dd className="mt-1 text-sm text-gray-700">{item.what}</dd>
+              </div>
+            )}
+            {item.why && (
+              <div>
+                <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  Why
+                </dt>
+                <dd className="mt-1 text-sm text-gray-700">{item.why}</dd>
+              </div>
+            )}
+            {item.remediation && (
+              <div>
+                <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  Remediation
+                </dt>
+                <dd className="mt-1 text-sm text-gray-700">{item.remediation}</dd>
+              </div>
+            )}
+            {item.nistRef && (
+              <div>
+                <dt className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  NIST Reference
+                </dt>
+                <dd className="mt-1">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-medium bg-blue-50 text-blue-700">
+                    {item.nistRef}
+                  </span>
+                </dd>
+              </div>
+            )}
           </dl>
         </div>
       )}

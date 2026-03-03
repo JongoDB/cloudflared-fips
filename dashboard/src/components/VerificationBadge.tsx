@@ -22,6 +22,8 @@ const methodIcons: Record<VerificationMethod, string> = {
 }
 
 export default function VerificationBadge({ method }: VerificationBadgeProps) {
+  if (!method || !methodStyles[method]) return null
+
   const styles = methodStyles[method]
   const info = verificationMethodInfo[method]
   const icon = methodIcons[method]
@@ -29,10 +31,10 @@ export default function VerificationBadge({ method }: VerificationBadgeProps) {
   return (
     <span
       className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium border ${styles.bg} ${styles.text} ${styles.border}`}
-      title={info.description}
+      title={info?.description}
     >
       <span aria-hidden="true">{icon}</span>
-      {info.label}
+      {info?.label}
     </span>
   )
 }
