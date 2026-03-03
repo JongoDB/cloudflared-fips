@@ -492,14 +492,21 @@ func (lc *LiveChecker) checkBinaryIntegrity() ChecklistItem {
 		return item
 	}
 
-	if m.BinarySHA256 == "" {
+	// SHA-256 of empty input — produced when generate-manifest.sh can't find the binary.
+	const zeroHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+	if m.BinarySHA256 == "" || m.BinarySHA256 == zeroHash {
 		item.Status = StatusWarning
-		item.What = "Build manifest has no binary_sha256 to compare against"
+		item.What = fmt.Sprintf("Manifest has no binary hash to compare; current binary: %s...%s",
+			binaryHashHex[:8], binaryHashHex[len(binaryHashHex)-8:])
+		item.Remediation = "Regenerate the build manifest: make manifest (ensures binary_sha256 is set)"
 		return item
 	}
 
 	if binaryHashHex == m.BinarySHA256 {
 		item.Status = StatusPass
+		item.What = fmt.Sprintf("Binary hash verified: %s...%s",
+			binaryHashHex[:8], binaryHashHex[len(binaryHashHex)-8:])
 	} else {
 		item.Status = StatusFail
 		item.What = fmt.Sprintf("Binary hash mismatch: got %s...%s, expected %s...%s",

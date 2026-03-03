@@ -613,6 +613,16 @@ phase3_install() {
         cp -n configs/cloudflared-fips.yaml "${CONFIG_DIR}/cloudflared-fips.yaml" 2>/dev/null || true
     fi
 
+    # --- Update manifest binary hash to match installed dashboard binary ---
+    if [[ -f "${CONFIG_DIR}/build-manifest.json" && -x "${BIN_DIR}/cloudflared-fips-dashboard" ]]; then
+        local dash_hash
+        dash_hash=$(sha256sum "${BIN_DIR}/cloudflared-fips-dashboard" 2>/dev/null | awk '{print $1}')
+        if [[ -n "$dash_hash" ]]; then
+            sed -i "s/\"binary_sha256\":.*$/\"binary_sha256\": \"${dash_hash}\"/" "${CONFIG_DIR}/build-manifest.json"
+            info "  Updated manifest binary_sha256"
+        fi
+    fi
+
     # --- Copy TLS cert/key for FIPS proxy (Tier 3, or controller with proxy) ---
     if [[ -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then
         log "Installing TLS certificate and key..."

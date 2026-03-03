@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Compact favicon: cloud + FIPS for small sizes -->
+
+  <!-- Back cloud -->
+  <ellipse cx="50" cy="38" rx="14" ry="12" fill="#FBAD41"/>
+
+  <!-- Front cloud -->
+  <path d="
+    M4 52
+    C0 52 -1 46 2 42
+    C0 36 5 30 12 30
+    C13 24 18 20 24 20
+    C28 20 32 22 34 26
+    C37 18 42 14 48 14
+    C56 14 62 20 62 30
+    C64 30 66 34 66 38
+    C66 44 62 52 56 52
+    Z
+  " fill="#F6821F"/>
+
+  <!-- FIPS text as paths — optimized for favicon size -->
+  <g fill="#fff" transform="translate(8,24)">
+    <!-- F -->
+    <path d="M0,0 h11 v4.5 h-6 v3 h5 v4.5 h-5 v8 h-5 Z"/>
+    <!-- I -->
+    <path d="M13,0 h5 v20 h-5 Z"/>
+    <!-- P -->
+    <path d="M20,0 h9 c4,0 7,2.5 7,6.5 c0,4 -3,6.5 -7,6.5 h-4 v7 h-5 Z M25,4.5 v4 h3 c1.5,0 2.5,-1 2.5,-2 c0,-1 -1,-2 -2.5,-2 Z"/>
+    <!-- S -->
+    <path d="M38,0 h12 v4.5 h-8 v3 h6 c3.5,0 5.5,2.5 5.5,6 c0,3.5 -2,6 -5.5,6 h-13 v-4.5 h9 v-3 h-6 c-3.5,0 -5.5,-2.5 -5.5,-6 c0,-3.5 2,-6 5.5,-6 Z"/>
+  </g>
+</svg>

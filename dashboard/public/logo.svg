@@ -1,48 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 80" width="150" height="80">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 80" width="160" height="80">
   <defs>
     <filter id="ts">
-      <feDropShadow dx="0" dy="1.5" stdDeviation="1.5" flood-color="#000" flood-opacity=".35"/>
+      <feDropShadow dx="0" dy="1.2" stdDeviation="1.5" flood-color="#000" flood-opacity=".35"/>
     </filter>
   </defs>
 
-  <!-- Back cloud (golden orange, peeks out behind on the right) -->
-  <ellipse cx="118" cy="48" rx="26" ry="24" fill="#FBAD41"/>
+  <!-- Back cloud (golden orange) -->
+  <ellipse cx="124" cy="48" rx="28" ry="24" fill="#FBAD41"/>
 
   <!-- Front cloud (Cloudflare orange) -->
   <path d="
-    M8 64
-    C0 64 -2 54 4 48
-    C0 38 10 30 22 30
-    C24 20 34 14 46 14
-    C54 14 60 18 64 24
-    C70 12 80 6 92 6
-    C110 6 120 18 122 34
-    C128 32 136 38 136 46
-    C136 54 130 64 120 64
+    M10 64
+    C2 64 0 54 6 48
+    C2 38 12 30 24 30
+    C26 20 36 14 48 14
+    C56 14 62 18 66 24
+    C72 12 82 6 94 6
+    C112 6 124 18 126 34
+    C132 32 140 38 140 46
+    C140 54 134 64 124 64
     Z
   " fill="#F6821F"/>
 
-  <!-- Subtle white ray (toned down so text pops) -->
+  <!-- Subtle white ray -->
   <path d="
-    M14 56
-    L108 56
-    L118 52
-    L138 47
-    L118 42
-    L108 47
-    L14 52
+    M16 56
+    L112 56
+    L122 52
+    L142 47
+    L122 42
+    L112 47
+    L16 52
     Z
-  " fill="#fff" opacity=".5"/>
+  " fill="#fff" opacity=".45"/>
 
-  <!-- FIPS text — large bold overlay, the hero element -->
-  <text
-    x="66" y="52"
-    font-family="'Inter', 'SF Pro Display', 'Helvetica Neue', system-ui, sans-serif"
-    font-size="42"
-    font-weight="900"
-    letter-spacing="5"
-    text-anchor="middle"
-    fill="#fff"
-    filter="url(#ts)"
-  >FIPS</text>
+  <!-- FIPS letters as paths — bold condensed government style -->
+  <g filter="url(#ts)" fill="#fff" transform="translate(24,18)">
+    <!-- F -->
+    <path d="M0,0 h18 v7 h-10 v5 h8 v7 h-8 v13 h-8 Z"/>
+    <!-- I -->
+    <path d="M22,0 h8 v32 h-8 Z"/>
+    <!-- P -->
+    <path d="M34,0 h14 c7,0 11,4 11,10.5 c0,6.5 -4,10.5 -11,10.5 h-6 v11 h-8 Z M42,7 v7 h5 c2.5,0 4,-1.5 4,-3.5 c0,-2 -1.5,-3.5 -4,-3.5 Z"/>
+    <!-- S -->
+    <path d="M63,0 h20 v7 h-13 v5 h10 c6,0 9,4 9,10 c0,6 -3,10 -9,10 h-21 v-7 h14 v-6 h-10 c-6,0 -9,-4 -9,-10 c0,-5.5 3,-9 9,-9 Z"/>
+  </g>
 </svg>

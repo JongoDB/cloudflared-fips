@@ -5,7 +5,20 @@ set -euo pipefail
 
 OUTPUT_DIR="${OUTPUT_DIR:-build-output}"
 MANIFEST_PATH="${OUTPUT_DIR}/build-manifest.json"
-BINARY_PATH="${OUTPUT_DIR}/cloudflared"
+# Try dashboard binary first (runs the integrity check via /proc/self/exe),
+# then fall back to the unified binary or any cloudflared-fips-* binary.
+BINARY_PATH="${BINARY_PATH:-}"
+if [[ -z "$BINARY_PATH" ]]; then
+    for candidate in \
+        "${OUTPUT_DIR}/cloudflared-fips-dashboard" \
+        "${OUTPUT_DIR}/cloudflared-fips" \
+        "${OUTPUT_DIR}/cloudflared"; do
+        if [[ -f "$candidate" ]]; then
+            BINARY_PATH="$candidate"
+            break
+        fi
+    done
+fi
 SBOM_PATH="${OUTPUT_DIR}/sbom.spdx.json"
 
 VERSION="${VERSION:-dev}"

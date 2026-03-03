@@ -268,6 +268,17 @@ upgrade_source() {
     if [[ -f build-output/build-manifest.json ]]; then
         cp build-output/build-manifest.json "${CONFIG_DIR}/build-manifest.json"
     fi
+
+    # Update manifest binary hash to match the installed dashboard binary
+    # (the dashboard runs the integrity check via /proc/self/exe)
+    if [[ -f "${CONFIG_DIR}/build-manifest.json" && -x "${BIN_DIR}/cloudflared-fips-dashboard" ]]; then
+        local dash_hash
+        dash_hash=$(sha256sum "${BIN_DIR}/cloudflared-fips-dashboard" | awk '{print $1}')
+        if [[ -n "$dash_hash" ]]; then
+            sed -i "s/\"binary_sha256\":.*$/\"binary_sha256\": \"${dash_hash}\"/" "${CONFIG_DIR}/build-manifest.json"
+            log "Updated manifest binary_sha256: ${dash_hash:0:16}..."
+        fi
+    fi
 }
 
 # ---------------------------------------------------------------------------
